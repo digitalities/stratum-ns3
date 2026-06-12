@@ -1,0 +1,104 @@
+diff --git a/src/internet/model/tcp-socket-base.cc b/src/internet/model/tcp-socket-base.cc
+index 10fa0aa99..5e3c40c16 100644
+--- a/src/internet/model/tcp-socket-base.cc
++++ b/src/internet/model/tcp-socket-base.cc
+@@ -276,6 +276,22 @@ TcpSocketBase::GetTypeId()
+                           UintegerValue(100),
+                           MakeUintegerAccessor(&TcpSocketBase::m_delAckJitterMaxUs),
+                           MakeUintegerChecker<uint32_t>(0, 1000000))
++            .AddAttribute("EnableCountAckJitter",
++                          "Enable opt-in count-threshold immediate-ACK jitter: "
++                          "the SendEmptyPacket(ACK) call inside the "
++                          "m_delAckCount >= m_delAckMaxCount block of "
++                          "ReceivedData is delayed by U[0, CountAckJitterMaxUs] "
++                          "microseconds. Default false.",
++                          BooleanValue(false),
++                          MakeBooleanAccessor(&TcpSocketBase::m_enableCountAckJitter),
++                          MakeBooleanChecker())
++            .AddAttribute("CountAckJitterMaxUs",
++                          "Maximum jitter in microseconds when "
++                          "EnableCountAckJitter=true. Actual per-call jitter "
++                          "is drawn uniformly from [0, this value].",
++                          UintegerValue(100),
++                          MakeUintegerAccessor(&TcpSocketBase::m_countAckJitterMaxUs),
++                          MakeUintegerChecker<uint32_t>(0, 1000000))
+             .AddTraceSource("RTO",
+                             "Retransmission timeout",
+                             MakeTraceSourceAccessor(&TcpSocketBase::m_rto),
+@@ -3082,6 +3098,28 @@ TcpSocketBase::SendEmptyPacket(uint8_t flags)
+     }
+ }
+ 
++/* Send an immediate ACK on count-threshold fire, optionally jittered. */
++void
++TcpSocketBase::SendImmediateAckMaybeJittered(uint8_t flags)
++{
++    if (m_enableCountAckJitter && m_countAckJitterMaxUs > 0)
++    {
++        if (!m_countAckJitterRng)
++        {
++            m_countAckJitterRng = CreateObject<UniformRandomVariable>();
++        }
++        uint32_t jitterUs =
++            m_countAckJitterRng->GetInteger(0, m_countAckJitterMaxUs);
++        Simulator::Schedule(MicroSeconds(jitterUs),
++                            &TcpSocketBase::SendEmptyPacket,
++                            this, flags);
++    }
++    else
++    {
++        SendEmptyPacket(flags);
++    }
++}
++
+ /* This function closes the endpoint completely. Called upon RST_TX action. */
+ void
+ TcpSocketBase::SendRST()
+@@ -3911,14 +3949,14 @@ TcpSocketBase::ReceivedData(Ptr<Packet> p, const TcpHeader& tcpHeader)
+                 m_tcb->m_ecnState == TcpSocketState::ECN_SENDING_ECE)
+             {
+                 NS_LOG_DEBUG("Congestion algo " << m_congestionControl->GetName());
+-                SendEmptyPacket(TcpHeader::ACK | TcpHeader::ECE);
++                SendImmediateAckMaybeJittered(TcpHeader::ACK | TcpHeader::ECE);
+                 NS_LOG_DEBUG(TcpSocketState::EcnStateName[m_tcb->m_ecnState]
+                              << " -> ECN_SENDING_ECE");
+                 m_tcb->m_ecnState = TcpSocketState::ECN_SENDING_ECE;
+             }
+             else
+             {
+-                SendEmptyPacket(TcpHeader::ACK);
++                SendImmediateAckMaybeJittered(TcpHeader::ACK);
+             }
+         }
+         else if (!m_delAckEvent.IsExpired())
+diff --git a/src/internet/model/tcp-socket-base.h b/src/internet/model/tcp-socket-base.h
+index 722b896c9..0e3b32188 100644
+--- a/src/internet/model/tcp-socket-base.h
++++ b/src/internet/model/tcp-socket-base.h
+@@ -1551,6 +1551,26 @@ class TcpSocketBase : public TcpSocket
+     bool m_enableDelAckJitter{false};        //!< Opt-in flag for DelAck jitter.
+     uint32_t m_delAckJitterMaxUs{100};       //!< Maximum DelAck jitter in microseconds.
+     Ptr<UniformRandomVariable> m_delAckJitterRng; //!< Lazy-init RNG for DelAck jitter.
++
++    // Count-threshold immediate-ACK jitter — wraps the SendEmptyPacket(ACK)
++    // call inside the `if (++m_delAckCount >= m_delAckMaxCount)` block in
++    // ReceivedData. When EnableCountAckJitter=true, the immediate-ACK fire
++    // is delayed by uniform U[0, CountAckJitterMaxUs] microseconds.
++    // Default off.
++    bool m_enableCountAckJitter{false};      //!< Opt-in flag for count-threshold ACK jitter.
++    uint32_t m_countAckJitterMaxUs{100};     //!< Maximum jitter in microseconds.
++    Ptr<UniformRandomVariable> m_countAckJitterRng; //!< Lazy-init RNG.
++
++    /**
++     * Send an immediate ACK on count-threshold fire, optionally jittered
++     * by U[0, m_countAckJitterMaxUs] microseconds. Replaces the
++     * SendEmptyPacket calls inside the m_delAckCount >= m_delAckMaxCount
++     * block of ReceivedData. Default-off semantics are byte-identical to
++     * SendEmptyPacket(flags).
++     *
++     * @param flags TCP header flags to send (TcpHeader::ACK or ACK|ECE).
++     */
++    void SendImmediateAckMaybeJittered(uint8_t flags);
+ };
+ 
+ /**

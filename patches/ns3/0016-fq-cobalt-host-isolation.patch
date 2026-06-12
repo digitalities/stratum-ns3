@@ -1,0 +1,341 @@
+diff --git a/src/internet/model/ipv4-queue-disc-item.cc b/src/internet/model/ipv4-queue-disc-item.cc
+index 852241d7c..75d701bdd 100644
+--- a/src/internet/model/ipv4-queue-disc-item.cc
++++ b/src/internet/model/ipv4-queue-disc-item.cc
+@@ -159,4 +159,81 @@ Ipv4QueueDiscItem::Hash(uint32_t perturbation) const
+     return hash;
+ }
+ 
++uint32_t
++Ipv4QueueDiscItem::HashSrcHost(uint32_t perturbation) const
++{
++    NS_LOG_FUNCTION(this << perturbation);
++
++    Ipv4Address src = m_header.GetSource();
++
++    /* serialize (src, 0, perturbation) in buf — destination zeroed so that
++     * two packets sharing a source IP map to the same source-host bucket. */
++    uint8_t buf[12] = {};
++    src.Serialize(buf);
++    // bytes 4..7 (destination) left zero by initializer
++    buf[8] = (perturbation >> 24) & 0xff;
++    buf[9] = (perturbation >> 16) & 0xff;
++    buf[10] = (perturbation >> 8) & 0xff;
++    buf[11] = perturbation & 0xff;
++
++    // Linux calculates jhash2 (jenkins hash), we calculate murmur3 because it is
++    // already available in ns-3
++    uint32_t hash = Hash32((char*)buf, 12);
++
++    // The FqCobaltQueueDisc set-associative table uses tag 0 as the empty-slot
++    // sentinel, so a Murmur3 collision with 0 would be indistinguishable from
++    // an unoccupied way. Map 0 to 1 here so every Ipv4 host-hash is non-zero;
++    // the probability of two distinct sources colliding at 1 is the same as
++    // any other pair, and the loss of one possible value (~2^-32 of the
++    // output range) is negligible.
++    if (hash == 0u)
++    {
++        hash = 1u;
++    }
++
++    NS_LOG_DEBUG("HashSrcHost value " << hash);
++
++    return hash;
++}
++
++uint32_t
++Ipv4QueueDiscItem::HashDstHost(uint32_t perturbation) const
++{
++    NS_LOG_FUNCTION(this << perturbation);
++
++    Ipv4Address dst = m_header.GetDestination();
++
++    /* serialize (0, dst, perturbation) in buf — source zeroed so that two
++     * packets sharing a destination IP map to the same destination-host
++     * bucket. */
++    uint8_t buf[12] = {};
++    // bytes 0..3 (source) left zero by initializer
++    dst.Serialize(buf + 4);
++    buf[8] = (perturbation >> 24) & 0xff;
++    buf[9] = (perturbation >> 16) & 0xff;
++    buf[10] = (perturbation >> 8) & 0xff;
++    buf[11] = perturbation & 0xff;
++
++    // Linux calculates jhash2 (jenkins hash), we calculate murmur3 because it is
++    // already available in ns-3
++    uint32_t hash = Hash32((char*)buf, 12);
++
++    // See HashSrcHost above: map 0 to 1 to avoid colliding with the
++    // empty-slot sentinel in the FqCobaltQueueDisc set-associative table.
++    if (hash == 0u)
++    {
++        hash = 1u;
++    }
++
++    NS_LOG_DEBUG("HashDstHost value " << hash);
++
++    return hash;
++}
++
++uint8_t
++Ipv4QueueDiscItem::GetIpProtocol() const
++{
++    return m_header.GetProtocol();
++}
++
+ } // namespace ns3
+diff --git a/src/internet/model/ipv4-queue-disc-item.h b/src/internet/model/ipv4-queue-disc-item.h
+index 5fcb716b6..762b2205a 100644
+--- a/src/internet/model/ipv4-queue-disc-item.h
++++ b/src/internet/model/ipv4-queue-disc-item.h
+@@ -94,6 +94,42 @@ class Ipv4QueueDiscItem : public QueueDiscItem
+      */
+     uint32_t Hash(uint32_t perturbation) const override;
+ 
++    /**
++     * @brief Computes a hash derived from the source IP address only
++     *
++     * Hashes the source IPv4 address with the destination address zeroed,
++     * concatenated with the perturbation value. This produces a per-source-host
++     * bucket assignment for queue discs that implement source-host fairness.
++     *
++     * @param perturbation hash perturbation value
++     * @return the hash of the source-host identifier
++     */
++    uint32_t HashSrcHost(uint32_t perturbation) const override;
++
++    /**
++     * @brief Computes a hash derived from the destination IP address only
++     *
++     * Hashes the destination IPv4 address with the source address zeroed,
++     * concatenated with the perturbation value. This produces a
++     * per-destination-host bucket assignment for queue discs that implement
++     * destination-host fairness.
++     *
++     * @param perturbation hash perturbation value
++     * @return the hash of the destination-host identifier
++     */
++    uint32_t HashDstHost(uint32_t perturbation) const override;
++
++    /**
++     * @brief Returns the IPv4 Protocol field (RFC 791 §3.1).
++     *
++     * Overrides @c QueueDiscItem::GetIpProtocol to expose the L4 protocol
++     * number to traffic-control queue discs without requiring a link
++     * dependency on the internet module.
++     *
++     * @return the IPv4 Protocol byte (e.g., 6 for TCP, 17 for UDP).
++     */
++    uint8_t GetIpProtocol() const override;
++
+   private:
+     Ipv4Header m_header; //!< The IPv4 header.
+     bool m_headerAdded;  //!< True if the header has already been added to the packet.
+diff --git a/src/internet/model/ipv6-queue-disc-item.cc b/src/internet/model/ipv6-queue-disc-item.cc
+index 22a6e51c1..4f93aabf6 100644
+--- a/src/internet/model/ipv6-queue-disc-item.cc
++++ b/src/internet/model/ipv6-queue-disc-item.cc
+@@ -158,4 +158,70 @@ Ipv6QueueDiscItem::Hash(uint32_t perturbation) const
+     return hash;
+ }
+ 
++uint32_t
++Ipv6QueueDiscItem::HashSrcHost(uint32_t perturbation) const
++{
++    NS_LOG_FUNCTION(this << perturbation);
++
++    Ipv6Address src = m_header.GetSource();
++
++    /* serialize (src, 0, perturbation) in buf — destination zeroed so that
++     * two packets sharing a source IPv6 map to the same source-host bucket. */
++    uint8_t buf[36] = {};
++    src.Serialize(buf);
++    // bytes 16..31 (destination) left zero by initializer
++    buf[32] = (perturbation >> 24) & 0xff;
++    buf[33] = (perturbation >> 16) & 0xff;
++    buf[34] = (perturbation >> 8) & 0xff;
++    buf[35] = perturbation & 0xff;
++
++    uint32_t hash = Hash32((char*)buf, 36);
++
++    // Map 0 to 1 to avoid collision with the empty-slot sentinel in the
++    // FqCobaltQueueDisc set-associative table (see Ipv4QueueDiscItem).
++    if (hash == 0u)
++    {
++        hash = 1u;
++    }
++
++    NS_LOG_DEBUG("HashSrcHost value " << hash);
++
++    return hash;
++}
++
++uint32_t
++Ipv6QueueDiscItem::HashDstHost(uint32_t perturbation) const
++{
++    NS_LOG_FUNCTION(this << perturbation);
++
++    Ipv6Address dst = m_header.GetDestination();
++
++    /* serialize (0, dst, perturbation) in buf — source zeroed so that two
++     * packets sharing a destination IPv6 map to the same dst-host bucket. */
++    uint8_t buf[36] = {};
++    // bytes 0..15 (source) left zero by initializer
++    dst.Serialize(buf + 16);
++    buf[32] = (perturbation >> 24) & 0xff;
++    buf[33] = (perturbation >> 16) & 0xff;
++    buf[34] = (perturbation >> 8) & 0xff;
++    buf[35] = perturbation & 0xff;
++
++    uint32_t hash = Hash32((char*)buf, 36);
++
++    if (hash == 0u)
++    {
++        hash = 1u;
++    }
++
++    NS_LOG_DEBUG("HashDstHost value " << hash);
++
++    return hash;
++}
++
++uint8_t
++Ipv6QueueDiscItem::GetIpProtocol() const
++{
++    return m_header.GetNextHeader();
++}
++
+ } // namespace ns3
+diff --git a/src/internet/model/ipv6-queue-disc-item.h b/src/internet/model/ipv6-queue-disc-item.h
+index 600786620..1d500fcc9 100644
+--- a/src/internet/model/ipv6-queue-disc-item.h
++++ b/src/internet/model/ipv6-queue-disc-item.h
+@@ -94,6 +94,39 @@ class Ipv6QueueDiscItem : public QueueDiscItem
+      */
+     uint32_t Hash(uint32_t perturbation) const override;
+ 
++    /**
++     * @brief Computes a hash derived from the source IPv6 address only.
++     *
++     * Hashes the source address with the destination address zeroed,
++     * concatenated with the perturbation value.
++     *
++     * @param perturbation hash perturbation value
++     * @return the hash of the source-host identifier (non-zero)
++     */
++    uint32_t HashSrcHost(uint32_t perturbation) const override;
++
++    /**
++     * @brief Computes a hash derived from the destination IPv6 address only.
++     *
++     * Hashes the destination address with the source address zeroed,
++     * concatenated with the perturbation value.
++     *
++     * @param perturbation hash perturbation value
++     * @return the hash of the destination-host identifier (non-zero)
++     */
++    uint32_t HashDstHost(uint32_t perturbation) const override;
++
++    /**
++     * @brief Returns the IPv6 Next Header field value.
++     *
++     * For a simple IPv6 TCP packet (no extension headers), the Next Header
++     * byte is 6 (IPPROTO_TCP), matching the IPv4 Protocol-byte convention
++     * used by @c Ipv4QueueDiscItem::GetIpProtocol.
++     *
++     * @return the IPv6 Next Header byte (e.g., 6 for TCP, 17 for UDP).
++     */
++    uint8_t GetIpProtocol() const override;
++
+   private:
+     Ipv6Header m_header; //!< The IPv6 header.
+     bool m_headerAdded;  //!< True if the header has already been added to the packet.
+diff --git a/src/network/utils/queue-item.cc b/src/network/utils/queue-item.cc
+index 2b3a61a33..6b95b75a0 100644
+--- a/src/network/utils/queue-item.cc
++++ b/src/network/utils/queue-item.cc
+@@ -135,4 +135,24 @@ QueueDiscItem::Hash(uint32_t perturbation) const
+     return 0;
+ }
+ 
++uint32_t
++QueueDiscItem::HashSrcHost(uint32_t perturbation) const
++{
++    NS_LOG_WARN("The HashSrcHost method should be redefined by subclasses");
++    return 0;
++}
++
++uint32_t
++QueueDiscItem::HashDstHost(uint32_t perturbation) const
++{
++    NS_LOG_WARN("The HashDstHost method should be redefined by subclasses");
++    return 0;
++}
++
++uint8_t
++QueueDiscItem::GetIpProtocol() const
++{
++    return 0;
++}
++
+ } // namespace ns3
+diff --git a/src/network/utils/queue-item.h b/src/network/utils/queue-item.h
+index 531272700..91e6e2bf5 100644
+--- a/src/network/utils/queue-item.h
++++ b/src/network/utils/queue-item.h
+@@ -206,6 +206,55 @@ class QueueDiscItem : public QueueItem
+      */
+     virtual uint32_t Hash(uint32_t perturbation = 0) const;
+ 
++    /**
++     * @brief Computes a hash derived from the packet's source-host identifier
++     *
++     * Used by queue discs that implement per-source-host fairness (such as
++     * CAKE's host-isolation modes). Subclasses with an L3 address should hash
++     * the source address (and only the source address) so that two packets
++     * sharing a source IP map to the same source-host bucket regardless of
++     * their destination or transport identifiers.
++     *
++     * This method just returns 0. Subclasses should implement a hash over the
++     * source-host identifier.
++     *
++     * @param perturbation hash perturbation value
++     * @return the hash of the source-host identifier
++     */
++    virtual uint32_t HashSrcHost(uint32_t perturbation = 0) const;
++
++    /**
++     * @brief Computes a hash derived from the packet's destination-host identifier
++     *
++     * Used by queue discs that implement per-destination-host fairness (such as
++     * CAKE's host-isolation modes). Subclasses with an L3 address should hash
++     * the destination address (and only the destination address) so that two
++     * packets sharing a destination IP map to the same destination-host bucket
++     * regardless of their source or transport identifiers.
++     *
++     * This method just returns 0. Subclasses should implement a hash over the
++     * destination-host identifier.
++     *
++     * @param perturbation hash perturbation value
++     * @return the hash of the destination-host identifier
++     */
++    virtual uint32_t HashDstHost(uint32_t perturbation = 0) const;
++
++    /**
++     * @brief Returns the L4 (transport) protocol number carried by the item.
++     *
++     * Used by queue discs that need to gate on transport-layer protocol
++     * without parsing the inner Packet's first bytes (e.g., to make
++     * TCP-only helpers self-defending when called from generic loops).
++     * This method just returns 0 (no transport context). Subclasses with
++     * an L3 header should return the protocol field directly (IPv4
++     * Protocol byte, IPv6 Next Header).
++     *
++     * @return the L4 protocol number (e.g., 6 for TCP, 17 for UDP, 0 if
++     *         the item carries no recoverable L3 context).
++     */
++    virtual uint8_t GetIpProtocol() const;
++
+   private:
+     Address m_address;   //!< MAC destination address
+     uint16_t m_protocol; //!< L3 Protocol number

@@ -1,0 +1,582 @@
+#!/usr/bin/env bash
+# aqm-eval — DiffServ4NS AQM-eval characterisation suite CLI
+#
+# Single entry point for running the harness, generating the figure,
+# and reproducing paper §5.4 from a clean checkout.  Hides the ns-3
+# build ceremony.  See `aqm-eval --help` for the subcommand catalogue
+# or `aqm-eval <subcommand> --help` for details.
+#
+# Companion to handbook chapter 13.  Source of truth for the canonical
+# 13-AQM × 9-scenario matrix is `src/ns-3/examples/aqm-eval-runner.cc`.
+
+set -euo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+REPO_ROOT=$(cd "${SCRIPT_DIR}/../.." && pwd)
+NS3_DIR="${REPO_ROOT}/ns3/ns-3-dev"
+PLOT_SCRIPT="${SCRIPT_DIR}/ellipse-plot.py"
+DEFAULT_OUTDIR="${REPO_ROOT}/output/aqm-eval/day2-matrix"
+
+CANONICAL_AQMS=(
+    ns3::PfifoFastQueueDisc
+    ns3::RedQueueDisc
+    ns3::AdaptiveRedQueueDisc
+    ns3::CoDelQueueDisc
+    ns3::FqCoDelQueueDisc
+    ns3::PieQueueDisc
+    ns3::FqPieQueueDisc
+    ns3::CobaltQueueDisc
+    ns3::FqCobaltQueueDisc
+    StratumRed
+    StratumL4sWred
+    StratumL4sCoupledOnly
+    StratumCake
+)
+
+CANONICAL_SCENARIOS=(
+    steady
+    mixed
+    rt-bulk
+    mild-congestion
+    medium-congestion
+    heavy-congestion
+    tcp-friendly
+    tcp-aggressive
+    tcp-unresponsive
+)
+
+# ---------------- top-level help ----------------
+
+usage_top() {
+    cat <<'EOF'
+aqm-eval — DiffServ4NS AQM-eval characterisation suite CLI
+
+USAGE
+  aqm-eval <subcommand> [options]
+
+SUBCOMMANDS
+  setup        Fetch ns-3-dev (pinned) + apply local patches + build the runner.
+  run          Run a single (scenario, AQM) cell.
+  matrix       Run the canonical 13-AQM × 9-scenario sweep (117 cells).
+  plot         Render the 3-panel ellipse + Jain-range figure from a matrix dir.
+  rtt-sweep    RFC 7928 Section 6 RTT-fairness sweep (15 points × seeds × AQMs).
+  bistable     5-RngRun FqPie sweep to verify the F-C bistable signature.
+  reproduce    Gold path — setup + matrix + plot + verify, end-to-end.
+  list         List canonical scenarios or AQMs.
+  clean        Remove a matrix output directory.
+  help         Show this help (or `aqm-eval <subcommand> --help`).
+
+EXAMPLES
+  aqm-eval reproduce                 # paper figure 5 from a clean checkout
+  aqm-eval run --scenario tcp-friendly --aqm ns3::FqPieQueueDisc
+  aqm-eval matrix --outDir my-matrix
+  aqm-eval bistable --runs 5
+  aqm-eval list aqms
+
+CONTEXT
+  This is a thin wrapper over the `aqm-eval-runner` binary
+  (src/ns-3/examples/aqm-eval-runner.cc) and `ellipse-plot.py`.  The
+  wrapper makes the integration ceremony (fetch → build → loop →
+  plot) one-step; the underlying flags are documented in handbook
+  chapter 13 and ADR-0048.
+
+  Pinned ns-3 commit: query with `scripts/fetch-ns3.sh --print-pin`.
+  No traffic-control AQM is patched.
+
+EOF
+}
+
+# ---------------- subcommand: setup ----------------
+
+usage_setup() {
+    cat <<'EOF'
+aqm-eval setup — fetch ns-3-dev (pinned) + apply local patches + build runner
+
+USAGE
+  aqm-eval setup [--rebuild]
+
+OPTIONS
+  --rebuild    Force a full rebuild even if the runner binary exists.
+
+WHAT IT DOES
+  1. Runs scripts/fetch-ns3.sh (idempotent).  Clones ns-3-dev at the
+     pinned commit if absent; auto-applies patches/ns3/0001 and
+     0002 (both in src/internet/).
+  2. Configures ns-3 with --enable-tests --enable-examples.
+  3. Builds the aqm-eval-runner target.
+
+EXIT
+  0 on success.  Non-zero with a clear message if any step fails.
+EOF
+}
+
+cmd_setup() {
+    local rebuild=0
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help) usage_setup; exit 0 ;;
+            --rebuild) rebuild=1; shift ;;
+            *) echo "setup: unknown option: $1" >&2; exit 2 ;;
+        esac
+    done
+
+    echo "[setup] fetching ns-3-dev (pinned)…"
+    "${REPO_ROOT}/scripts/fetch-ns3.sh"
+
+    echo "[setup] configuring ns-3…"
+    (cd "${NS3_DIR}" && ./ns3 configure --enable-tests --enable-examples >/dev/null)
+
+    if [[ "${rebuild}" -eq 1 ]] || ! ls "${NS3_DIR}"/build/contrib/stratum/examples/ns3*-aqm-eval-runner-default >/dev/null 2>&1; then
+        echo "[setup] building aqm-eval-runner…"
+        (cd "${NS3_DIR}" && ./ns3 build aqm-eval-runner)
+    else
+        echo "[setup] runner already built (use --rebuild to force)."
+    fi
+    echo "[setup] done."
+}
+
+# ---------------- subcommand: run ----------------
+
+usage_run() {
+    cat <<'EOF'
+aqm-eval run — single (scenario, AQM) cell
+
+USAGE
+  aqm-eval run --scenario S --aqm A [--simTime T] [--outDir D] [--rngrun N] [--totalRateBps B]
+
+OPTIONS
+  --scenario S    Required.  One of:  steady, mixed, rt-bulk,
+                  mild-congestion, medium-congestion, heavy-congestion,
+                  tcp-friendly, tcp-aggressive, tcp-unresponsive.
+  --aqm A         Required.  Either a fully-qualified TypeId
+                  (e.g. ns3::FqPieQueueDisc) or one of the substrate-
+                  client shorthands StratumRed / StratumL4s / StratumCake.
+  --simTime T     Default 4.0.  TCP scenarios need >= 10.
+  --outDir D      Default output/aqm-eval/exploratory.
+  --rngrun N      Default 1.  Matters for stochastic AQMs (PIE-class).
+  --totalRateBps B  Default 10000000 (10 Mbps).  Bottleneck capacity.
+
+OUTPUT
+  <outDir>/<scenario>-<aqm-shortname>-perflow.csv
+  <outDir>/<scenario>-<aqm-shortname>-summary.txt
+EOF
+}
+
+cmd_run() {
+    local scenario="" aqm="" simTime=4.0 outDir="${REPO_ROOT}/output/aqm-eval/exploratory"
+    local rngrun=1 totalRateBps=10000000
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help) usage_run; exit 0 ;;
+            --scenario) scenario="$2"; shift 2 ;;
+            --aqm) aqm="$2"; shift 2 ;;
+            --simTime) simTime="$2"; shift 2 ;;
+            --outDir) outDir="$2"; shift 2 ;;
+            --rngrun|--RngRun) rngrun="$2"; shift 2 ;;
+            --totalRateBps) totalRateBps="$2"; shift 2 ;;
+            *) echo "run: unknown option: $1" >&2; exit 2 ;;
+        esac
+    done
+
+    [[ -z "${scenario}" ]] && { echo "run: --scenario is required" >&2; exit 2; }
+    [[ -z "${aqm}" ]] && { echo "run: --aqm is required" >&2; exit 2; }
+
+    mkdir -p "${outDir}"
+    echo "[run] ${scenario} × ${aqm}  simTime=${simTime}  RngRun=${rngrun}"
+    (cd "${NS3_DIR}" && ./ns3 run "aqm-eval-runner \
+        --scenario=${scenario} \
+        --aqm=${aqm} \
+        --simTime=${simTime} \
+        --totalRateBps=${totalRateBps} \
+        --outDir=${outDir} \
+        --RngRun=${rngrun}")
+}
+
+# ---------------- subcommand: matrix ----------------
+
+usage_matrix() {
+    cat <<'EOF'
+aqm-eval matrix — canonical 13-AQM × 9-scenario sweep (117 cells)
+
+USAGE
+  aqm-eval matrix [--outDir D] [--simTime T] [--rngrun N] [--totalRateBps B]
+
+OPTIONS
+  --outDir D       Default output/aqm-eval/day2-matrix.
+  --simTime T      Default 10.  All canonical TCP scenarios need >= 10.
+  --rngrun N       Default 1.
+  --totalRateBps B Default 10000000.
+
+NOTE
+  Wall-clock ~30 s on a contemporary laptop.  Output: 117 pairs of
+  CSV + summary (13 AQMs × 9 scenarios).
+EOF
+}
+
+cmd_matrix() {
+    local outDir="${DEFAULT_OUTDIR}" simTime=10 rngrun=1 totalRateBps=10000000
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help) usage_matrix; exit 0 ;;
+            --outDir) outDir="$2"; shift 2 ;;
+            --simTime) simTime="$2"; shift 2 ;;
+            --rngrun|--RngRun) rngrun="$2"; shift 2 ;;
+            --totalRateBps) totalRateBps="$2"; shift 2 ;;
+            *) echo "matrix: unknown option: $1" >&2; exit 2 ;;
+        esac
+    done
+
+    mkdir -p "${outDir}"
+    local total=$(( ${#CANONICAL_AQMS[@]} * ${#CANONICAL_SCENARIOS[@]} ))
+    local n=0
+    echo "[matrix] running ${total} cells -> ${outDir}"
+    for scenario in "${CANONICAL_SCENARIOS[@]}"; do
+        for aqm in "${CANONICAL_AQMS[@]}"; do
+            n=$((n + 1))
+            printf "[matrix] %3d/%d  %s × %s\n" "${n}" "${total}" "${scenario}" "${aqm}"
+            (cd "${NS3_DIR}" && ./ns3 run "aqm-eval-runner \
+                --scenario=${scenario} \
+                --aqm=${aqm} \
+                --simTime=${simTime} \
+                --totalRateBps=${totalRateBps} \
+                --outDir=${outDir} \
+                --RngRun=${rngrun}" >/dev/null 2>&1) || {
+                echo "[matrix] FAIL on ${scenario} × ${aqm}" >&2
+                exit 1
+            }
+        done
+    done
+    echo "[matrix] complete.  Run: aqm-eval plot --inDir ${outDir}"
+}
+
+# ---------------- subcommand: plot ----------------
+
+usage_plot() {
+    cat <<'EOF'
+aqm-eval plot — render the 3-panel figure from a matrix directory
+
+USAGE
+  aqm-eval plot [--inDir D] [--outDir D]
+
+OPTIONS
+  --inDir D     Default output/aqm-eval/day2-matrix.
+  --outDir D    Default output/aqm-eval (figure lands as qdel-goodput.{png,pdf}).
+
+OUTPUT
+  Three-panel figure (Panel A: qdelay × goodput 1σ ellipse; Panel B:
+  retx × goodput 1σ ellipse; Panel C: per-AQM Jain min..max over the
+  3 TCP scenarios).
+EOF
+}
+
+cmd_plot() {
+    local inDir="${DEFAULT_OUTDIR}" outDir="${REPO_ROOT}/output/aqm-eval"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help) usage_plot; exit 0 ;;
+            --inDir) inDir="$2"; shift 2 ;;
+            --outDir) outDir="$2"; shift 2 ;;
+            *) echo "plot: unknown option: $1" >&2; exit 2 ;;
+        esac
+    done
+    echo "[plot] reading ${inDir}"
+    python3 "${PLOT_SCRIPT}" --input-dir "${inDir}" --output-dir "${outDir}"
+    echo "[plot] -> ${outDir}/qdel-goodput.{png,pdf}"
+}
+
+# ---------------- subcommand: bistable ----------------
+
+usage_bistable() {
+    cat <<'EOF'
+aqm-eval bistable — 5-RngRun FqPie sweep to verify F-C bistable signature
+
+USAGE
+  aqm-eval bistable [--runs N] [--outDir D]
+
+OPTIONS
+  --runs N      Default 5.  Number of RngRun values (1..N).
+  --outDir D    Default output/aqm-eval/bistable-sweep.
+
+WHAT IT DOES
+  Runs FqPie on tcp-friendly across N RngRun values.  Reports the
+  per-run Jain index and which flow won.  The F-C bistable signature
+  requires (a) at least one Jain < 0.90, (b) at least one Jain >=
+  0.99, and (c) the winning flow flipping between runs.  See handbook
+  §13.5 for the full protocol and ADR-0048 § Finding F-C.
+EOF
+}
+
+cmd_bistable() {
+    local runs=5 outDir="${REPO_ROOT}/output/aqm-eval/bistable-sweep"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help) usage_bistable; exit 0 ;;
+            --runs) runs="$2"; shift 2 ;;
+            --outDir) outDir="$2"; shift 2 ;;
+            *) echo "bistable: unknown option: $1" >&2; exit 2 ;;
+        esac
+    done
+
+    mkdir -p "${outDir}"
+    echo "[bistable] running FqPie tcp-friendly × ${runs} RngRuns -> ${outDir}"
+    for ((r = 1; r <= runs; r++)); do
+        local d="${outDir}/r${r}"
+        mkdir -p "${d}"
+        (cd "${NS3_DIR}" && ./ns3 run "aqm-eval-runner \
+            --scenario=tcp-friendly \
+            --aqm=ns3::FqPieQueueDisc \
+            --simTime=10 \
+            --outDir=${d} \
+            --RngRun=${r}" >/dev/null 2>&1)
+    done
+
+    echo ""
+    echo "=== F-C bistable signature ==="
+    printf "%-6s %-10s %-12s %-12s %-10s\n" "RngRun" "Jain" "tcp-1Mbps" "tcp-2Mbps" "winner"
+    for ((r = 1; r <= runs; r++)); do
+        local s="${outDir}/r${r}/tcp-friendly-FqPie-summary.txt"
+        local p="${outDir}/r${r}/tcp-friendly-FqPie-perflow.csv"
+        local j t1 t2 winner
+        j=$(grep jain_fairness "${s}" | cut -d= -f2)
+        t1=$(awk -F, 'NR==2 {printf "%.2f", $5/1e6}' "${p}")
+        t2=$(awk -F, 'NR==3 {printf "%.2f", $5/1e6}' "${p}")
+        winner=$(awk -F, 'NR==2 || NR==3 {print $5,$1}' "${p}" | sort -nr | head -1 | awk '{print $2}')
+        printf "%-6s %-10s %-12s %-12s %-10s\n" "${r}" "${j}" "${t1}" "${t2}" "${winner}"
+    done
+    echo ""
+    echo "Bistable signature requires:  (a) at least one Jain < 0.90,"
+    echo "(b) at least one Jain >= 0.99, (c) winner flips between runs."
+}
+
+# ---------------- subcommand: rtt-sweep ----------------
+
+usage_rtt_sweep() {
+    cat <<'EOF'
+aqm-eval rtt-sweep — RFC 7928 Section 6 RTT-fairness sweep
+
+USAGE
+  aqm-eval rtt-sweep [--outDir D] [--runs K] [--simTime T] [--aqm A]
+
+OPTIONS
+  --outDir D    Default output/aqm-eval/rtt-sweep.
+  --runs K      Default 3.  RngRun seeds per point (1..K).
+  --simTime T   Default 30 (long category-II RTTs need many RTTs to converge).
+  --aqm A       Restrict to one AQM (default: all 13 canonical cells).
+
+WHAT IT DOES
+  Two long-lived TCP NewReno flows share the 10 Mbps bottleneck
+  (RFC 7928 Section 6.2): category I holds RTT 100 ms while
+  category II sweeps 15 log-spaced points across [5 ms, 560 ms].
+  Each (AQM, RTT, seed) cell records per-category goodput, the
+  category-II/category-I goodput ratio, and per-category drop
+  rates in its summary file.  Render the figure with:
+      python3 scripts/aqm-eval/rtt-sweep-plot.py --inDir <outDir>
+EOF
+}
+
+cmd_rtt_sweep() {
+    local outDir="${REPO_ROOT}/output/aqm-eval/rtt-sweep" runs=3 simTime=30 only=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help) usage_rtt_sweep; exit 0 ;;
+            --outDir) outDir="$2"; shift 2 ;;
+            --runs) runs="$2"; shift 2 ;;
+            --simTime) simTime="$2"; shift 2 ;;
+            --aqm) only="$2"; shift 2 ;;
+            *) echo "rtt-sweep: unknown option: $1" >&2; exit 2 ;;
+        esac
+    done
+
+    # 15 log-spaced category-II RTT points across [5, 560] ms.
+    local points
+    points=$(awk 'BEGIN { lo=5; hi=560; n=15;
+                          for (i=0;i<n;i++) printf "%.1f ", lo*exp(log(hi/lo)*i/(n-1)) }')
+
+    local aqms=("${CANONICAL_AQMS[@]}")
+    if [[ -n "${only}" ]]; then
+        aqms=("${only}")
+    fi
+
+    local total=$(( ${#aqms[@]} * 15 * runs ))
+    local n=0
+    mkdir -p "${outDir}"
+    echo "[rtt-sweep] ${#aqms[@]} AQMs × 15 RTT points × ${runs} seeds = ${total} cells -> ${outDir}"
+    local aqm p r aqmDir d
+    for aqm in "${aqms[@]}"; do
+        aqmDir="${aqm#ns3::}"
+        for p in ${points}; do
+            for ((r = 1; r <= runs; r++)); do
+                n=$((n + 1))
+                printf "[rtt-sweep] %4d/%d  %s × rtt2=%sms × seed %d\n" \
+                    "${n}" "${total}" "${aqm}" "${p}" "${r}"
+                d="${outDir}/${aqmDir}/rtt${p}/r${r}"
+                mkdir -p "${d}"
+                (cd "${NS3_DIR}" && ./ns3 run "aqm-eval-runner \
+                    --scenario=tcp-friendly \
+                    --aqm=${aqm} \
+                    --simTime=${simTime} \
+                    --rttCat1Ms=100 \
+                    --rttCat2Ms=${p} \
+                    --outDir=${d} \
+                    --RngRun=${r}" >/dev/null 2>&1) || {
+                    echo "[rtt-sweep] FAIL on ${aqm} × rtt2=${p} × seed ${r}" >&2
+                    exit 1
+                }
+            done
+        done
+    done
+    echo "[rtt-sweep] complete.  Render: python3 ${SCRIPT_DIR}/rtt-sweep-plot.py --inDir ${outDir}"
+}
+
+# ---------------- subcommand: reproduce ----------------
+
+usage_reproduce() {
+    cat <<'EOF'
+aqm-eval reproduce — gold path: setup + matrix + plot, end-to-end
+
+USAGE
+  aqm-eval reproduce [--outDir D] [--simTime T]
+
+OPTIONS
+  --outDir D    Default output/aqm-eval/day2-matrix.
+  --simTime T   Default 10.
+
+WHAT IT DOES
+  Single command to reproduce paper figure 5 from a clean checkout:
+    1. setup       (fetch ns-3 + build runner)
+    2. matrix      (117 cells)
+    3. plot        (3-panel figure)
+  Wall-clock budget: ~3-5 minutes including build (~30 s if already built).
+
+  Suitable for paper artefact reviewers and Zenodo-deposit consumers.
+EOF
+}
+
+cmd_reproduce() {
+    local outDir="${DEFAULT_OUTDIR}" simTime=10
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help) usage_reproduce; exit 0 ;;
+            --outDir) outDir="$2"; shift 2 ;;
+            --simTime) simTime="$2"; shift 2 ;;
+            *) echo "reproduce: unknown option: $1" >&2; exit 2 ;;
+        esac
+    done
+
+    cmd_setup
+    cmd_matrix --outDir "${outDir}" --simTime "${simTime}"
+    cmd_plot --inDir "${outDir}"
+    echo ""
+    echo "=== reproduce complete ==="
+    echo "matrix:  ${outDir}"
+    echo "figure:  ${REPO_ROOT}/output/aqm-eval/qdel-goodput.{png,pdf}"
+    echo "compare: paper/figures/aqm-envelope.pdf (committed reference)"
+}
+
+# ---------------- subcommand: list ----------------
+
+usage_list() {
+    cat <<'EOF'
+aqm-eval list — list canonical scenarios or AQMs
+
+USAGE
+  aqm-eval list scenarios | aqms | all
+EOF
+}
+
+cmd_list() {
+    local what="${1:-all}"
+    [[ "${what}" == "-h" || "${what}" == "--help" ]] && { usage_list; exit 0; }
+
+    if [[ "${what}" == "scenarios" || "${what}" == "all" ]]; then
+        echo "SCENARIOS (9):"
+        echo "  UDP-CBR (Phase 6 inheritance):"
+        echo "    steady · mixed · rt-bulk"
+        echo "  UDP-CBR (RFC 7928 §8.2 congestion levels):"
+        echo "    mild-congestion · medium-congestion · heavy-congestion"
+        echo "  TCP (RFC 7928 §5.x):"
+        echo "    tcp-friendly · tcp-aggressive · tcp-unresponsive"
+    fi
+    [[ "${what}" == "all" ]] && echo ""
+    if [[ "${what}" == "aqms" || "${what}" == "all" ]]; then
+        echo "AQMs (12 canonical):"
+        echo "  Mainline traffic-control (9):"
+        echo "    ns3::PfifoFastQueueDisc · ns3::RedQueueDisc · ns3::AdaptiveRedQueueDisc"
+        echo "    ns3::CoDelQueueDisc · ns3::FqCoDelQueueDisc"
+        echo "    ns3::PieQueueDisc · ns3::FqPieQueueDisc"
+        echo "    ns3::CobaltQueueDisc · ns3::FqCobaltQueueDisc"
+        echo "  Stratum substrate clients (3):"
+        echo "    StratumRed   — faithful DiffServ (chapter 06)"
+        echo "    StratumL4s   — L4S DualPI2 (chapter 10)"
+        echo "    StratumCake  — CAKE diffserv4 composition (chapter 11)"
+        echo "  Mainline RED variants (dispatchable, outside canonical matrix):"
+        echo "    ns3::FengAdaptiveRedQueueDisc · ns3::NonLinearRedQueueDisc"
+    fi
+}
+
+# ---------------- subcommand: clean ----------------
+
+usage_clean() {
+    cat <<'EOF'
+aqm-eval clean — remove a matrix output directory
+
+USAGE
+  aqm-eval clean [--outDir D]
+
+OPTIONS
+  --outDir D    Default output/aqm-eval/day2-matrix.
+
+NOTE
+  Refuses to delete anything outside output/aqm-eval/.  No -f flag —
+  this is a manual operation; review the printed path before
+  confirming.
+EOF
+}
+
+cmd_clean() {
+    local outDir="${DEFAULT_OUTDIR}"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help) usage_clean; exit 0 ;;
+            --outDir) outDir="$2"; shift 2 ;;
+            *) echo "clean: unknown option: $1" >&2; exit 2 ;;
+        esac
+    done
+
+    case "${outDir}" in
+        */output/aqm-eval/*) : ;;
+        *) echo "clean: refusing to remove ${outDir} (must be under output/aqm-eval/)" >&2; exit 2 ;;
+    esac
+
+    if [[ ! -d "${outDir}" ]]; then
+        echo "[clean] nothing to do — ${outDir} does not exist."
+        return 0
+    fi
+
+    echo "About to remove: ${outDir}"
+    read -r -p "Proceed? [y/N] " ans
+    [[ "${ans}" == "y" || "${ans}" == "Y" ]] || { echo "[clean] aborted."; return 0; }
+    rm -rf "${outDir}"
+    echo "[clean] removed."
+}
+
+# ---------------- dispatch ----------------
+
+main() {
+    local sub="${1:-}"
+    case "${sub}" in
+        ""|-h|--help|help) usage_top ;;
+        setup)     shift; cmd_setup "$@" ;;
+        run)       shift; cmd_run "$@" ;;
+        matrix)    shift; cmd_matrix "$@" ;;
+        plot)      shift; cmd_plot "$@" ;;
+        rtt-sweep) shift; cmd_rtt_sweep "$@" ;;
+        bistable)  shift; cmd_bistable "$@" ;;
+        reproduce) shift; cmd_reproduce "$@" ;;
+        list)      shift; cmd_list "$@" ;;
+        clean)     shift; cmd_clean "$@" ;;
+        *) echo "aqm-eval: unknown subcommand '${sub}'" >&2; usage_top >&2; exit 2 ;;
+    esac
+}
+
+main "$@"

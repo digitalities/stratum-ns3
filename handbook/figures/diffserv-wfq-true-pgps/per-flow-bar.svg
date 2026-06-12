@@ -1,0 +1,1614 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="576pt" height="360pt" viewBox="0 0 576 360" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:date>2026-05-13T16:52:25.34</dc:date>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.10.8, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 360 
+L 576 360 
+L 576 0 
+L 0 0 
+z
+" style="fill: #ffffff"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 57.17 279.16 
+L 565.2 279.16 
+L 565.2 26.88 
+L 57.17 26.88 
+z
+" style="fill: #ffffff"/>
+   </g>
+   <g id="FillBetweenPolyCollection_1">
+    <path d="M 80.26 279.16 
+L 80.26 279.16 
+L 81.65 279.16 
+L 83.27 279.16 
+L 84.89 279.16 
+L 86.27 279.16 
+L 87.89 279.16 
+L 89.51 279.16 
+L 90.90 279.16 
+L 92.51 279.16 
+L 94.13 279.16 
+L 95.52 279.16 
+L 97.14 279.16 
+L 98.75 279.16 
+L 100.14 279.16 
+L 101.76 279.16 
+L 103.38 279.16 
+L 104.76 279.16 
+L 106.38 279.16 
+L 108.00 279.16 
+L 109.39 279.16 
+L 111.01 279.16 
+L 112.62 279.16 
+L 114.24 279.16 
+L 115.63 279.16 
+L 117.25 279.16 
+L 118.86 279.16 
+L 120.25 279.16 
+L 121.87 279.16 
+L 123.49 279.16 
+L 124.87 279.16 
+L 126.49 279.16 
+L 128.11 279.16 
+L 129.50 279.16 
+L 131.12 279.16 
+L 132.73 279.16 
+L 134.12 279.16 
+L 135.74 279.16 
+L 137.36 279.16 
+L 138.74 279.16 
+L 140.36 279.16 
+L 141.98 279.16 
+L 143.37 279.16 
+L 144.99 279.16 
+L 146.60 279.16 
+L 148.22 279.16 
+L 149.61 279.16 
+L 151.23 279.16 
+L 152.84 279.16 
+L 154.23 279.16 
+L 155.85 279.16 
+L 157.47 279.16 
+L 158.85 279.16 
+L 160.47 279.16 
+L 162.09 279.16 
+L 163.48 279.16 
+L 165.10 279.16 
+L 166.71 279.16 
+L 168.10 279.16 
+L 169.72 279.16 
+L 171.34 279.16 
+L 172.72 279.16 
+L 174.34 279.16 
+L 175.96 279.16 
+L 177.35 279.16 
+L 178.96 279.16 
+L 180.58 279.16 
+L 182.20 279.16 
+L 183.59 279.16 
+L 185.21 279.16 
+L 186.82 279.16 
+L 188.21 279.16 
+L 189.83 279.16 
+L 191.45 279.16 
+L 192.83 279.16 
+L 194.45 279.16 
+L 196.07 279.16 
+L 197.46 279.16 
+L 199.08 279.16 
+L 200.69 279.16 
+L 202.08 279.16 
+L 203.70 279.16 
+L 205.32 279.16 
+L 206.70 279.16 
+L 208.32 279.16 
+L 209.94 279.16 
+L 211.33 279.16 
+L 212.94 279.16 
+L 214.56 279.16 
+L 216.18 279.16 
+L 217.57 279.16 
+L 219.19 279.16 
+L 220.80 279.16 
+L 222.19 279.16 
+L 223.81 279.16 
+L 225.43 279.16 
+L 226.81 279.16 
+L 228.43 279.16 
+L 230.05 279.16 
+L 231.44 279.16 
+L 233.05 279.16 
+L 234.67 279.16 
+L 236.06 279.16 
+L 237.68 279.16 
+L 239.30 279.16 
+L 240.68 279.16 
+L 242.30 279.16 
+L 243.92 279.16 
+L 245.54 279.16 
+L 246.92 279.16 
+L 248.54 279.16 
+L 250.16 279.16 
+L 251.55 279.16 
+L 253.17 279.16 
+L 254.78 279.16 
+L 256.17 279.16 
+L 257.79 279.16 
+L 259.41 279.16 
+L 260.79 279.16 
+L 262.41 279.16 
+L 264.03 279.16 
+L 265.42 279.16 
+L 267.03 279.16 
+L 268.65 279.16 
+L 270.04 279.16 
+L 271.66 279.16 
+L 273.28 279.16 
+L 274.66 279.16 
+L 276.28 279.16 
+L 277.90 279.16 
+L 279.52 279.16 
+L 280.90 279.16 
+L 282.52 279.16 
+L 284.14 279.16 
+L 285.53 279.16 
+L 287.14 279.16 
+L 288.76 279.16 
+L 290.15 279.16 
+L 291.77 279.16 
+L 293.39 279.16 
+L 294.77 279.16 
+L 296.39 279.16 
+L 298.01 279.16 
+L 299.40 279.16 
+L 301.01 279.16 
+L 302.63 279.16 
+L 304.02 279.16 
+L 305.64 279.16 
+L 307.26 279.16 
+L 308.64 279.16 
+L 310.26 279.16 
+L 311.88 279.16 
+L 313.50 279.16 
+L 314.88 279.16 
+L 316.50 279.16 
+L 318.12 279.16 
+L 319.51 279.16 
+L 321.12 279.16 
+L 322.74 279.16 
+L 324.13 279.16 
+L 325.75 279.16 
+L 327.37 279.16 
+L 328.75 279.16 
+L 330.37 279.16 
+L 331.99 279.16 
+L 333.38 279.16 
+L 334.99 279.16 
+L 336.61 279.16 
+L 338.00 279.16 
+L 339.62 279.16 
+L 341.24 279.16 
+L 342.62 279.16 
+L 344.24 279.16 
+L 345.86 279.16 
+L 347.48 279.16 
+L 348.86 279.16 
+L 350.48 279.16 
+L 352.10 279.16 
+L 353.49 279.16 
+L 355.10 279.16 
+L 356.72 279.16 
+L 358.11 279.16 
+L 359.73 279.16 
+L 361.35 279.16 
+L 362.73 279.16 
+L 364.35 279.16 
+L 365.97 279.16 
+L 367.36 279.16 
+L 368.97 279.16 
+L 370.59 279.16 
+L 371.98 279.16 
+L 373.60 279.16 
+L 375.21 279.16 
+L 376.60 279.16 
+L 378.22 279.16 
+L 379.84 279.16 
+L 381.46 279.16 
+L 382.84 279.16 
+L 384.46 279.16 
+L 386.08 279.16 
+L 387.47 279.16 
+L 389.08 279.16 
+L 390.70 279.16 
+L 392.09 279.16 
+L 393.71 279.16 
+L 395.33 279.16 
+L 396.71 279.16 
+L 398.33 279.16 
+L 399.95 279.16 
+L 401.34 279.16 
+L 402.95 279.16 
+L 404.57 279.16 
+L 405.96 279.16 
+L 407.58 279.16 
+L 409.19 279.16 
+L 410.81 279.16 
+L 412.20 279.16 
+L 413.82 279.16 
+L 415.44 279.16 
+L 416.82 279.16 
+L 418.44 279.16 
+L 420.06 279.16 
+L 421.45 279.16 
+L 423.06 279.16 
+L 424.68 279.16 
+L 426.07 279.16 
+L 427.69 279.16 
+L 429.30 279.16 
+L 430.69 279.16 
+L 432.31 279.16 
+L 433.93 279.16 
+L 435.31 279.16 
+L 436.93 279.16 
+L 438.55 279.16 
+L 439.94 279.16 
+L 441.56 279.16 
+L 443.17 279.16 
+L 444.79 279.16 
+L 446.18 279.16 
+L 447.80 279.16 
+L 449.42 279.16 
+L 450.80 279.16 
+L 452.42 279.16 
+L 454.04 279.16 
+L 455.43 279.16 
+L 457.04 279.16 
+L 458.66 279.16 
+L 460.05 279.16 
+L 461.67 279.16 
+L 463.28 279.16 
+L 464.67 279.16 
+L 466.29 279.16 
+L 467.91 279.16 
+L 469.29 279.16 
+L 470.91 279.16 
+L 472.53 279.16 
+L 473.92 279.16 
+L 475.54 279.16 
+L 477.15 279.16 
+L 478.77 279.16 
+L 480.16 279.16 
+L 481.78 279.16 
+L 483.39 279.16 
+L 484.78 279.16 
+L 486.40 279.16 
+L 488.02 279.16 
+L 489.40 279.16 
+L 491.02 279.16 
+L 492.64 279.16 
+L 494.03 279.16 
+L 495.65 279.16 
+L 497.26 279.16 
+L 498.65 279.16 
+L 500.27 279.16 
+L 501.89 279.16 
+L 503.27 279.16 
+L 504.89 279.16 
+L 506.51 279.16 
+L 507.90 279.16 
+L 509.52 279.16 
+L 511.13 279.16 
+L 512.75 279.16 
+L 514.14 279.16 
+L 515.76 279.16 
+L 517.37 279.16 
+L 518.76 279.16 
+L 520.38 279.16 
+L 522.00 279.16 
+L 523.38 279.16 
+L 525.00 279.16 
+L 526.62 279.16 
+L 528.01 279.16 
+L 529.63 279.16 
+L 531.24 279.16 
+L 532.63 279.16 
+L 534.25 279.16 
+L 535.87 279.16 
+L 537.25 279.16 
+L 538.87 279.16 
+L 540.49 279.16 
+L 542.11 279.16 
+L 542.11 243.94 
+L 542.11 243.94 
+L 540.49 243.94 
+L 538.87 243.94 
+L 537.25 243.94 
+L 535.87 243.94 
+L 534.25 243.94 
+L 532.63 243.94 
+L 531.24 248.97 
+L 529.63 243.94 
+L 528.01 243.94 
+L 526.62 243.94 
+L 525.00 243.94 
+L 523.38 248.97 
+L 522.00 243.94 
+L 520.38 243.94 
+L 518.76 243.94 
+L 517.37 238.91 
+L 515.76 243.94 
+L 514.14 248.97 
+L 512.75 243.94 
+L 511.13 248.97 
+L 509.52 243.94 
+L 507.90 243.94 
+L 506.51 243.94 
+L 504.89 243.94 
+L 503.27 243.94 
+L 501.89 243.94 
+L 500.27 243.94 
+L 498.65 243.94 
+L 497.26 243.94 
+L 495.65 243.94 
+L 494.03 243.94 
+L 492.64 243.94 
+L 491.02 243.94 
+L 489.40 243.94 
+L 488.02 243.94 
+L 486.40 243.94 
+L 484.78 243.94 
+L 483.39 248.97 
+L 481.78 243.94 
+L 480.16 248.97 
+L 478.77 243.94 
+L 477.15 248.97 
+L 475.54 243.94 
+L 473.92 243.94 
+L 472.53 243.94 
+L 470.91 243.94 
+L 469.29 243.94 
+L 467.91 243.94 
+L 466.29 243.94 
+L 464.67 243.94 
+L 463.28 243.94 
+L 461.67 243.94 
+L 460.05 248.97 
+L 458.66 243.94 
+L 457.04 243.94 
+L 455.43 243.94 
+L 454.04 243.94 
+L 452.42 243.94 
+L 450.80 243.94 
+L 449.42 243.94 
+L 447.80 243.94 
+L 446.18 243.94 
+L 444.79 243.94 
+L 443.17 243.94 
+L 441.56 243.94 
+L 439.94 248.97 
+L 438.55 243.94 
+L 436.93 243.94 
+L 435.31 243.94 
+L 433.93 243.94 
+L 432.31 243.94 
+L 430.69 243.94 
+L 429.30 243.94 
+L 427.69 243.94 
+L 426.07 243.94 
+L 424.68 243.94 
+L 423.06 243.94 
+L 421.45 243.94 
+L 420.06 243.94 
+L 418.44 243.94 
+L 416.82 243.94 
+L 415.44 243.94 
+L 413.82 243.94 
+L 412.20 243.94 
+L 410.81 243.94 
+L 409.19 248.97 
+L 407.58 243.94 
+L 405.96 248.97 
+L 404.57 243.94 
+L 402.95 243.94 
+L 401.34 243.94 
+L 399.95 243.94 
+L 398.33 243.94 
+L 396.71 243.94 
+L 395.33 243.94 
+L 393.71 243.94 
+L 392.09 248.97 
+L 390.70 243.94 
+L 389.08 248.97 
+L 387.47 243.94 
+L 386.08 248.97 
+L 384.46 243.94 
+L 382.84 243.94 
+L 381.46 243.94 
+L 379.84 243.94 
+L 378.22 243.94 
+L 376.60 243.94 
+L 375.21 243.94 
+L 373.60 243.94 
+L 371.98 243.94 
+L 370.59 243.94 
+L 368.97 243.94 
+L 367.36 243.94 
+L 365.97 243.94 
+L 364.35 243.94 
+L 362.73 243.94 
+L 361.35 243.94 
+L 359.73 243.94 
+L 358.11 243.94 
+L 356.72 243.94 
+L 355.10 248.97 
+L 353.49 243.94 
+L 352.10 243.94 
+L 350.48 243.94 
+L 348.86 243.94 
+L 347.48 243.94 
+L 345.86 243.94 
+L 344.24 243.94 
+L 342.62 243.94 
+L 341.24 243.94 
+L 339.62 243.94 
+L 338.00 243.94 
+L 336.61 243.94 
+L 334.99 248.97 
+L 333.38 243.94 
+L 331.99 243.94 
+L 330.37 243.94 
+L 328.75 243.94 
+L 327.37 243.94 
+L 325.75 243.94 
+L 324.13 243.94 
+L 322.74 243.94 
+L 321.12 243.94 
+L 319.51 243.94 
+L 318.12 243.94 
+L 316.50 243.94 
+L 314.88 248.97 
+L 313.50 243.94 
+L 311.88 248.97 
+L 310.26 243.94 
+L 308.64 243.94 
+L 307.26 243.94 
+L 305.64 243.94 
+L 304.02 243.94 
+L 302.63 243.94 
+L 301.01 243.94 
+L 299.40 243.94 
+L 298.01 248.97 
+L 296.39 243.94 
+L 294.77 243.94 
+L 293.39 243.94 
+L 291.77 243.94 
+L 290.15 243.94 
+L 288.76 243.94 
+L 287.14 243.94 
+L 285.53 243.94 
+L 284.14 243.94 
+L 282.52 243.94 
+L 280.90 238.91 
+L 279.52 243.94 
+L 277.90 248.97 
+L 276.28 243.94 
+L 274.66 243.94 
+L 273.28 243.94 
+L 271.66 243.94 
+L 270.04 243.94 
+L 268.65 243.94 
+L 267.03 243.94 
+L 265.42 243.94 
+L 264.03 248.97 
+L 262.41 243.94 
+L 260.79 248.97 
+L 259.41 243.94 
+L 257.79 248.97 
+L 256.17 243.94 
+L 254.78 243.94 
+L 253.17 243.94 
+L 251.55 243.94 
+L 250.16 243.94 
+L 248.54 243.94 
+L 246.92 243.94 
+L 245.54 243.94 
+L 243.92 248.97 
+L 242.30 243.94 
+L 240.68 243.94 
+L 239.30 243.94 
+L 237.68 243.94 
+L 236.06 243.94 
+L 234.67 243.94 
+L 233.05 243.94 
+L 231.44 243.94 
+L 230.05 243.94 
+L 228.43 243.94 
+L 226.81 243.94 
+L 225.43 243.94 
+L 223.81 248.97 
+L 222.19 243.94 
+L 220.80 243.94 
+L 219.19 243.94 
+L 217.57 243.94 
+L 216.18 243.94 
+L 214.56 243.94 
+L 212.94 243.94 
+L 211.33 243.94 
+L 209.94 243.94 
+L 208.32 243.94 
+L 206.70 248.97 
+L 205.32 243.94 
+L 203.70 243.94 
+L 202.08 243.94 
+L 200.69 243.94 
+L 199.08 243.94 
+L 197.46 243.94 
+L 196.07 243.94 
+L 194.45 243.94 
+L 192.83 243.94 
+L 191.45 243.94 
+L 189.83 248.97 
+L 188.21 243.94 
+L 186.82 243.94 
+L 185.21 243.94 
+L 183.59 243.94 
+L 182.20 243.94 
+L 180.58 243.94 
+L 178.96 243.94 
+L 177.35 243.94 
+L 175.96 243.94 
+L 174.34 243.94 
+L 172.72 243.94 
+L 171.34 243.94 
+L 169.72 243.94 
+L 168.10 243.94 
+L 166.71 248.97 
+L 165.10 243.94 
+L 163.48 243.94 
+L 162.09 243.94 
+L 160.47 243.94 
+L 158.85 248.97 
+L 157.47 243.94 
+L 155.85 243.94 
+L 154.23 243.94 
+L 152.84 243.94 
+L 151.23 243.94 
+L 149.61 243.94 
+L 148.22 243.94 
+L 146.60 243.94 
+L 144.99 243.94 
+L 143.37 243.94 
+L 141.98 248.97 
+L 140.36 243.94 
+L 138.74 248.97 
+L 137.36 243.94 
+L 135.74 243.94 
+L 134.12 243.94 
+L 132.73 248.97 
+L 131.12 243.94 
+L 129.50 243.94 
+L 128.11 243.94 
+L 126.49 243.94 
+L 124.87 243.94 
+L 123.49 243.94 
+L 121.87 243.94 
+L 120.25 243.94 
+L 118.86 248.97 
+L 117.25 243.94 
+L 115.63 248.97 
+L 114.24 243.94 
+L 112.62 243.94 
+L 111.01 243.94 
+L 109.39 243.94 
+L 108.00 243.94 
+L 106.38 243.94 
+L 104.76 243.94 
+L 103.38 243.94 
+L 101.76 243.94 
+L 100.14 243.94 
+L 98.75 243.94 
+L 97.14 243.94 
+L 95.52 243.94 
+L 94.13 243.94 
+L 92.51 243.94 
+L 90.90 243.94 
+L 89.51 243.94 
+L 87.89 264.06 
+L 86.27 243.94 
+L 84.89 243.94 
+L 83.27 279.16 
+L 81.65 279.16 
+L 80.26 279.16 
+z
+" clip-path="url(#p677ac388e1)" style="fill: #1f77b4; fill-opacity: 0.6"/>
+   </g>
+   <g id="FillBetweenPolyCollection_2">
+    <path d="M 80.26 279.16 
+L 80.26 279.16 
+L 81.65 279.16 
+L 83.27 279.16 
+L 84.89 243.94 
+L 86.27 243.94 
+L 87.89 264.06 
+L 89.51 243.94 
+L 90.90 243.94 
+L 92.51 243.94 
+L 94.13 243.94 
+L 95.52 243.94 
+L 97.14 243.94 
+L 98.75 243.94 
+L 100.14 243.94 
+L 101.76 243.94 
+L 103.38 243.94 
+L 104.76 243.94 
+L 106.38 243.94 
+L 108.00 243.94 
+L 109.39 243.94 
+L 111.01 243.94 
+L 112.62 243.94 
+L 114.24 243.94 
+L 115.63 248.97 
+L 117.25 243.94 
+L 118.86 248.97 
+L 120.25 243.94 
+L 121.87 243.94 
+L 123.49 243.94 
+L 124.87 243.94 
+L 126.49 243.94 
+L 128.11 243.94 
+L 129.50 243.94 
+L 131.12 243.94 
+L 132.73 248.97 
+L 134.12 243.94 
+L 135.74 243.94 
+L 137.36 243.94 
+L 138.74 248.97 
+L 140.36 243.94 
+L 141.98 248.97 
+L 143.37 243.94 
+L 144.99 243.94 
+L 146.60 243.94 
+L 148.22 243.94 
+L 149.61 243.94 
+L 151.23 243.94 
+L 152.84 243.94 
+L 154.23 243.94 
+L 155.85 243.94 
+L 157.47 243.94 
+L 158.85 248.97 
+L 160.47 243.94 
+L 162.09 243.94 
+L 163.48 243.94 
+L 165.10 243.94 
+L 166.71 248.97 
+L 168.10 243.94 
+L 169.72 243.94 
+L 171.34 243.94 
+L 172.72 243.94 
+L 174.34 243.94 
+L 175.96 243.94 
+L 177.35 243.94 
+L 178.96 243.94 
+L 180.58 243.94 
+L 182.20 243.94 
+L 183.59 243.94 
+L 185.21 243.94 
+L 186.82 243.94 
+L 188.21 243.94 
+L 189.83 248.97 
+L 191.45 243.94 
+L 192.83 243.94 
+L 194.45 243.94 
+L 196.07 243.94 
+L 197.46 243.94 
+L 199.08 243.94 
+L 200.69 243.94 
+L 202.08 243.94 
+L 203.70 243.94 
+L 205.32 243.94 
+L 206.70 248.97 
+L 208.32 243.94 
+L 209.94 243.94 
+L 211.33 243.94 
+L 212.94 243.94 
+L 214.56 243.94 
+L 216.18 243.94 
+L 217.57 243.94 
+L 219.19 243.94 
+L 220.80 243.94 
+L 222.19 243.94 
+L 223.81 248.97 
+L 225.43 243.94 
+L 226.81 243.94 
+L 228.43 243.94 
+L 230.05 243.94 
+L 231.44 243.94 
+L 233.05 243.94 
+L 234.67 243.94 
+L 236.06 243.94 
+L 237.68 243.94 
+L 239.30 243.94 
+L 240.68 243.94 
+L 242.30 243.94 
+L 243.92 248.97 
+L 245.54 243.94 
+L 246.92 243.94 
+L 248.54 243.94 
+L 250.16 243.94 
+L 251.55 243.94 
+L 253.17 243.94 
+L 254.78 243.94 
+L 256.17 243.94 
+L 257.79 248.97 
+L 259.41 243.94 
+L 260.79 248.97 
+L 262.41 243.94 
+L 264.03 248.97 
+L 265.42 243.94 
+L 267.03 243.94 
+L 268.65 243.94 
+L 270.04 243.94 
+L 271.66 243.94 
+L 273.28 243.94 
+L 274.66 243.94 
+L 276.28 243.94 
+L 277.90 248.97 
+L 279.52 243.94 
+L 280.90 238.91 
+L 282.52 243.94 
+L 284.14 243.94 
+L 285.53 243.94 
+L 287.14 243.94 
+L 288.76 243.94 
+L 290.15 243.94 
+L 291.77 243.94 
+L 293.39 243.94 
+L 294.77 243.94 
+L 296.39 243.94 
+L 298.01 248.97 
+L 299.40 243.94 
+L 301.01 243.94 
+L 302.63 243.94 
+L 304.02 243.94 
+L 305.64 243.94 
+L 307.26 243.94 
+L 308.64 243.94 
+L 310.26 243.94 
+L 311.88 248.97 
+L 313.50 243.94 
+L 314.88 248.97 
+L 316.50 243.94 
+L 318.12 243.94 
+L 319.51 243.94 
+L 321.12 243.94 
+L 322.74 243.94 
+L 324.13 243.94 
+L 325.75 243.94 
+L 327.37 243.94 
+L 328.75 243.94 
+L 330.37 243.94 
+L 331.99 243.94 
+L 333.38 243.94 
+L 334.99 248.97 
+L 336.61 243.94 
+L 338.00 243.94 
+L 339.62 243.94 
+L 341.24 243.94 
+L 342.62 243.94 
+L 344.24 243.94 
+L 345.86 243.94 
+L 347.48 243.94 
+L 348.86 243.94 
+L 350.48 243.94 
+L 352.10 243.94 
+L 353.49 243.94 
+L 355.10 248.97 
+L 356.72 243.94 
+L 358.11 243.94 
+L 359.73 243.94 
+L 361.35 243.94 
+L 362.73 243.94 
+L 364.35 243.94 
+L 365.97 243.94 
+L 367.36 243.94 
+L 368.97 243.94 
+L 370.59 243.94 
+L 371.98 243.94 
+L 373.60 243.94 
+L 375.21 243.94 
+L 376.60 243.94 
+L 378.22 243.94 
+L 379.84 243.94 
+L 381.46 243.94 
+L 382.84 243.94 
+L 384.46 243.94 
+L 386.08 248.97 
+L 387.47 243.94 
+L 389.08 248.97 
+L 390.70 243.94 
+L 392.09 248.97 
+L 393.71 243.94 
+L 395.33 243.94 
+L 396.71 243.94 
+L 398.33 243.94 
+L 399.95 243.94 
+L 401.34 243.94 
+L 402.95 243.94 
+L 404.57 243.94 
+L 405.96 248.97 
+L 407.58 243.94 
+L 409.19 248.97 
+L 410.81 243.94 
+L 412.20 243.94 
+L 413.82 243.94 
+L 415.44 243.94 
+L 416.82 243.94 
+L 418.44 243.94 
+L 420.06 243.94 
+L 421.45 243.94 
+L 423.06 243.94 
+L 424.68 243.94 
+L 426.07 243.94 
+L 427.69 243.94 
+L 429.30 243.94 
+L 430.69 243.94 
+L 432.31 243.94 
+L 433.93 243.94 
+L 435.31 243.94 
+L 436.93 243.94 
+L 438.55 243.94 
+L 439.94 248.97 
+L 441.56 243.94 
+L 443.17 243.94 
+L 444.79 243.94 
+L 446.18 243.94 
+L 447.80 243.94 
+L 449.42 243.94 
+L 450.80 243.94 
+L 452.42 243.94 
+L 454.04 243.94 
+L 455.43 243.94 
+L 457.04 243.94 
+L 458.66 243.94 
+L 460.05 248.97 
+L 461.67 243.94 
+L 463.28 243.94 
+L 464.67 243.94 
+L 466.29 243.94 
+L 467.91 243.94 
+L 469.29 243.94 
+L 470.91 243.94 
+L 472.53 243.94 
+L 473.92 243.94 
+L 475.54 243.94 
+L 477.15 248.97 
+L 478.77 243.94 
+L 480.16 248.97 
+L 481.78 243.94 
+L 483.39 248.97 
+L 484.78 243.94 
+L 486.40 243.94 
+L 488.02 243.94 
+L 489.40 243.94 
+L 491.02 243.94 
+L 492.64 243.94 
+L 494.03 243.94 
+L 495.65 243.94 
+L 497.26 243.94 
+L 498.65 243.94 
+L 500.27 243.94 
+L 501.89 243.94 
+L 503.27 243.94 
+L 504.89 243.94 
+L 506.51 243.94 
+L 507.90 243.94 
+L 509.52 243.94 
+L 511.13 248.97 
+L 512.75 243.94 
+L 514.14 248.97 
+L 515.76 243.94 
+L 517.37 238.91 
+L 518.76 243.94 
+L 520.38 243.94 
+L 522.00 243.94 
+L 523.38 248.97 
+L 525.00 243.94 
+L 526.62 243.94 
+L 528.01 243.94 
+L 529.63 243.94 
+L 531.24 248.97 
+L 532.63 243.94 
+L 534.25 243.94 
+L 535.87 243.94 
+L 537.25 243.94 
+L 538.87 243.94 
+L 540.49 243.94 
+L 542.11 243.94 
+L 542.11 46.44 
+L 542.11 46.44 
+L 540.49 48.33 
+L 538.87 56.50 
+L 537.25 51.47 
+L 535.87 63.42 
+L 534.25 49.59 
+L 532.63 58.39 
+L 531.24 55.88 
+L 529.63 51.47 
+L 528.01 60.91 
+L 526.62 42.04 
+L 525.00 54.62 
+L 523.38 62.79 
+L 522.00 50.84 
+L 520.38 52.73 
+L 518.76 53.36 
+L 517.37 52.73 
+L 515.76 50.84 
+L 514.14 53.36 
+L 512.75 50.84 
+L 511.13 57.13 
+L 509.52 53.99 
+L 507.90 53.36 
+L 506.51 47.07 
+L 504.89 57.76 
+L 503.27 58.39 
+L 501.89 55.88 
+L 500.27 50.21 
+L 498.65 53.99 
+L 497.26 49.59 
+L 495.65 52.10 
+L 494.03 57.76 
+L 492.64 58.39 
+L 491.02 55.25 
+L 489.40 62.17 
+L 488.02 54.62 
+L 486.40 40.15 
+L 484.78 57.76 
+L 483.39 52.73 
+L 481.78 42.04 
+L 480.16 54.62 
+L 478.77 53.99 
+L 477.15 57.13 
+L 475.54 57.13 
+L 473.92 52.10 
+L 472.53 53.36 
+L 470.91 52.10 
+L 469.29 60.91 
+L 467.91 45.18 
+L 466.29 44.55 
+L 464.67 57.76 
+L 463.28 50.21 
+L 461.67 56.50 
+L 460.05 52.10 
+L 458.66 55.88 
+L 457.04 57.76 
+L 455.43 51.47 
+L 454.04 51.47 
+L 452.42 54.62 
+L 450.80 53.99 
+L 449.42 48.96 
+L 447.80 45.81 
+L 446.18 52.73 
+L 444.79 56.50 
+L 443.17 52.10 
+L 441.56 55.25 
+L 439.94 59.02 
+L 438.55 50.21 
+L 436.93 52.10 
+L 435.31 48.96 
+L 433.93 50.84 
+L 432.31 56.50 
+L 430.69 56.50 
+L 429.30 58.39 
+L 427.69 55.25 
+L 426.07 47.70 
+L 424.68 53.36 
+L 423.06 53.99 
+L 421.45 64.05 
+L 420.06 55.88 
+L 418.44 56.50 
+L 416.82 55.88 
+L 415.44 52.73 
+L 413.82 55.25 
+L 412.20 60.28 
+L 410.81 53.36 
+L 409.19 55.88 
+L 407.58 53.36 
+L 405.96 59.02 
+L 404.57 46.44 
+L 402.95 54.62 
+L 401.34 59.65 
+L 399.95 50.84 
+L 398.33 49.59 
+L 396.71 50.21 
+L 395.33 38.89 
+L 393.71 54.62 
+L 392.09 50.84 
+L 390.70 43.93 
+L 389.08 62.79 
+L 387.47 60.91 
+L 386.08 45.81 
+L 384.46 51.47 
+L 382.84 52.73 
+L 381.46 48.33 
+L 379.84 60.91 
+L 378.22 62.79 
+L 376.60 63.42 
+L 375.21 53.36 
+L 373.60 54.62 
+L 371.98 48.96 
+L 370.59 53.36 
+L 368.97 54.62 
+L 367.36 53.99 
+L 365.97 57.13 
+L 364.35 57.13 
+L 362.73 59.65 
+L 361.35 50.21 
+L 359.73 55.25 
+L 358.11 57.13 
+L 356.72 51.47 
+L 355.10 54.62 
+L 353.49 51.47 
+L 352.10 47.70 
+L 350.48 53.36 
+L 348.86 52.10 
+L 347.48 50.21 
+L 345.86 57.76 
+L 344.24 49.59 
+L 342.62 55.25 
+L 341.24 52.73 
+L 339.62 47.70 
+L 338.00 55.25 
+L 336.61 54.62 
+L 334.99 52.10 
+L 333.38 50.84 
+L 331.99 54.62 
+L 330.37 56.50 
+L 328.75 64.05 
+L 327.37 60.28 
+L 325.75 53.36 
+L 324.13 48.96 
+L 322.74 48.33 
+L 321.12 52.10 
+L 319.51 56.50 
+L 318.12 47.70 
+L 316.50 60.91 
+L 314.88 56.50 
+L 313.50 43.93 
+L 311.88 57.13 
+L 310.26 43.30 
+L 308.64 45.81 
+L 307.26 51.47 
+L 305.64 46.44 
+L 304.02 52.73 
+L 302.63 49.59 
+L 301.01 50.21 
+L 299.40 61.54 
+L 298.01 49.59 
+L 296.39 52.73 
+L 294.77 58.39 
+L 293.39 59.65 
+L 291.77 51.47 
+L 290.15 50.21 
+L 288.76 55.88 
+L 287.14 52.10 
+L 285.53 49.59 
+L 284.14 53.36 
+L 282.52 52.73 
+L 280.90 50.84 
+L 279.52 64.05 
+L 277.90 50.21 
+L 276.28 51.47 
+L 274.66 58.39 
+L 273.28 48.33 
+L 271.66 50.84 
+L 270.04 59.02 
+L 268.65 51.47 
+L 267.03 48.33 
+L 265.42 60.91 
+L 264.03 54.62 
+L 262.41 47.70 
+L 260.79 54.62 
+L 259.41 47.70 
+L 257.79 52.10 
+L 256.17 54.62 
+L 254.78 52.73 
+L 253.17 43.30 
+L 251.55 52.73 
+L 250.16 53.99 
+L 248.54 53.99 
+L 246.92 43.93 
+L 245.54 54.62 
+L 243.92 50.84 
+L 242.30 55.25 
+L 240.68 55.88 
+L 239.30 52.10 
+L 237.68 53.99 
+L 236.06 46.44 
+L 234.67 47.07 
+L 233.05 53.99 
+L 231.44 43.30 
+L 230.05 62.17 
+L 228.43 51.47 
+L 226.81 52.73 
+L 225.43 50.21 
+L 223.81 57.13 
+L 222.19 57.13 
+L 220.80 55.88 
+L 219.19 52.73 
+L 217.57 55.88 
+L 216.18 55.25 
+L 214.56 53.99 
+L 212.94 59.65 
+L 211.33 56.50 
+L 209.94 45.18 
+L 208.32 46.44 
+L 206.70 48.33 
+L 205.32 49.59 
+L 203.70 53.36 
+L 202.08 40.15 
+L 200.69 53.36 
+L 199.08 58.39 
+L 197.46 48.96 
+L 196.07 52.73 
+L 194.45 52.10 
+L 192.83 60.91 
+L 191.45 48.96 
+L 189.83 53.36 
+L 188.21 52.73 
+L 186.82 52.10 
+L 185.21 57.13 
+L 183.59 52.10 
+L 182.20 48.96 
+L 180.58 42.67 
+L 178.96 52.73 
+L 177.35 46.44 
+L 175.96 55.25 
+L 174.34 48.96 
+L 172.72 51.47 
+L 171.34 50.21 
+L 169.72 54.62 
+L 168.10 52.73 
+L 166.71 48.96 
+L 165.10 53.99 
+L 163.48 45.81 
+L 162.09 42.67 
+L 160.47 56.50 
+L 158.85 51.47 
+L 157.47 53.99 
+L 155.85 50.21 
+L 154.23 56.50 
+L 152.84 53.36 
+L 151.23 52.73 
+L 149.61 43.93 
+L 148.22 61.54 
+L 146.60 58.39 
+L 144.99 47.70 
+L 143.37 60.91 
+L 141.98 54.62 
+L 140.36 58.39 
+L 138.74 59.65 
+L 137.36 56.50 
+L 135.74 58.39 
+L 134.12 55.88 
+L 132.73 54.62 
+L 131.12 55.25 
+L 129.50 50.21 
+L 128.11 48.96 
+L 126.49 57.13 
+L 124.87 50.84 
+L 123.49 53.99 
+L 121.87 45.81 
+L 120.25 52.73 
+L 118.86 49.59 
+L 117.25 43.93 
+L 115.63 51.47 
+L 114.24 62.17 
+L 112.62 52.10 
+L 111.01 57.13 
+L 109.39 43.93 
+L 108.00 54.62 
+L 106.38 49.59 
+L 104.76 54.62 
+L 103.38 49.59 
+L 101.76 52.10 
+L 100.14 57.76 
+L 98.75 53.36 
+L 97.14 59.02 
+L 95.52 52.10 
+L 94.13 48.33 
+L 92.51 54.62 
+L 90.90 59.02 
+L 89.51 57.76 
+L 87.89 54.62 
+L 86.27 95.50 
+L 84.89 135.75 
+L 83.27 209.34 
+L 81.65 244.57 
+L 80.26 279.16 
+z
+" clip-path="url(#p677ac388e1)" style="fill: #ff7f0e; fill-opacity: 0.6"/>
+   </g>
+   <g id="matplotlib.axis_1">
+    <g id="xtick_1">
+     <g id="line2d_1">
+      <path d="M 80.03 279.16 
+L 80.03 26.88 
+" clip-path="url(#p677ac388e1)" style="fill: none; stroke: #b0b0b0; stroke-opacity: 0.3; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_2">
+      <defs>
+       <path id="m5b792ddd3d" d="M 0 0 
+L 0 3.5 
+" style="stroke: #000000; stroke-width: 0.8"/>
+      </defs>
+      <g>
+       <use xlink:href="#m5b792ddd3d" x="80.03" y="279.16" style="stroke: #000000; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_1">
+      <text style="font-size: 10px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: middle" x="80.03" y="293.76" transform="rotate(-0 80.03 293.76)">0</text>
+     </g>
+    </g>
+    <g id="xtick_2">
+     <g id="line2d_3">
+      <path d="M 137.82 279.16 
+L 137.82 26.88 
+" clip-path="url(#p677ac388e1)" style="fill: none; stroke: #b0b0b0; stroke-opacity: 0.3; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_4">
+      <g>
+       <use xlink:href="#m5b792ddd3d" x="137.82" y="279.16" style="stroke: #000000; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_2">
+      <text style="font-size: 10px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: middle" x="137.82" y="293.76" transform="rotate(-0 137.82 293.76)">25</text>
+     </g>
+    </g>
+    <g id="xtick_3">
+     <g id="line2d_5">
+      <path d="M 195.61 279.16 
+L 195.61 26.88 
+" clip-path="url(#p677ac388e1)" style="fill: none; stroke: #b0b0b0; stroke-opacity: 0.3; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_6">
+      <g>
+       <use xlink:href="#m5b792ddd3d" x="195.61" y="279.16" style="stroke: #000000; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_3">
+      <text style="font-size: 10px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: middle" x="195.61" y="293.76" transform="rotate(-0 195.61 293.76)">50</text>
+     </g>
+    </g>
+    <g id="xtick_4">
+     <g id="line2d_7">
+      <path d="M 253.40 279.16 
+L 253.40 26.88 
+" clip-path="url(#p677ac388e1)" style="fill: none; stroke: #b0b0b0; stroke-opacity: 0.3; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_8">
+      <g>
+       <use xlink:href="#m5b792ddd3d" x="253.40" y="279.16" style="stroke: #000000; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_4">
+      <text style="font-size: 10px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: middle" x="253.40" y="293.76" transform="rotate(-0 253.40 293.76)">75</text>
+     </g>
+    </g>
+    <g id="xtick_5">
+     <g id="line2d_9">
+      <path d="M 311.19 279.16 
+L 311.19 26.88 
+" clip-path="url(#p677ac388e1)" style="fill: none; stroke: #b0b0b0; stroke-opacity: 0.3; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_10">
+      <g>
+       <use xlink:href="#m5b792ddd3d" x="311.19" y="279.16" style="stroke: #000000; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_5">
+      <text style="font-size: 10px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: middle" x="311.19" y="293.76" transform="rotate(-0 311.19 293.76)">100</text>
+     </g>
+    </g>
+    <g id="xtick_6">
+     <g id="line2d_11">
+      <path d="M 368.97 279.16 
+L 368.97 26.88 
+" clip-path="url(#p677ac388e1)" style="fill: none; stroke: #b0b0b0; stroke-opacity: 0.3; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_12">
+      <g>
+       <use xlink:href="#m5b792ddd3d" x="368.97" y="279.16" style="stroke: #000000; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_6">
+      <text style="font-size: 10px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: middle" x="368.97" y="293.76" transform="rotate(-0 368.97 293.76)">125</text>
+     </g>
+    </g>
+    <g id="xtick_7">
+     <g id="line2d_13">
+      <path d="M 426.76 279.16 
+L 426.76 26.88 
+" clip-path="url(#p677ac388e1)" style="fill: none; stroke: #b0b0b0; stroke-opacity: 0.3; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_14">
+      <g>
+       <use xlink:href="#m5b792ddd3d" x="426.76" y="279.16" style="stroke: #000000; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_7">
+      <text style="font-size: 10px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: middle" x="426.76" y="293.76" transform="rotate(-0 426.76 293.76)">150</text>
+     </g>
+    </g>
+    <g id="xtick_8">
+     <g id="line2d_15">
+      <path d="M 484.55 279.16 
+L 484.55 26.88 
+" clip-path="url(#p677ac388e1)" style="fill: none; stroke: #b0b0b0; stroke-opacity: 0.3; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_16">
+      <g>
+       <use xlink:href="#m5b792ddd3d" x="484.55" y="279.16" style="stroke: #000000; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_8">
+      <text style="font-size: 10px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: middle" x="484.55" y="293.76" transform="rotate(-0 484.55 293.76)">175</text>
+     </g>
+    </g>
+    <g id="xtick_9">
+     <g id="line2d_17">
+      <path d="M 542.34 279.16 
+L 542.34 26.88 
+" clip-path="url(#p677ac388e1)" style="fill: none; stroke: #b0b0b0; stroke-opacity: 0.3; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_18">
+      <g>
+       <use xlink:href="#m5b792ddd3d" x="542.34" y="279.16" style="stroke: #000000; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_9">
+      <text style="font-size: 10px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: middle" x="542.34" y="293.76" transform="rotate(-0 542.34 293.76)">200</text>
+     </g>
+    </g>
+    <g id="text_10">
+     <text style="font-size: 8px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif" transform="translate(294.92 305.92)">Time (s)</text>
+     <text style="font-size: 8px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif" transform="translate(110.50 314.88)">Source: handbook-§3.2.2 — Per-class throughput over time under WFQ. EF (class 0) receives service</text>
+     <text style="font-size: 8px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif" transform="translate(104.79 323.83)">proportional to its weight share (CIR 300 kbps on a 2 Mbps bottleneck); observed mean ~281 kbps. BE</text>
+     <text style="font-size: 8px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif" transform="translate(116.76 332.79)">(class 1) receives the remaining capacity; observed mean ~1546 kbps. The ratio reflects weight-</text>
+     <text style="font-size: 8px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif" transform="translate(105.01 341.75)">proportional service as guaranteed by the PGPS schedule. Each window is 0.1 s; rates above the mean</text>
+     <text style="font-size: 8px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif" transform="translate(177.43 350.71)">reflect quantisation of discrete packet arrivals within each window.</text>
+    </g>
+   </g>
+   <g id="matplotlib.axis_2">
+    <g id="ytick_1">
+     <g id="line2d_19">
+      <path d="M 57.17 279.16 
+L 565.2 279.16 
+" clip-path="url(#p677ac388e1)" style="fill: none; stroke: #b0b0b0; stroke-opacity: 0.3; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_20">
+      <defs>
+       <path id="m8a6f2d3311" d="M 0 0 
+L -3.5 0 
+" style="stroke: #000000; stroke-width: 0.8"/>
+      </defs>
+      <g>
+       <use xlink:href="#m8a6f2d3311" x="57.17" y="279.16" style="stroke: #000000; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_11">
+      <text style="font-size: 10px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: end" x="50.17" y="282.96" transform="rotate(-0 50.17 282.96)">0</text>
+     </g>
+    </g>
+    <g id="ytick_2">
+     <g id="line2d_21">
+      <path d="M 57.17 248.45 
+L 565.2 248.45 
+" clip-path="url(#p677ac388e1)" style="fill: none; stroke: #b0b0b0; stroke-opacity: 0.3; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_22">
+      <g>
+       <use xlink:href="#m8a6f2d3311" x="57.17" y="248.45" style="stroke: #000000; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_12">
+      <text style="font-size: 10px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: end" x="50.17" y="252.25" transform="rotate(-0 50.17 252.25)">250</text>
+     </g>
+    </g>
+    <g id="ytick_3">
+     <g id="line2d_23">
+      <path d="M 57.17 217.74 
+L 565.2 217.74 
+" clip-path="url(#p677ac388e1)" style="fill: none; stroke: #b0b0b0; stroke-opacity: 0.3; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_24">
+      <g>
+       <use xlink:href="#m8a6f2d3311" x="57.17" y="217.74" style="stroke: #000000; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_13">
+      <text style="font-size: 10px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: end" x="50.17" y="221.54" transform="rotate(-0 50.17 221.54)">500</text>
+     </g>
+    </g>
+    <g id="ytick_4">
+     <g id="line2d_25">
+      <path d="M 57.17 187.03 
+L 565.2 187.03 
+" clip-path="url(#p677ac388e1)" style="fill: none; stroke: #b0b0b0; stroke-opacity: 0.3; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_26">
+      <g>
+       <use xlink:href="#m8a6f2d3311" x="57.17" y="187.03" style="stroke: #000000; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_14">
+      <text style="font-size: 10px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: end" x="50.17" y="190.82" transform="rotate(-0 50.17 190.82)">750</text>
+     </g>
+    </g>
+    <g id="ytick_5">
+     <g id="line2d_27">
+      <path d="M 57.17 156.31 
+L 565.2 156.31 
+" clip-path="url(#p677ac388e1)" style="fill: none; stroke: #b0b0b0; stroke-opacity: 0.3; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_28">
+      <g>
+       <use xlink:href="#m8a6f2d3311" x="57.17" y="156.31" style="stroke: #000000; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_15">
+      <text style="font-size: 10px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: end" x="50.17" y="160.11" transform="rotate(-0 50.17 160.11)">1000</text>
+     </g>
+    </g>
+    <g id="ytick_6">
+     <g id="line2d_29">
+      <path d="M 57.17 125.60 
+L 565.2 125.60 
+" clip-path="url(#p677ac388e1)" style="fill: none; stroke: #b0b0b0; stroke-opacity: 0.3; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_30">
+      <g>
+       <use xlink:href="#m8a6f2d3311" x="57.17" y="125.60" style="stroke: #000000; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_16">
+      <text style="font-size: 10px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: end" x="50.17" y="129.40" transform="rotate(-0 50.17 129.40)">1250</text>
+     </g>
+    </g>
+    <g id="ytick_7">
+     <g id="line2d_31">
+      <path d="M 57.17 94.89 
+L 565.2 94.89 
+" clip-path="url(#p677ac388e1)" style="fill: none; stroke: #b0b0b0; stroke-opacity: 0.3; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_32">
+      <g>
+       <use xlink:href="#m8a6f2d3311" x="57.17" y="94.89" style="stroke: #000000; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_17">
+      <text style="font-size: 10px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: end" x="50.17" y="98.69" transform="rotate(-0 50.17 98.69)">1500</text>
+     </g>
+    </g>
+    <g id="ytick_8">
+     <g id="line2d_33">
+      <path d="M 57.17 64.18 
+L 565.2 64.18 
+" clip-path="url(#p677ac388e1)" style="fill: none; stroke: #b0b0b0; stroke-opacity: 0.3; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_34">
+      <g>
+       <use xlink:href="#m8a6f2d3311" x="57.17" y="64.18" style="stroke: #000000; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_18">
+      <text style="font-size: 10px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: end" x="50.17" y="67.98" transform="rotate(-0 50.17 67.98)">1750</text>
+     </g>
+    </g>
+    <g id="ytick_9">
+     <g id="line2d_35">
+      <path d="M 57.17 33.47 
+L 565.2 33.47 
+" clip-path="url(#p677ac388e1)" style="fill: none; stroke: #b0b0b0; stroke-opacity: 0.3; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_36">
+      <g>
+       <use xlink:href="#m8a6f2d3311" x="57.17" y="33.47" style="stroke: #000000; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_19">
+      <text style="font-size: 10px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: end" x="50.17" y="37.27" transform="rotate(-0 50.17 37.27)">2000</text>
+     </g>
+    </g>
+    <g id="text_20">
+     <text style="font-size: 10px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: middle" x="18.64" y="153.02" transform="rotate(-90 18.64 153.02)">Rate (kbps)</text>
+    </g>
+   </g>
+   <g id="patch_3">
+    <path d="M 57.17 279.16 
+L 57.17 26.88 
+" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 565.2 279.16 
+L 565.2 26.88 
+" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="patch_5">
+    <path d="M 57.17 279.16 
+L 565.2 279.16 
+" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="patch_6">
+    <path d="M 57.17 26.88 
+L 565.2 26.88 
+" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="text_21">
+    <text style="font-size: 12px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: middle" x="311.19" y="20.88" transform="rotate(-0 311.19 20.88)">Per-class throughput shares — diffserv-wfq-true-pgps (WFQ rate fairness)</text>
+   </g>
+   <g id="legend_1">
+    <g id="patch_7">
+     <path d="M 62.77 56.77 
+L 93.46 56.77 
+Q 95.06 56.77 95.06 55.16 
+L 95.06 32.48 
+Q 95.06 30.88 93.46 30.88 
+L 62.77 30.88 
+Q 61.17 30.88 61.17 32.48 
+L 61.17 55.16 
+Q 61.17 56.77 62.77 56.77 
+z
+" style="fill: #ffffff; opacity: 0.8; stroke: #cccccc; stroke-linejoin: miter"/>
+    </g>
+    <g id="patch_8">
+     <path d="M 64.37 40.16 
+L 80.37 40.16 
+L 80.37 34.56 
+L 64.37 34.56 
+z
+" style="fill: #1f77b4; fill-opacity: 0.6"/>
+    </g>
+    <g id="text_22">
+     <text style="font-size: 8px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: start" x="86.77" y="40.16" transform="rotate(-0 86.77 40.16)">0</text>
+    </g>
+    <g id="patch_9">
+     <path d="M 64.37 51.90 
+L 80.37 51.90 
+L 80.37 46.30 
+L 64.37 46.30 
+z
+" style="fill: #ff7f0e; fill-opacity: 0.6"/>
+    </g>
+    <g id="text_23">
+     <text style="font-size: 8px; font-family: 'DejaVu Sans', 'Bitstream Vera Sans', 'Computer Modern Sans Serif', 'Lucida Grande', 'Verdana', 'Geneva', 'Lucid', 'Arial', 'Helvetica', 'Avant Garde', sans-serif; text-anchor: start" x="86.77" y="51.90" transform="rotate(-0 86.77 51.90)">1</text>
+    </g>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="p677ac388e1">
+   <rect x="57.17" y="26.88" width="508.03" height="252.28"/>
+  </clipPath>
+ </defs>
+</svg>

@@ -1,0 +1,11 @@
+{
+  "test_name": "rrul",
+  "length_s": "1.000",
+  "step_size_s": "0.200",
+  "bandwidth_bps": "10000000",
+  "rtt_ms": "20.000",
+  "topology_class": "test",
+  "ns3_build_sha": "abc123",
+  "aqm": "test",
+  "dscp_map": {}
+}

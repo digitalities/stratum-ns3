@@ -1,0 +1,155 @@
+diff --git a/src/traffic-control/model/tbf-queue-disc.cc b/src/traffic-control/model/tbf-queue-disc.cc
+index b81d5482a..205d77eaf 100644
+--- a/src/traffic-control/model/tbf-queue-disc.cc
++++ b/src/traffic-control/model/tbf-queue-disc.cc
+@@ -276,8 +276,20 @@ TbfQueueDisc::DoDequeue()
+                 }
+             }
+             NS_ASSERT_MSG(requiredDelayTime.GetSeconds() >= 0, "Negative time");
+-            m_id = Simulator::Schedule(requiredDelayTime, &QueueDisc::Run, this);
+-            NS_LOG_LOGIC("Waking Event Scheduled in " << requiredDelayTime.As(Time::S));
++            // Skip the self-scheduled wake when no send callback is bound
++            // (the inner-qdisc configuration). The parent qdisc revisits
++            // this child on its own dequeue cadence; tokens accumulate via
++            // the elapsed-time delta in DoDequeue.
++            if (GetSendCallback())
++            {
++                m_id = Simulator::Schedule(requiredDelayTime, &QueueDisc::Run, this);
++                NS_LOG_LOGIC("Waking Event Scheduled in " << requiredDelayTime.As(Time::S));
++            }
++            else
++            {
++                NS_LOG_LOGIC("Inner queue disc deployment (no send callback); "
++                             "wake deferred to parent qdisc cadence");
++            }
+         }
+     }
+     return nullptr;
+diff --git a/src/traffic-control/test/tbf-queue-disc-test-suite.cc b/src/traffic-control/test/tbf-queue-disc-test-suite.cc
+index 583687824..63d7db9a6 100644
+--- a/src/traffic-control/test/tbf-queue-disc-test-suite.cc
++++ b/src/traffic-control/test/tbf-queue-disc-test-suite.cc
+@@ -526,6 +526,116 @@ TbfQueueDiscTestCase::DoRun()
+     Simulator::Destroy();
+ }
+ 
++/**
++ * @ingroup traffic-control-test
++ *
++ * @brief TbfQueueDisc operating as an inner queue disc.
++ *
++ * Drives the qdisc with no send callback bound and checks that the
++ * realised throughput tracks the configured rate within ±5 %.
++ */
++class TbfAsInnerQdiscTestCase : public TestCase
++{
++  public:
++    TbfAsInnerQdiscTestCase();
++    ~TbfAsInnerQdiscTestCase() override;
++
++  private:
++    void DoRun() override;
++
++    /**
++     * @brief Periodic dequeue callback emulating a parent qdisc's polling.
++     * @param queue the queue under test
++     * @param bytesOut accumulated dequeued payload bytes
++     */
++    void Poll(Ptr<TbfQueueDisc> queue, uint32_t* bytesOut);
++};
++
++TbfAsInnerQdiscTestCase::TbfAsInnerQdiscTestCase()
++    : TestCase("Tbf as inner qdisc rate respected")
++{
++}
++
++TbfAsInnerQdiscTestCase::~TbfAsInnerQdiscTestCase()
++{
++}
++
++void
++TbfAsInnerQdiscTestCase::Poll(Ptr<TbfQueueDisc> queue, uint32_t* bytesOut)
++{
++    Ptr<QueueDiscItem> item = queue->Dequeue();
++    if (item)
++    {
++        *bytesOut += item->GetSize();
++    }
++}
++
++void
++TbfAsInnerQdiscTestCase::DoRun()
++{
++    // Configure TBF as if it were an inner qdisc: never call SetSendCallback().
++    Ptr<TbfQueueDisc> queue = CreateObject<TbfQueueDisc>();
++
++    constexpr uint32_t pktSize = 1000;          // bytes per packet
++    constexpr uint32_t burst = 1500;            // bytes
++    constexpr uint64_t rateBps = 80000;         // 10 KB/s = 10 packets/s
++    const Time pollInterval = MilliSeconds(10); // parent qdisc polling cadence
++    const Time runDuration = Seconds(5);
++    constexpr uint32_t enqueuedPackets = 60; // exceeds drainable in 5s
++
++    NS_TEST_ASSERT_MSG_EQ(queue->SetAttributeFailSafe("MaxSize", QueueSizeValue(QueueSize("100p"))),
++                          true,
++                          "Verify that we can set MaxSize");
++    NS_TEST_ASSERT_MSG_EQ(queue->SetAttributeFailSafe("Burst", UintegerValue(burst)),
++                          true,
++                          "Verify that we can set Burst");
++    NS_TEST_ASSERT_MSG_EQ(queue->SetAttributeFailSafe("Mtu", UintegerValue(pktSize)),
++                          true,
++                          "Verify that we can set Mtu");
++    NS_TEST_ASSERT_MSG_EQ(queue->SetAttributeFailSafe("Rate", DataRateValue(DataRate(rateBps))),
++                          true,
++                          "Verify that we can set Rate");
++    queue->Initialize();
++
++    NS_TEST_ASSERT_MSG_EQ(queue->GetSendCallback().operator bool(),
++                          false,
++                          "Pre-condition: inner qdisc has no send callback");
++
++    Address dest;
++    for (uint32_t i = 0; i < enqueuedPackets; ++i)
++    {
++        queue->Enqueue(Create<TbfQueueDiscTestItem>(Create<Packet>(pktSize), dest));
++    }
++
++    uint32_t bytesDequeued = 0;
++    for (Time t = Time(0); t <= runDuration; t += pollInterval)
++    {
++        Simulator::Schedule(t, &TbfAsInnerQdiscTestCase::Poll, this, queue, &bytesDequeued);
++    }
++
++    // If the fix is missing, the watchdog scheduled inside DoDequeue fires
++    // QueueDisc::Run on this, which trips NS_ASSERT_MSG(m_send, ...) in
++    // QueueDisc::Transmit during Simulator::Run.
++    Simulator::Run();
++
++    // Realised bytes over runDuration should be close to rate * runDuration,
++    // bounded above by burst + (rate * runDuration). The +burst tolerates the
++    // initial bucket fill; the lower bound allows ~5% slack for granularity.
++    const auto expectedBytes =
++        static_cast<uint64_t>(rateBps / 8) * static_cast<uint64_t>(runDuration.GetSeconds());
++    const auto lowerBound = static_cast<uint64_t>(0.95 * expectedBytes);
++    const uint64_t upperBound = expectedBytes + burst + pktSize;
++
++    NS_TEST_EXPECT_MSG_GT_OR_EQ(bytesDequeued,
++                                lowerBound,
++                                "Realised throughput at least 95% of configured rate");
++    NS_TEST_EXPECT_MSG_LT_OR_EQ(bytesDequeued,
++                                upperBound,
++                                "Realised throughput at most rate*duration + burst");
++
++    Simulator::Destroy();
++}
++
+ /**
+  * @ingroup traffic-control-test
+  *
+@@ -538,5 +648,6 @@ static class TbfQueueDiscTestSuite : public TestSuite
+         : TestSuite("tbf-queue-disc", Type::UNIT)
+     {
+         AddTestCase(new TbfQueueDiscTestCase(), TestCase::Duration::QUICK);
++        AddTestCase(new TbfAsInnerQdiscTestCase(), TestCase::Duration::QUICK);
+     }
+ } g_tbfQueueTestSuite; ///< the test suite

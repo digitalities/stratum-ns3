@@ -1,0 +1,11 @@
+{
+  "test_name": "tcp_4up_squarewave",
+  "length_s": "60.000",
+  "step_size_s": "0.200",
+  "bandwidth_bps": "100000000",
+  "rtt_ms": "40.000",
+  "topology_class": "dumbbell, single bottleneck",
+  "ns3_build_sha": "golden",
+  "aqm": "DsRateBasedShaperDispatcher",
+  "dscp_map": {}
+}

@@ -1,0 +1,78 @@
+name: Bug report
+description: Report unexpected behaviour in Stratum
+title: "[bug] "
+labels: ["kind/bug", "status/triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug report! Please fill in the fields below so we can reproduce and triage quickly.
+
+        For ns-3 mainline defects surfaced by Stratum (e.g. crashes in core ns-3 classes), select "ns-3 mainline" in the **Where** field — we file these upstream via `patches/ns3/`.
+
+        For security-impacting defects, please email `digitalities@gmail.com` rather than opening a public issue.
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where is the defect?
+      options:
+        - "Stratum substrate (model/, helper/) — DiffServ / L4S / CAKE client"
+        - "Scripts (scripts/)"
+        - "Documentation (handbook, specs)"
+        - "ns-3 mainline (surfaced by this work)"
+        - "Other (describe in the body)"
+    validations:
+      required: true
+  - type: input
+    id: example
+    attributes:
+      label: Example or scenario used
+      description: "Which example .cc file or scenario shows the problem?"
+      placeholder: "e.g., diffserv-example-1.cc, or 'cake-rrul with --rate=10Mbps'"
+    validations:
+      required: true
+  - type: input
+    id: spec
+    attributes:
+      label: Related spec (optional)
+      description: "If the defect violates a spec assertion, name it (e.g. S-2.1, Q-1.3, I-2.6)."
+  - type: input
+    id: ns3-commit
+    attributes:
+      label: ns-3 commit hash
+      description: "Output of `git rev-parse HEAD` in your ns-3 checkout (or the pinned commit from fetch-ns3.sh if you used it as-is)"
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Build environment
+      description: "OS + compiler version + Python version"
+      placeholder: "macOS 14.5, clang 15, Python 3.11"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. ... \n2. ... \n3. ..."
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or output
+      description: "Paste relevant `./ns3 run` output, test failures, or build errors."
+      render: shell

@@ -1,0 +1,91 @@
+diff --git a/src/internet/model/tcp-socket-base.cc b/src/internet/model/tcp-socket-base.cc
+index c27e3f3b1..a3d721654 100644
+--- a/src/internet/model/tcp-socket-base.cc
++++ b/src/internet/model/tcp-socket-base.cc
+@@ -48,6 +48,7 @@
+ #include "ns3/object.h"
+ #include "ns3/packet.h"
+ #include "ns3/pointer.h"
++#include "ns3/random-variable-stream.h"
+ #include "ns3/simulation-singleton.h"
+ #include "ns3/simulator.h"
+ #include "ns3/trace-source-accessor.h"
+@@ -239,6 +240,24 @@ TcpSocketBase::GetTypeId()
+                           UintegerValue(1048576),
+                           MakeUintegerAccessor(&TcpSocketBase::m_tsqLimitBytes),
+                           MakeUintegerChecker<uint32_t>(1500, 1u << 30))
++            .AddAttribute("EnableAckPhaseJitter",
++                          "Enable opt-in TCP ACK phase jitter: a Floyd & Jacobson "
++                          "1994 random-phase perturbation applied at the simulator "
++                          "level. When true, each received ACK in ProcessEstablished "
++                          "is delayed by a uniform U[0, AckPhaseJitterMaxUs] "
++                          "microsecond interval before ReceivedAck is invoked. "
++                          "Default false to preserve deterministic semantics for "
++                          "existing tests.",
++                          BooleanValue(false),
++                          MakeBooleanAccessor(&TcpSocketBase::m_enableAckPhaseJitter),
++                          MakeBooleanChecker())
++            .AddAttribute("AckPhaseJitterMaxUs",
++                          "Maximum ACK processing jitter in microseconds when "
++                          "EnableAckPhaseJitter=true. The actual jitter per ACK is "
++                          "drawn uniformly from [0, this value].",
++                          UintegerValue(100),
++                          MakeUintegerAccessor(&TcpSocketBase::m_ackPhaseJitterMaxUs),
++                          MakeUintegerChecker<uint32_t>(0, 1000000))
+             .AddTraceSource("RTO",
+                             "Retransmission timeout",
+                             MakeTraceSourceAccessor(&TcpSocketBase::m_rto),
+@@ -1644,7 +1663,22 @@ TcpSocketBase::ProcessEstablished(Ptr<Packet> packet, const TcpHeader& tcpHeader
+         {
+             // SND.UNA < SEG.ACK =< HighTxMark
+             // Pag. 72 RFC 793
+-            ReceivedAck(packet, tcpHeader);
++            if (m_enableAckPhaseJitter && m_ackPhaseJitterMaxUs > 0)
++            {
++                if (!m_ackPhaseJitterRng)
++                {
++                    m_ackPhaseJitterRng = CreateObject<UniformRandomVariable>();
++                }
++                uint32_t jitterUs =
++                    m_ackPhaseJitterRng->GetInteger(0, m_ackPhaseJitterMaxUs);
++                Simulator::Schedule(MicroSeconds(jitterUs),
++                                    &TcpSocketBase::ReceivedAck,
++                                    this, packet, tcpHeader);
++            }
++            else
++            {
++                ReceivedAck(packet, tcpHeader);
++            }
+         }
+     }
+     else if (tcpflags == TcpHeader::SYN || tcpflags == (TcpHeader::SYN | TcpHeader::ACK))
+diff --git a/src/internet/model/tcp-socket-base.h b/src/internet/model/tcp-socket-base.h
+index c8ff0bb8f..c1e702f47 100644
+--- a/src/internet/model/tcp-socket-base.h
++++ b/src/internet/model/tcp-socket-base.h
+@@ -32,6 +32,7 @@ class Node;
+ class Packet;
+ class TcpL4Protocol;
+ class TcpHeader;
++class UniformRandomVariable;
+ class TcpCongestionOps;
+ class TcpRecoveryOps;
+ class RttEstimator;
+@@ -1528,6 +1529,17 @@ class TcpSocketBase : public TcpSocket
+     // the qdisc to ~2 ms of pacing-rate-equivalent work. Default off.
+     bool m_enableTsq{false};         //!< Opt-in flag for TSQ cap.
+     uint32_t m_tsqLimitBytes{1048576}; //!< Bytes-in-flight cap (1 MB Linux default).
++
++    // TCP ACK phase jitter — Floyd & Jacobson 1994 random-phase prescription
++    // applied at the simulator level. When EnableAckPhaseJitter=true, each
++    // received ACK in ProcessEstablished is delayed by a uniform
++    // U[0, AckPhaseJitterMaxUs] microsecond interval before reaching
++    // ReceivedAck. This breaks the cross-flow phase coherence that ns-3's
++    // deterministic discrete-event semantics otherwise preserve, which
++    // Linux's NAPI/softirq scheduling breaks by other means. Default off.
++    bool m_enableAckPhaseJitter{false};      //!< Opt-in flag for ACK phase jitter.
++    uint32_t m_ackPhaseJitterMaxUs{100};     //!< Maximum jitter in microseconds.
++    Ptr<UniformRandomVariable> m_ackPhaseJitterRng; //!< Lazy-init RNG for jitter.
+ };
+ 
+ /**

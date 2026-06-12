@@ -1,0 +1,608 @@
+diff --git a/src/internet/CMakeLists.txt b/src/internet/CMakeLists.txt
+index 78ef8706e..afdebd873 100644
+--- a/src/internet/CMakeLists.txt
++++ b/src/internet/CMakeLists.txt
+@@ -90,6 +90,8 @@ set(source_files
+     model/tcp-congestion-ops.cc
+     model/tcp-cubic.cc
+     model/tcp-dctcp.cc
++    model/tcp-gso-origin-tag.cc
++    model/tcp-gso-segmenter.cc
+     model/tcp-header.cc
+     model/tcp-highspeed.cc
+     model/tcp-htcp.cc
+@@ -217,6 +219,8 @@ set(header_files
+     model/tcp-congestion-ops.h
+     model/tcp-cubic.h
+     model/tcp-dctcp.h
++    model/tcp-gso-origin-tag.h
++    model/tcp-gso-segmenter.h
+     model/tcp-header.h
+     model/tcp-highspeed.h
+     model/tcp-htcp.h
+diff --git a/src/internet/model/ipv4-l3-protocol.cc b/src/internet/model/ipv4-l3-protocol.cc
+index e00c4354e..6940f369b 100644
+--- a/src/internet/model/ipv4-l3-protocol.cc
++++ b/src/internet/model/ipv4-l3-protocol.cc
+@@ -16,6 +16,7 @@
+ #include "ipv4-raw-socket-impl.h"
+ #include "ipv4-route.h"
+ #include "loopback-net-device.h"
++#include "tcp-gso-origin-tag.h"
+ 
+ #include "ns3/boolean.h"
+ #include "ns3/callback.h"
+@@ -957,7 +958,16 @@ Ipv4L3Protocol::SendRealOut(Ptr<Ipv4Route> route, Ptr<Packet> packet, const Ipv4
+     if (outInterface->IsUp())
+     {
+         NS_LOG_LOGIC("Send to " << targetLabel << " " << target);
+-        if (packet->GetSize() + ipHeader.GetSerializedSize() > outInterface->GetDevice()->GetMtu())
++        // GSO super-segments bypass IP-layer fragmentation. The TrafficControlLayer
++        // egress hook re-segments them into MTU-sized fragments with valid
++        // per-segment TCP headers just before NetDevice::Send. This matches
++        // Linux's GSO semantics, where dev_queue_xmit/skb_segment performs
++        // the segmentation after the qdisc has counted the super-skb as one
++        // arrival.
++        TcpGsoOriginTag gsoProbeTag;
++        bool isGsoSuperSegment = packet->PeekPacketTag(gsoProbeTag);
++        if (!isGsoSuperSegment &&
++            packet->GetSize() + ipHeader.GetSerializedSize() > outInterface->GetDevice()->GetMtu())
+         {
+             std::list<Ipv4PayloadHeaderPair> listFragments;
+             DoFragmentation(packet, ipHeader, outInterface->GetDevice()->GetMtu(), listFragments);
+diff --git a/src/internet/model/tcp-gso-origin-tag.cc b/src/internet/model/tcp-gso-origin-tag.cc
+new file mode 100644
+index 000000000..81109f860
+--- /dev/null
++++ b/src/internet/model/tcp-gso-origin-tag.cc
+@@ -0,0 +1,73 @@
++/*
++ * SPDX-License-Identifier: GPL-2.0-only
++ */
++#include "tcp-gso-origin-tag.h"
++
++namespace ns3
++{
++
++NS_OBJECT_ENSURE_REGISTERED(TcpGsoOriginTag);
++
++TcpGsoOriginTag::TcpGsoOriginTag() = default;
++
++TcpGsoOriginTag::TcpGsoOriginTag(uint16_t mssSize, uint16_t segCount)
++    : m_mssSize(mssSize),
++      m_segCount(segCount)
++{
++}
++
++TypeId
++TcpGsoOriginTag::GetTypeId()
++{
++    static TypeId tid = TypeId("ns3::TcpGsoOriginTag")
++                            .SetParent<Tag>()
++                            .SetGroupName("Internet")
++                            .AddConstructor<TcpGsoOriginTag>();
++    return tid;
++}
++
++TypeId
++TcpGsoOriginTag::GetInstanceTypeId() const
++{
++    return GetTypeId();
++}
++
++uint32_t
++TcpGsoOriginTag::GetSerializedSize() const
++{
++    return 4;
++}
++
++void
++TcpGsoOriginTag::Serialize(TagBuffer i) const
++{
++    i.WriteU16(m_mssSize);
++    i.WriteU16(m_segCount);
++}
++
++void
++TcpGsoOriginTag::Deserialize(TagBuffer i)
++{
++    m_mssSize = i.ReadU16();
++    m_segCount = i.ReadU16();
++}
++
++void
++TcpGsoOriginTag::Print(std::ostream& os) const
++{
++    os << "mssSize=" << m_mssSize << " segCount=" << m_segCount;
++}
++
++uint16_t
++TcpGsoOriginTag::GetMssSize() const
++{
++    return m_mssSize;
++}
++
++uint16_t
++TcpGsoOriginTag::GetSegCount() const
++{
++    return m_segCount;
++}
++
++} // namespace ns3
+diff --git a/src/internet/model/tcp-gso-origin-tag.h b/src/internet/model/tcp-gso-origin-tag.h
+new file mode 100644
+index 000000000..0c5ae7cab
+--- /dev/null
++++ b/src/internet/model/tcp-gso-origin-tag.h
+@@ -0,0 +1,78 @@
++/*
++ * SPDX-License-Identifier: GPL-2.0-only
++ */
++#ifndef TCP_GSO_ORIGIN_TAG_H
++#define TCP_GSO_ORIGIN_TAG_H
++
++#include "ns3/tag.h"
++
++namespace ns3
++{
++
++/**
++ * \ingroup tcp
++ *
++ * \brief Packet tag identifying a super-segment emitted by TcpSocketBase
++ *        under Generic Segmentation Offload.
++ *
++ * When TcpSocketBase has EnableGso=true and emits a super-segment of up to
++ * MaxGsoSize bytes, it attaches this tag carrying the per-segment MSS and
++ * the count of MSS-sized fragments to be produced at the egress hook.
++ *
++ * The tag is consumed by TrafficControlLayer just before NetDevice::Send:
++ * the layer parses the IPv4 and TCP headers from the super-segment, clones
++ * for each of the SegCount fragments (sequence number advanced by
++ * MssSize per fragment, FIN/PSH only on the last), recomputes the IPv4
++ * and TCP checksums, and emits MTU-sized packets to the underlying device.
++ *
++ * The qdisc, on the other hand, sees the super-segment intact: this is
++ * the observable semantics of Linux TSO/GSO at the qdisc/device boundary,
++ * where dev_queue_xmit segments the sk_buff after the qdisc has counted
++ * it as one arrival.
++ */
++class TcpGsoOriginTag : public Tag
++{
++  public:
++    /**
++     * \brief Default constructor.
++     */
++    TcpGsoOriginTag();
++
++    /**
++     * \brief Constructor.
++     *
++     * \param mssSize MSS-sized fragment payload bytes (typically the socket's segment size).
++     * \param segCount Number of MSS-sized fragments to produce at egress.
++     */
++    TcpGsoOriginTag(uint16_t mssSize, uint16_t segCount);
++
++    /**
++     * \brief Get the TypeId.
++     * \return The object TypeId.
++     */
++    static TypeId GetTypeId();
++
++    TypeId GetInstanceTypeId() const override;
++    uint32_t GetSerializedSize() const override;
++    void Serialize(TagBuffer i) const override;
++    void Deserialize(TagBuffer i) override;
++    void Print(std::ostream& os) const override;
++
++    /**
++     * \return MSS-sized fragment payload bytes.
++     */
++    uint16_t GetMssSize() const;
++
++    /**
++     * \return Count of MSS-sized fragments the egress hook should produce.
++     */
++    uint16_t GetSegCount() const;
++
++  private:
++    uint16_t m_mssSize{0};  //!< MSS-sized fragment payload bytes.
++    uint16_t m_segCount{0}; //!< Count of MSS-sized fragments.
++};
++
++} // namespace ns3
++
++#endif /* TCP_GSO_ORIGIN_TAG_H */
+diff --git a/src/internet/model/tcp-gso-segmenter.cc b/src/internet/model/tcp-gso-segmenter.cc
+new file mode 100644
+index 000000000..1bea61ff8
+--- /dev/null
++++ b/src/internet/model/tcp-gso-segmenter.cc
+@@ -0,0 +1,113 @@
++/*
++ * SPDX-License-Identifier: GPL-2.0-only
++ */
++#include "tcp-gso-segmenter.h"
++
++#include "ipv4-header.h"
++#include "ipv4-queue-disc-item.h"
++#include "tcp-gso-origin-tag.h"
++#include "tcp-header.h"
++
++#include "ns3/log.h"
++#include "ns3/net-device.h"
++#include "ns3/packet.h"
++#include "ns3/traffic-control-layer.h"
++
++namespace ns3
++{
++
++NS_LOG_COMPONENT_DEFINE("TcpGsoSegmenter");
++
++bool
++TcpGsoSegment(Ptr<NetDevice> device, Ptr<QueueDiscItem> item)
++{
++    NS_LOG_FUNCTION(device << item);
++
++    Ptr<Packet> packet = item->GetPacket();
++    TcpGsoOriginTag gsoTag;
++    if (!packet->PeekPacketTag(gsoTag))
++    {
++        return false;
++    }
++
++    Ptr<Ipv4QueueDiscItem> ipItem = DynamicCast<Ipv4QueueDiscItem>(item);
++    NS_ASSERT_MSG(ipItem, "GSO supported only for Ipv4QueueDiscItem");
++
++    Ipv4Header origIp;
++    TcpHeader origTcp;
++    // Packet currently has [Ipv4 hdr][TCP hdr][payload].
++    // QueueDisc::Dequeue called item->AddHeader() before reaching the egress
++    // callback, so the IPv4 header is at the front of the byte stream.
++    packet->RemoveHeader(origIp);
++    packet->RemoveHeader(origTcp);
++    packet->RemovePacketTag(gsoTag);
++
++    const uint16_t mssSize = gsoTag.GetMssSize();
++    const uint16_t segCount = gsoTag.GetSegCount();
++    const SequenceNumber32 origSeq = origTcp.GetSequenceNumber();
++    const uint8_t origFlags = origTcp.GetFlags();
++    const uint32_t totalPayload = packet->GetSize();
++
++    NS_ASSERT_MSG(totalPayload > 0, "GSO super-segment has zero payload");
++    NS_LOG_DEBUG("GSO segmenting payload=" << totalPayload << " mss=" << mssSize
++                                            << " segCount=" << segCount);
++
++    uint32_t consumed = 0;
++    for (uint16_t i = 0; i < segCount; ++i)
++    {
++        const uint32_t fragSize = std::min<uint32_t>(mssSize, totalPayload - consumed);
++        if (fragSize == 0)
++        {
++            break;
++        }
++        Ptr<Packet> fragPayload = packet->CreateFragment(consumed, fragSize);
++        consumed += fragSize;
++
++        // Copy-construct from the original TCP header to preserve options
++        // (timestamps, SACK-permitted, window-scale, etc.). Then adjust the
++        // sequence number, FIN/PSH flags, and recompute the checksum.
++        TcpHeader segTcp = origTcp;
++        segTcp.SetSequenceNumber(origSeq + i * mssSize);
++        uint8_t segFlags = origFlags;
++        if (i < segCount - 1)
++        {
++            segFlags &= ~(static_cast<uint8_t>(TcpHeader::FIN) |
++                          static_cast<uint8_t>(TcpHeader::PSH));
++        }
++        segTcp.SetFlags(segFlags);
++        segTcp.InitializeChecksum(origIp.GetSource(), origIp.GetDestination(), 6 /* TCP */);
++        segTcp.EnableChecksums();
++
++        Ipv4Header segIp = origIp;
++        segIp.SetPayloadSize(segTcp.GetSerializedSize() + fragSize);
++
++        Ptr<Packet> segPacket = fragPayload->Copy();
++        segPacket->AddHeader(segTcp);
++
++        Ptr<Ipv4QueueDiscItem> segItem =
++            Create<Ipv4QueueDiscItem>(segPacket, item->GetAddress(), 0x0800, segIp);
++        segItem->AddHeader();
++        device->Send(segItem->GetPacket(), segItem->GetAddress(), segItem->GetProtocol());
++    }
++    return true;
++}
++
++namespace
++{
++/**
++ * Register the TCP GSO segmenter with the Traffic Control layer at
++ * static-init time. The internet library is linked into any binary
++ * that exercises TCP, so this registration runs once per process.
++ */
++struct TcpGsoSegmenterRegistrar
++{
++    TcpGsoSegmenterRegistrar()
++    {
++        TrafficControlLayer::RegisterGsoSegmenter(MakeCallback(&TcpGsoSegment));
++    }
++};
++
++static TcpGsoSegmenterRegistrar s_tcpGsoSegmenterRegistrar;
++} // namespace
++
++} // namespace ns3
+diff --git a/src/internet/model/tcp-gso-segmenter.h b/src/internet/model/tcp-gso-segmenter.h
+new file mode 100644
+index 000000000..9197de59c
+--- /dev/null
++++ b/src/internet/model/tcp-gso-segmenter.h
+@@ -0,0 +1,50 @@
++/*
++ * SPDX-License-Identifier: GPL-2.0-only
++ */
++#ifndef TCP_GSO_SEGMENTER_H
++#define TCP_GSO_SEGMENTER_H
++
++#include "ns3/ptr.h"
++
++namespace ns3
++{
++
++class NetDevice;
++class QueueDiscItem;
++
++/**
++ * \ingroup tcp
++ *
++ * \brief TCP-aware re-segmentation of a GSO super-segment, called by the
++ *        Traffic Control egress hook via the registered GsoSegmenter callback.
++ *
++ * The function inspects the QueueDiscItem for a TcpGsoOriginTag. If absent,
++ * it returns false and the caller forwards the item unchanged to
++ * `NetDevice::Send`. If present, the function:
++ *
++ *  - dynamic-casts the item to `Ipv4QueueDiscItem` (asserts on failure);
++ *  - removes the IPv4 and TCP headers from the packet bytes (they were
++ *    serialized into the packet by `QueueDisc::Dequeue` via
++ *    `Ipv4QueueDiscItem::AddHeader`);
++ *  - splits the remaining payload into `segCount` fragments of `mssSize`
++ *    bytes (last fragment may be shorter);
++ *  - clones the TCP header for each fragment (sequence number advanced by
++ *    `mssSize`; FIN and PSH bits cleared on all but the last fragment;
++ *    other flags inherited unchanged);
++ *  - clones the IPv4 header for each fragment (total length adjusted);
++ *  - recomputes both checksums via the standard ns-3 header machinery;
++ *  - emits each MTU-sized fragment to `NetDevice::Send`.
++ *
++ * The receiver TCP stack sees N valid TCP segments with monotonically
++ * advancing sequence numbers, matching the wire-side behavior of Linux's
++ * `dev_queue_xmit` → `skb_segment` path after the qdisc has counted the
++ * super-skb as one arrival.
++ *
++ * Returns true if the function consumed the item (segmented + emitted).
++ * Returns false if the item is not a GSO super-segment.
++ */
++bool TcpGsoSegment(Ptr<NetDevice> device, Ptr<QueueDiscItem> item);
++
++} // namespace ns3
++
++#endif /* TCP_GSO_SEGMENTER_H */
+diff --git a/src/internet/model/tcp-socket-base.cc b/src/internet/model/tcp-socket-base.cc
+index 439cc11fc..b694909fd 100644
+--- a/src/internet/model/tcp-socket-base.cc
++++ b/src/internet/model/tcp-socket-base.cc
+@@ -25,6 +25,7 @@
+ #include "ipv6-routing-protocol.h"
+ #include "rtt-estimator.h"
+ #include "tcp-congestion-ops.h"
++#include "tcp-gso-origin-tag.h"
+ #include "tcp-header.h"
+ #include "tcp-l4-protocol.h"
+ #include "tcp-option-sack-permitted.h"
+@@ -205,6 +206,22 @@ TcpSocketBase::GetTypeId()
+                           BooleanValue(false),
+                           MakeBooleanAccessor(&TcpSocketBase::m_useAbe),
+                           MakeBooleanChecker())
++            .AddAttribute("EnableGso",
++                          "Enable opt-in TCP Generic Segmentation Offload (GSO). "
++                          "When true, SendPendingData emits super-segments up to "
++                          "MaxGsoSize bytes per iteration; TrafficControlLayer "
++                          "re-segments to MTU before NetDevice::Send. Default "
++                          "false: zero regression risk to the existing TCP suite.",
++                          BooleanValue(false),
++                          MakeBooleanAccessor(&TcpSocketBase::m_enableGso),
++                          MakeBooleanChecker())
++            .AddAttribute("MaxGsoSize",
++                          "Maximum super-segment payload size in bytes when "
++                          "EnableGso=true. Bounded by [1500, 65535]; effective "
++                          "emission is min(MaxGsoSize, availableWindow, nextHigh-next).",
++                          UintegerValue(1500),
++                          MakeUintegerAccessor(&TcpSocketBase::m_maxGsoSize),
++                          MakeUintegerChecker<uint16_t>(1500, 65535))
+             .AddTraceSource("RTO",
+                             "Retransmission timeout",
+                             MakeTraceSourceAccessor(&TcpSocketBase::m_rto),
+@@ -3310,6 +3327,18 @@ TcpSocketBase::SendDataPacket(SequenceNumber32 seq, uint32_t maxSize, bool withA
+     bool isEct = IsEct(isRetransmission ? TcpPacketType_t::RE_XMT : TcpPacketType_t::DATA);
+     AddSocketTags(p, isEct);
+ 
++    // GSO opt-in: tag the super-segment so the traffic-control egress hook
++    // re-segments it into MTU-sized fragments with valid per-segment TCP
++    // headers. The tag is consumed and removed at the egress hook; receivers
++    // never see it. Only tag when the emission exceeds one MSS.
++    if (m_enableGso && sz > m_tcb->m_segmentSize)
++    {
++        uint16_t segCount =
++            static_cast<uint16_t>((sz + m_tcb->m_segmentSize - 1) / m_tcb->m_segmentSize);
++        TcpGsoOriginTag gsoTag(static_cast<uint16_t>(m_tcb->m_segmentSize), segCount);
++        p->AddPacketTag(gsoTag);
++    }
++
+     if (m_closeOnEmpty && (remainingData == 0))
+     {
+         flags |= TcpHeader::FIN;
+@@ -3538,10 +3567,25 @@ TcpSocketBase::SendPendingData(bool withAck)
+                 break;
+             }
+ 
+-            uint32_t s = std::min(availableWindow, m_tcb->m_segmentSize);
+-            // NextSeg () may have further constrained the segment size
++            // GSO opt-in: when EnableGso=true, allow emission of a super-segment
++            // of up to MaxGsoSize bytes per loop iteration instead of one MSS.
++            // The qdisc sees the super-segment intact (matching Linux GSO at
++            // the dev_queue_xmit boundary); TrafficControlLayer re-segments to
++            // MTU before NetDevice::Send. Default off → behavior unchanged.
++            uint32_t effectiveMaxSize = m_enableGso
++                                            ? std::min<uint32_t>(m_maxGsoSize, availableWindow)
++                                            : m_tcb->m_segmentSize;
++            uint32_t s = std::min(availableWindow, effectiveMaxSize);
++            // NextSeg () may have further constrained the segment size. For
++            // GSO in normal forward-data emission, the per-MSS clamp is bypassed
++            // (the qdisc and the egress hook accept super-segments and re-fragment
++            // them). The clamp still applies on the SACK-recovery path
++            // (enableRule3=true) where MSS-precise retransmission is required.
+             auto maxSizeToSend = static_cast<uint32_t>(nextHigh - next);
+-            s = std::min(s, maxSizeToSend);
++            if (!m_enableGso || enableRule3)
++            {
++                s = std::min(s, maxSizeToSend);
++            }
+ 
+             // (C.2) If any of the data octets sent in (C.1) are below HighData,
+             //       HighRxt MUST be set to the highest sequence number of the
+diff --git a/src/internet/model/tcp-socket-base.h b/src/internet/model/tcp-socket-base.h
+index d91421479..de14ef054 100644
+--- a/src/internet/model/tcp-socket-base.h
++++ b/src/internet/model/tcp-socket-base.h
+@@ -1510,6 +1510,15 @@ class TcpSocketBase : public TcpSocket
+     TracedValue<SequenceNumber32> m_ecnCESeq{
+         0}; //!< Sequence number of the last received Congestion Experienced
+     TracedValue<SequenceNumber32> m_ecnCWRSeq{0}; //!< Sequence number of the last sent CWR
++
++    // Generic Segmentation Offload (GSO) — opt-in egress super-segmentation.
++    // When EnableGso=true, SendPendingData emits a single super-segment of
++    // up to MaxGsoSize bytes per loop iteration instead of one MSS. The
++    // super-segment carries TcpGsoOriginTag; TrafficControlLayer re-segments
++    // it into MTU-sized packets with valid per-segment TCP headers before
++    // NetDevice::Send. Default off, zero regression risk.
++    bool m_enableGso{false};     //!< Opt-in flag for GSO egress.
++    uint16_t m_maxGsoSize{1500}; //!< Maximum super-segment payload bytes; range [1500, 65535].
+ };
+ 
+ /**
+diff --git a/src/traffic-control/model/traffic-control-layer.cc b/src/traffic-control/model/traffic-control-layer.cc
+index 9b5cae78a..688450637 100644
+--- a/src/traffic-control/model/traffic-control-layer.cc
++++ b/src/traffic-control/model/traffic-control-layer.cc
+@@ -24,6 +24,29 @@ NS_LOG_COMPONENT_DEFINE("TrafficControlLayer");
+ 
+ NS_OBJECT_ENSURE_REGISTERED(TrafficControlLayer);
+ 
++TrafficControlLayer::GsoSegmenter TrafficControlLayer::s_gsoSegmenter;
++
++void
++TrafficControlLayer::RegisterGsoSegmenter(GsoSegmenter cb)
++{
++    s_gsoSegmenter = cb;
++}
++
++void
++TrafficControlLayer::SegmentAndSendIfGso(Ptr<NetDevice> device, Ptr<QueueDiscItem> item)
++{
++    NS_LOG_FUNCTION(device << item);
++    if (!s_gsoSegmenter.IsNull())
++    {
++        bool handled = s_gsoSegmenter(device, item);
++        if (handled)
++        {
++            return;
++        }
++    }
++    device->Send(item->GetPacket(), item->GetAddress(), item->GetProtocol());
++}
++
+ TypeId
+ TrafficControlLayer::GetTypeId()
+ {
+@@ -193,7 +216,7 @@ TrafficControlLayer::ScanDevices()
+             {
+                 q->SetNetDeviceQueueInterface(ndqi);
+                 q->SetSendCallback([dev](Ptr<QueueDiscItem> item) {
+-                    dev->Send(item->GetPacket(), item->GetAddress(), item->GetProtocol());
++                    TrafficControlLayer::SegmentAndSendIfGso(dev, item);
+                 });
+             }
+         }
+@@ -383,7 +406,7 @@ TrafficControlLayer::Send(Ptr<NetDevice> device, Ptr<QueueDiscItem> item)
+                 SocketPriorityTag priorityTag;
+                 item->GetPacket()->RemovePacketTag(priorityTag);
+             }
+-            device->Send(item->GetPacket(), item->GetAddress(), item->GetProtocol());
++            TrafficControlLayer::SegmentAndSendIfGso(device, item);
+         }
+         else
+         {
+diff --git a/src/traffic-control/model/traffic-control-layer.h b/src/traffic-control/model/traffic-control-layer.h
+index d05b877bf..7828a6441 100644
+--- a/src/traffic-control/model/traffic-control-layer.h
++++ b/src/traffic-control/model/traffic-control-layer.h
+@@ -194,6 +194,29 @@ class TrafficControlLayer : public Object
+      */
+     virtual void Send(Ptr<NetDevice> device, Ptr<QueueDiscItem> item);
+ 
++    /**
++     * @brief Type of the GSO segmenter callback used by `SegmentAndSendIfGso`.
++     *
++     * Returns true if the callback consumed the item (segmented + emitted
++     * to NetDevice::Send already). Returns false to indicate the item is
++     * not a GSO super-segment and should be sent as-is.
++     */
++    typedef Callback<bool, Ptr<NetDevice>, Ptr<QueueDiscItem>> GsoSegmenter;
++
++    /**
++     * @brief Register an upper-layer GSO segmenter.
++     *
++     * The Traffic Control layer cannot depend on the internet module (the
++     * dependency direction is internet → traffic-control), so any TCP-aware
++     * re-segmentation of a GSO super-segment is delegated to a callback
++     * registered by the internet module at initialization time. If no
++     * segmenter is registered, GSO super-segments are passed to
++     * `NetDevice::Send` unchanged (wire-permissive fallback).
++     *
++     * @param cb the segmenter callback, or an empty Callback to disable.
++     */
++    static void RegisterGsoSegmenter(GsoSegmenter cb);
++
+   protected:
+     void DoDispose() override;
+     void DoInitialize() override;
+@@ -243,6 +266,28 @@ class TrafficControlLayer : public Object
+     std::map<Ptr<NetDevice>, NetDeviceInfo> m_netDevices;
+     ProtocolHandlerList m_handlers; //!< List of upper-layer handlers
+ 
++    /**
++     * @brief Segment a GSO super-segment into MTU-sized fragments and emit
++     *        them to the underlying NetDevice.
++     *
++     * If a GSO segmenter has been registered via `RegisterGsoSegmenter` and
++     * it claims the item, this function returns immediately. Otherwise the
++     * item is forwarded to `NetDevice::Send` unchanged. The latter case
++     * covers both (i) non-GSO items, and (ii) GSO items when no internet-side
++     * segmenter is registered (wire-permissive fallback).
++     *
++     * This is the ns-3 analog of the Linux kernel's `dev_queue_xmit` →
++     * `skb_segment` path that performs TSO/GSO segmentation just before the
++     * NIC, after the qdisc has counted the super-skb as one arrival.
++     *
++     * @param device the underlying NetDevice
++     * @param item the queue-disc item dequeued from the qdisc (or in the bypass path)
++     */
++    static void SegmentAndSendIfGso(Ptr<NetDevice> device, Ptr<QueueDiscItem> item);
++
++    /// Registered upper-layer GSO segmenter; empty by default.
++    static GsoSegmenter s_gsoSegmenter;
++
+     /**
+      * The trace source fired when the Traffic Control layer drops a packet because
+      * no queue disc is installed on the device, the device supports flow control and

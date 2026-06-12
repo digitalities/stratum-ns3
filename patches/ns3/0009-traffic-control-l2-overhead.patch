@@ -1,0 +1,541 @@
+From 211afe68858c1b959f131b55455fe33e38e79e6d Mon Sep 17 00:00:00 2001
+From: Sergio Andreozzi <digitalities@gmail.com>
+Date: Sat, 9 May 2026 09:32:53 +0200
+Subject: [PATCH 1/8] traffic-control, network, point-to-point, csma: Add L2
+ framing overhead awareness
+
+Adds NetDevice::GetL2OverheadBytes() virtual that exposes per-packet
+L2 framing overhead, plus QueueDisc::ChargeBytes() helper and
+QueueDisc::L2OverheadBytes attribute that resolve the overhead at
+qdisc accounting time.
+
+NetDevice::GetL2OverheadBytes() default returns 0, so existing
+NetDevice subclasses are unaffected. PointToPointNetDevice overrides
+to return PppHeader().GetSerializedSize() (2 bytes). CsmaNetDevice
+overrides to return EthernetHeader().GetSerializedSize() (14 bytes).
+WifiNetDevice and LteNetDevice keep the default 0 (per-packet
+framing varies, not summarisable as a scalar).
+
+QueueDisc::ChargeBytes(item) returns item->GetSize() plus the
+resolved L2 overhead. The overhead source is QueueDisc's
+L2OverheadBytes attribute when set explicitly, otherwise the
+underlying NetDevice's GetL2OverheadBytes() via
+m_devQueueIface->GetDevice(), otherwise 0. The attribute defaults
+to UINT32_MAX (auto-detect from netdev), preserving pre-patch
+behaviour bit-for-bit on every NetDevice that does not override.
+
+This is the API foundation. The four wire-byte-accounting qdiscs
+(FqCoDel, FqCobalt, FqPie, Tbf) will swap their direct
+item->GetSize() calls for ChargeBytes(item) in a follow-up commit
+on the same MR, alongside updates to the affected test
+expected-values.
+
+Assisted-by: Claude Code (Anthropic, claude-opus-4-7)
+---
+ src/csma/model/csma-net-device.cc             |  6 +++++
+ src/csma/model/csma-net-device.h              |  1 +
+ src/network/model/net-device.h                | 15 ++++++++++++
+ .../model/point-to-point-net-device.cc        |  6 +++++
+ .../model/point-to-point-net-device.h         |  1 +
+ src/traffic-control/model/queue-disc.cc       | 24 ++++++++++++++++++-
+ src/traffic-control/model/queue-disc.h        | 15 ++++++++++++
+ 7 files changed, 67 insertions(+), 1 deletion(-)
+
+diff --git a/src/csma/model/csma-net-device.cc b/src/csma/model/csma-net-device.cc
+index a0408c3de..a03557860 100644
+--- a/src/csma/model/csma-net-device.cc
++++ b/src/csma/model/csma-net-device.cc
+@@ -250,6 +250,12 @@ CsmaNetDevice::GetMtu() const
+     return m_mtu;
+ }
+ 
++uint32_t
++CsmaNetDevice::GetL2OverheadBytes() const
++{
++    return EthernetHeader().GetSerializedSize();
++}
++
+ void
+ CsmaNetDevice::SetSendEnable(bool sendEnable)
+ {
+diff --git a/src/csma/model/csma-net-device.h b/src/csma/model/csma-net-device.h
+index 204785516..282d0b8a1 100644
+--- a/src/csma/model/csma-net-device.h
++++ b/src/csma/model/csma-net-device.h
+@@ -218,6 +218,7 @@ class CsmaNetDevice : public NetDevice
+     Ptr<Channel> GetChannel() const override;
+     bool SetMtu(const uint16_t mtu) override;
+     uint16_t GetMtu() const override;
++    uint32_t GetL2OverheadBytes() const override;
+     void SetAddress(Address address) override;
+     Address GetAddress() const override;
+     bool IsLinkUp() const override;
+diff --git a/src/network/model/net-device.h b/src/network/model/net-device.h
+index 9841b24c2..fc4e108c8 100644
+--- a/src/network/model/net-device.h
++++ b/src/network/model/net-device.h
+@@ -136,6 +136,21 @@ class NetDevice : public Object
+      * IP fragmentation when needed.
+      */
+     virtual uint16_t GetMtu() const = 0;
++
++    /**
++     * @brief Per-packet L2 framing overhead in bytes.
++     *
++     * Used by traffic-control qdiscs that account in wire bytes
++     * (rate, deficit, token-bucket math) rather than IP-layer bytes.
++     * Default is 0; devices with a fixed per-packet L2 cost override.
++     *
++     * @return per-packet L2 overhead in bytes, or 0 if not applicable
++     *         or not summarisable as a single scalar.
++     */
++    virtual uint32_t GetL2OverheadBytes() const
++    {
++        return 0;
++    }
+     /**
+      * @return true if link is up; false otherwise
+      */
+diff --git a/src/point-to-point/model/point-to-point-net-device.cc b/src/point-to-point/model/point-to-point-net-device.cc
+index 91c6c5ac0..c862b43dc 100644
+--- a/src/point-to-point/model/point-to-point-net-device.cc
++++ b/src/point-to-point/model/point-to-point-net-device.cc
+@@ -637,6 +637,12 @@ PointToPointNetDevice::GetMtu() const
+     return m_mtu;
+ }
+ 
++uint32_t
++PointToPointNetDevice::GetL2OverheadBytes() const
++{
++    return PppHeader().GetSerializedSize();
++}
++
+ uint16_t
+ PointToPointNetDevice::PppToEther(uint16_t proto)
+ {
+diff --git a/src/point-to-point/model/point-to-point-net-device.h b/src/point-to-point/model/point-to-point-net-device.h
+index d0285f535..1ac8e5737 100644
+--- a/src/point-to-point/model/point-to-point-net-device.h
++++ b/src/point-to-point/model/point-to-point-net-device.h
+@@ -155,6 +155,7 @@ class PointToPointNetDevice : public NetDevice
+ 
+     bool SetMtu(const uint16_t mtu) override;
+     uint16_t GetMtu() const override;
++    uint32_t GetL2OverheadBytes() const override;
+ 
+     bool IsLinkUp() const override;
+ 
+diff --git a/src/traffic-control/model/queue-disc.cc b/src/traffic-control/model/queue-disc.cc
+index f37d90e24..848e3beb8 100644
+--- a/src/traffic-control/model/queue-disc.cc
++++ b/src/traffic-control/model/queue-disc.cc
+@@ -261,6 +261,15 @@ QueueDisc::GetTypeId()
+                           ObjectVectorValue(),
+                           MakeObjectVectorAccessor(&QueueDisc::m_classes),
+                           MakeObjectVectorChecker<QueueDiscClass>())
++            .AddAttribute("L2OverheadBytes",
++                          "Per-packet L2 framing overhead to add when accounting in "
++                          "wire bytes. UINT32_MAX (default) means auto-detect from the "
++                          "underlying NetDevice via NetDevice::GetL2OverheadBytes(); "
++                          "set to a specific value to override, or to 0 to force pure "
++                          "IP-byte accounting.",
++                          UintegerValue(UINT32_MAX),
++                          MakeUintegerAccessor(&QueueDisc::m_l2OverheadOverride),
++                          MakeUintegerChecker<uint32_t>())
+             .AddTraceSource("Enqueue",
+                             "Enqueue a packet in the queue disc",
+                             MakeTraceSourceAccessor(&QueueDisc::m_traceEnqueue),
+@@ -311,7 +320,8 @@ QueueDisc::QueueDisc(QueueDiscSizePolicy policy)
+       m_running(false),
+       m_peeked(false),
+       m_sizePolicy(policy),
+-      m_prohibitChangeMode(false)
++      m_prohibitChangeMode(false),
++      m_l2OverheadOverride(UINT32_MAX)
+ {
+     NS_LOG_FUNCTION(this << (uint16_t)policy);
+ 
+@@ -431,6 +441,18 @@ QueueDisc::GetNBytes() const
+     return m_nBytes;
+ }
+ 
++uint32_t
++QueueDisc::ChargeBytes(Ptr<const QueueDiscItem> item) const
++{
++    // Auto-detect from m_devQueueIface->GetDevice() is pending a
++    // NetDeviceQueueInterface::GetDevice() accessor (follow-up commit
++    // on this MR). Until then, ChargeBytes resolves only the explicit
++    // L2OverheadBytes override; UINT32_MAX (default) means "no
++    // override, account in pure IP bytes".
++    uint32_t l2 = (m_l2OverheadOverride != UINT32_MAX) ? m_l2OverheadOverride : 0;
++    return item->GetSize() + l2;
++}
++
+ QueueSize
+ QueueDisc::GetMaxSize() const
+ {
+diff --git a/src/traffic-control/model/queue-disc.h b/src/traffic-control/model/queue-disc.h
+index a05294327..fff8f7ce6 100644
+--- a/src/traffic-control/model/queue-disc.h
++++ b/src/traffic-control/model/queue-disc.h
+@@ -306,6 +306,20 @@ class QueueDisc : public Object
+      */
+     QueueSize GetMaxSize() const;
+ 
++    /**
++     * @brief Charge the wire-byte cost of an item.
++     *
++     * Returns item->GetSize() plus the resolved L2 framing overhead.
++     * The overhead is the L2OverheadBytes attribute when set to a
++     * specific value, otherwise NetDevice::GetL2OverheadBytes() on
++     * the underlying device, otherwise 0. Used by qdiscs that
++     * account in wire bytes (rate, deficit, token-bucket math).
++     *
++     * @param item the QueueDiscItem to charge.
++     * @returns IP-layer bytes plus resolved L2 overhead.
++     */
++    uint32_t ChargeBytes(Ptr<const QueueDiscItem> item) const;
++
+     /**
+      * @brief Set the maximum size of the queue disc.
+      *
+@@ -688,6 +702,7 @@ class QueueDisc : public Object
+     Stats m_stats;    //!< The collected statistics
+     uint32_t m_quota; //!< Maximum number of packets dequeued in a qdisc run
+     Ptr<NetDeviceQueueInterface> m_devQueueIface; //!< NetDevice queue interface
++    uint32_t m_l2OverheadOverride; //!< L2 framing overhead override; UINT32_MAX = auto from netdev
+     SendCallback m_send;           //!< Callback used to send a packet to the receiving object
+     bool m_running;                //!< The queue disc is performing multiple dequeue operations
+     Ptr<QueueDiscItem> m_requeued; //!< The last packet that failed to be transmitted
+-- 
+2.50.1 (Apple Git-155)
+
+
+From e60e1c83715ce7b0569e8f0b317b195700e6aa3b Mon Sep 17 00:00:00 2001
+From: Sergio Andreozzi <digitalities@gmail.com>
+Date: Sat, 9 May 2026 13:11:35 +0200
+Subject: [PATCH 2/8] network: Add NetDeviceQueueInterface::GetDevice()
+ accessor
+
+NetDeviceQueueInterface exposes GetTxQueue(i) and GetNTxQueues() but
+not the underlying NetDevice it is aggregated to. Callers that need
+the device (typically queue discs reading per-NetDevice properties at
+accounting time) must currently use GetObject<NetDevice>() on the
+interface, which works because the NetDevice is aggregated in
+NotifyNewAggregate but is unfamiliar at the call site.
+
+Adds Ptr<NetDevice> NetDeviceQueueInterface::GetDevice() const that
+returns GetObject<NetDevice>(). No caching; the lookup is the same as
+the existing call path that NotifyNewAggregate uses on line 90 of the
+.cc to populate per-NetDeviceQueue m_device fields.
+
+Adds a focused regression test that installs a SimpleNetDevice on a
+node, fetches the aggregated NetDeviceQueueInterface, and asserts
+GetDevice() returns the same NetDevice (pointer equality) and agrees
+with GetObject<NetDevice>().
+
+Assisted-by: Claude Code (Anthropic, claude-opus-4-7)
+---
+ src/network/CMakeLists.txt                    |  1 +
+ .../net-device-queue-interface-test-suite.cc  | 66 +++++++++++++++++++
+ .../utils/net-device-queue-interface.cc       |  6 ++
+ .../utils/net-device-queue-interface.h        | 11 ++++
+ 4 files changed, 84 insertions(+)
+ create mode 100644 src/network/test/net-device-queue-interface-test-suite.cc
+
+diff --git a/src/network/CMakeLists.txt b/src/network/CMakeLists.txt
+index 455d7ae7b..07e64c9a5 100644
+--- a/src/network/CMakeLists.txt
++++ b/src/network/CMakeLists.txt
+@@ -165,6 +165,7 @@ build_lib(
+     test/error-model-test-suite.cc
+     test/ipv6-address-test-suite.cc
+     test/lollipop-counter-test.cc
++    test/net-device-queue-interface-test-suite.cc
+     test/packet-metadata-test.cc
+     test/packet-socket-apps-test-suite.cc
+     test/packet-test-suite.cc
+diff --git a/src/network/test/net-device-queue-interface-test-suite.cc b/src/network/test/net-device-queue-interface-test-suite.cc
+new file mode 100644
+index 000000000..94eee4632
+--- /dev/null
++++ b/src/network/test/net-device-queue-interface-test-suite.cc
+@@ -0,0 +1,66 @@
++/*
++ * SPDX-License-Identifier: GPL-2.0-only
++ */
++
++#include "ns3/net-device-queue-interface.h"
++#include "ns3/node.h"
++#include "ns3/simple-net-device-helper.h"
++#include "ns3/test.h"
++
++using namespace ns3;
++
++/**
++ * @ingroup network-test
++ *
++ * Verifies that NetDeviceQueueInterface::GetDevice() returns the NetDevice
++ * the interface is aggregated to. SimpleNetDevice is installed on a node;
++ * the per-device NetDeviceQueueInterface is fetched via GetObject; the
++ * accessor must return that same NetDevice (pointer equality), and is
++ * also expected to agree with GetObject<NetDevice>() on the interface.
++ */
++class NetDeviceQueueInterfaceGetDeviceTest : public TestCase
++{
++  public:
++    NetDeviceQueueInterfaceGetDeviceTest()
++        : TestCase("NetDeviceQueueInterface::GetDevice returns the aggregated NetDevice")
++    {
++    }
++
++  private:
++    void DoRun() override
++    {
++        Ptr<Node> node = CreateObject<Node>();
++        SimpleNetDeviceHelper helper;
++        NetDeviceContainer devices = helper.Install(node);
++        Ptr<NetDevice> dev = devices.Get(0);
++
++        Ptr<NetDeviceQueueInterface> ndqi = dev->GetObject<NetDeviceQueueInterface>();
++        NS_TEST_ASSERT_MSG_NE(ndqi,
++                              nullptr,
++                              "SimpleNetDevice should aggregate a NetDeviceQueueInterface");
++
++        NS_TEST_ASSERT_MSG_EQ(
++            ndqi->GetDevice(),
++            dev,
++            "GetDevice() must return the NetDevice the interface is aggregated to");
++        NS_TEST_ASSERT_MSG_EQ(ndqi->GetDevice(),
++                              ndqi->GetObject<NetDevice>(),
++                              "GetDevice() must agree with GetObject<NetDevice>()");
++    }
++};
++
++/**
++ * @ingroup network-test
++ */
++class NetDeviceQueueInterfaceTestSuite : public TestSuite
++{
++  public:
++    NetDeviceQueueInterfaceTestSuite()
++        : TestSuite("net-device-queue-interface", Type::UNIT)
++    {
++        AddTestCase(new NetDeviceQueueInterfaceGetDeviceTest, TestCase::Duration::QUICK);
++    }
++};
++
++static NetDeviceQueueInterfaceTestSuite
++    g_netDeviceQueueInterfaceTestSuite; //!< Static variable for test initialization
+diff --git a/src/network/utils/net-device-queue-interface.cc b/src/network/utils/net-device-queue-interface.cc
+index 4d55b1735..b6d63b45b 100644
+--- a/src/network/utils/net-device-queue-interface.cc
++++ b/src/network/utils/net-device-queue-interface.cc
+@@ -274,4 +274,10 @@ NetDeviceQueueInterface::GetSelectQueueCallback() const
+     return m_selectQueueCallback;
+ }
+ 
++Ptr<NetDevice>
++NetDeviceQueueInterface::GetDevice() const
++{
++    return GetObject<NetDevice>();
++}
++
+ } // namespace ns3
+diff --git a/src/network/utils/net-device-queue-interface.h b/src/network/utils/net-device-queue-interface.h
+index f7ba1daca..91cbd8f82 100644
+--- a/src/network/utils/net-device-queue-interface.h
++++ b/src/network/utils/net-device-queue-interface.h
+@@ -288,6 +288,17 @@ class NetDeviceQueueInterface : public Object
+      */
+     SelectQueueCallback GetSelectQueueCallback() const;
+ 
++    /**
++     * @brief Get the NetDevice this interface is aggregated to.
++     * @return the aggregated NetDevice, or nullptr if no NetDevice has
++     *         been aggregated yet.
++     *
++     * Equivalent to GetObject<NetDevice>(). Provided as a named accessor
++     * because callers (typically queue discs at accounting time) read this
++     * frequently and the aggregation lookup reads better as GetDevice().
++     */
++    Ptr<NetDevice> GetDevice() const;
++
+   protected:
+     /**
+      * @brief Dispose of the object
+-- 
+2.50.1 (Apple Git-155)
+
+
+From 74771cccb413fa7f3d78026c6cd652f4b1e9b2da Mon Sep 17 00:00:00 2001
+From: Sergio Andreozzi <digitalities@gmail.com>
+Date: Sat, 9 May 2026 13:45:05 +0200
+Subject: [PATCH 3/8] traffic-control: Resolve QueueDisc::ChargeBytes
+ auto-detect via NetDeviceQueueInterface::GetDevice
+
+The auto-detect path in ChargeBytes resolves the L2 framing overhead
+from the underlying NetDevice via NetDeviceQueueInterface::GetDevice
+(added in the preceding commit on this MR). When the L2OverheadBytes
+attribute is left at its default UINT32_MAX, ChargeBytes now reads
+GetL2OverheadBytes() off the NetDevice the qdisc is attached to,
+falling back to 0 if no NetDeviceQueueInterface is present (e.g. a
+qdisc not yet attached to traffic control).
+
+The four wire-byte-accounting consumers (FqCoDel, FqCobalt, FqPie,
+Tbf) wire ChargeBytes in follow-up commits on this MR.
+
+Assisted-by: Claude Code (Anthropic, claude-opus-4-7)
+---
+ src/traffic-control/model/queue-disc.cc | 19 +++++++++++++------
+ 1 file changed, 13 insertions(+), 6 deletions(-)
+
+diff --git a/src/traffic-control/model/queue-disc.cc b/src/traffic-control/model/queue-disc.cc
+index 848e3beb8..88e12dcfd 100644
+--- a/src/traffic-control/model/queue-disc.cc
++++ b/src/traffic-control/model/queue-disc.cc
+@@ -444,12 +444,19 @@ QueueDisc::GetNBytes() const
+ uint32_t
+ QueueDisc::ChargeBytes(Ptr<const QueueDiscItem> item) const
+ {
+-    // Auto-detect from m_devQueueIface->GetDevice() is pending a
+-    // NetDeviceQueueInterface::GetDevice() accessor (follow-up commit
+-    // on this MR). Until then, ChargeBytes resolves only the explicit
+-    // L2OverheadBytes override; UINT32_MAX (default) means "no
+-    // override, account in pure IP bytes".
+-    uint32_t l2 = (m_l2OverheadOverride != UINT32_MAX) ? m_l2OverheadOverride : 0;
++    uint32_t l2 = 0;
++    if (m_l2OverheadOverride != UINT32_MAX)
++    {
++        l2 = m_l2OverheadOverride;
++    }
++    else if (m_devQueueIface)
++    {
++        Ptr<NetDevice> dev = m_devQueueIface->GetDevice();
++        if (dev)
++        {
++            l2 = dev->GetL2OverheadBytes();
++        }
++    }
+     return item->GetSize() + l2;
+ }
+ 
+-- 
+2.50.1 (Apple Git-155)
+
+
+From b46c2a92a53f8bbaf53481bb0221340f7297186a Mon Sep 17 00:00:00 2001
+From: Sergio Andreozzi <digitalities@gmail.com>
+Date: Sat, 9 May 2026 18:57:33 +0200
+Subject: [PATCH 4/8] traffic-control: Order QueueDisc ctor init list to match
+ member declarations
+
+m_l2OverheadOverride is declared between m_devQueueIface and m_send
+in queue-disc.h, but the constructor's member-initializer list put it
+last, after m_prohibitChangeMode. Clang -Wreorder-ctor (enabled with
+-Werror in mainline) flags the mismatch.
+
+Move m_l2OverheadOverride up so init order tracks declaration order.
+
+Assisted-by: Claude Code (Anthropic, claude-opus-4-7)
+---
+ src/traffic-control/model/queue-disc.cc | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/traffic-control/model/queue-disc.cc b/src/traffic-control/model/queue-disc.cc
+index 88e12dcfd..cbf6fe1c9 100644
+--- a/src/traffic-control/model/queue-disc.cc
++++ b/src/traffic-control/model/queue-disc.cc
+@@ -317,11 +317,11 @@ QueueDisc::QueueDisc(QueueDiscSizePolicy policy)
+     : m_nPackets(0),
+       m_nBytes(0),
+       m_maxSize(QueueSize("1p")), // to avoid that setting the mode at construction time is ignored
++      m_l2OverheadOverride(UINT32_MAX),
+       m_running(false),
+       m_peeked(false),
+       m_sizePolicy(policy),
+-      m_prohibitChangeMode(false),
+-      m_l2OverheadOverride(UINT32_MAX)
++      m_prohibitChangeMode(false)
+ {
+     NS_LOG_FUNCTION(this << (uint16_t)policy);
+ 
+-- 
+2.50.1 (Apple Git-155)
+
+
+
+From a5eac1074f66b66eb1054d44f399a4bc0ed05b17 Mon Sep 17 00:00:00 2001
+From: Sergio Andreozzi <digitalities@gmail.com>
+Date: Sat, 9 May 2026 18:58:18 +0200
+Subject: [PATCH 6/8] traffic-control: FqCoDelQueueDisc charges wire bytes via
+ QueueDisc::ChargeBytes
+
+The DRR deficit decrement at the rate-accounting site swaps
+item->GetSize() for QueueDisc::ChargeBytes(item), so per-packet
+deficit consumption tracks wire bytes rather than IP-layer bytes.
+Existing fq-codel-queue-disc test runs over zero-overhead
+constructed Ipv4QueueDiscItem instances, so the test is unaffected.
+
+The drop-batch loop in FqCoDelDrop continues to count item->GetSize()
+because its threshold is derived from MaxSize, which is also expressed
+in IP-layer bytes; mixing wire and IP bytes there would skew the
+loop's stop condition.
+
+Assisted-by: Claude Code (Anthropic, claude-opus-4-7)
+---
+ src/traffic-control/model/fq-codel-queue-disc.cc | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/traffic-control/model/fq-codel-queue-disc.cc b/src/traffic-control/model/fq-codel-queue-disc.cc
+index a3f023a3b..d7ffaa351 100644
+--- a/src/traffic-control/model/fq-codel-queue-disc.cc
++++ b/src/traffic-control/model/fq-codel-queue-disc.cc
+@@ -377,7 +377,7 @@ FqCoDelQueueDisc::DoDequeue()
+         }
+     } while (!item);
+ 
+-    flow->IncreaseDeficit(item->GetSize() * -1);
++    flow->IncreaseDeficit(ChargeBytes(item) * -1);
+ 
+     return item;
+ }
+-- 
+2.50.1 (Apple Git-155)
+
+
+From ec89a09eb89ac30b73cf0cacb93c1d14f1184b2b Mon Sep 17 00:00:00 2001
+From: Sergio Andreozzi <digitalities@gmail.com>
+Date: Sat, 9 May 2026 18:59:09 +0200
+Subject: [PATCH 8/8] traffic-control: FqPieQueueDisc charges wire bytes via
+ QueueDisc::ChargeBytes
+
+The DRR deficit decrement at the rate-accounting site swaps
+item->GetSize() for QueueDisc::ChargeBytes(item). The drop-batch loop
+in FqPieDrop keeps item->GetSize() because its threshold tracks
+MaxSize in IP bytes.
+
+Existing fq-pie-queue-disc test runs on zero-overhead constructed
+items, so the test is unaffected.
+
+Assisted-by: Claude Code (Anthropic, claude-opus-4-7)
+---
+ src/traffic-control/model/fq-pie-queue-disc.cc | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/traffic-control/model/fq-pie-queue-disc.cc b/src/traffic-control/model/fq-pie-queue-disc.cc
+index 02ecae1e4..baea7a891 100644
+--- a/src/traffic-control/model/fq-pie-queue-disc.cc
++++ b/src/traffic-control/model/fq-pie-queue-disc.cc
+@@ -434,7 +434,7 @@ FqPieQueueDisc::DoDequeue()
+         }
+     } while (!item);
+ 
+-    flow->IncreaseDeficit(item->GetSize() * -1);
++    flow->IncreaseDeficit(ChargeBytes(item) * -1);
+ 
+     return item;
+ }
+-- 
+2.50.1 (Apple Git-155)
+

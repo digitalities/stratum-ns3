@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: CONTRIBUTING.md
+    url: https://github.com/digitalities/stratum-ns3/blob/main/CONTRIBUTING.md
+    about: "Read this first for the contribution scope and what's worth contributing."
+  - name: Security disclosure
+    url: mailto:digitalities@gmail.com
+    about: "Email digitalities@gmail.com for defects with potential security impact rather than opening a public issue."
+  - name: ns-3 mailing list
+    url: https://groups.google.com/g/ns-3-users
+    about: "General ns-3 questions not specific to Stratum"
+  - name: ICNS3 / WNS3 community
+    url: https://www.nsnam.org/
+    about: "ns-3 ecosystem, conferences, and contribution channels"

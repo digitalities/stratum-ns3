@@ -1,0 +1,833 @@
+# Stratum plot-recipe per-recipe configuration.
+# Schema: scripts/plot_recipe.py PLOT_TYPES + validation rules.
+# Design rationale: docs/superpowers/specs/2026-05-12-stratum-user-guide-v1.2-design.md.
+
+recipes:
+
+  # ---- DiffServ (5 recipes) ----
+  diffserv-example-1:
+    example_cmd: "diffserv-example-1 --scheduler=PQ --simTime=200"
+    output_glob: "output/ns3/example-1/PQ-0512/"
+    arms: overlay-all
+    plots:
+      - type: owd-time-series
+        output_name: owd-time-series
+        csv_glob: "OWD.tr"
+        csv_opts:
+          sep: " "
+          names: ["time", "owd_ms"]
+          header: null
+        x_col: time
+        y_col: owd_ms
+        series_col: __arm__
+        title: "Aggregate OWD time-series — diffserv-example-1 (PQ scheduler, 200 s)"
+        xlabel: "Time (s)"
+        ylabel: "OWD (ms)"
+        calibration:
+          source: handbook-§3.5
+          range_by_class:
+            pq_aggregate: { lo: 0, hi: 50, unit: "ms" }
+          notes: >
+            Aggregate end-to-end OWD under PQ over 200 s; sr-TCM polices
+            EF to CIR before the scheduler sees traffic, and PQ drains EF
+            on priority, so aggregate OWD tracks EF's near-zero baseline
+            (mean ~14 ms). The companion per-class plot shows EF and BE
+            curves separately, resolving the class-level differentiation
+            hidden inside the aggregate trace.
+
+      - type: owd-time-series
+        output_name: owd-time-series-per-class
+        csv_glob: "OWD-??.tr"
+        csv_opts:
+          sep: " "
+          names: ["time", "owd_sec"]
+          header: null
+        x_col: time
+        y_col: owd_sec
+        series_col: __file__
+        downsample_n: 300
+        title: "Per-class OWD time-series — diffserv-example-1 (EF vs BE under PQ)"
+        xlabel: "Time (s)"
+        ylabel: "OWD (s)"
+        calibration:
+          source: handbook-§3.5
+          range_by_class:
+            OWD-ef: { lo: 0.010, hi: 0.030, unit: "s" }
+            OWD-be: { lo: 0.010, hi: 0.130, unit: "s" }
+          notes: >
+            Per-class one-way delay under PQ over 200 s. EF traffic is
+            drained by the priority queue before BE, so EF OWD stays
+            bounded (observed 0.013–0.023 s). BE absorbs the residual
+            link capacity and shows higher delay variability (observed
+            0.011–0.120 s). Calibration ranges locked to observed data
+            from a 200 s run; each OWD-??.tr file is whitespace-separated
+            with columns time owd_sec; series_col __file__ distinguishes
+            OWD-ef from OWD-be within the single combined plot.
+
+  diffserv-pq-vs-wfq:
+    example_cmd: "diffserv-example-1 --scheduler=PQ --simTime=200"
+    output_glob: "output/ns3/example-1/*/"
+    arms: filter-required
+    arm_filter: ["PQ-0512", "WFQ-0512"]
+    plots:
+      # Plot 1 — the symptom: aggregate OWD trajectory differs by scheduler.
+      - type: owd-time-series
+        output_name: owd-time-series
+        csv_glob: "OWD.tr"
+        csv_opts:
+          sep: " "
+          names: ["time", "owd_ms"]
+          header: null
+        x_col: time
+        y_col: owd_ms
+        series_col: __arm__
+        title: "Aggregate OWD trajectory — PQ vs WFQ (diffserv-example-1)"
+        xlabel: "Time (s)"
+        ylabel: "OWD (ms)"
+        calibration:
+          source: handbook-§7.2.1
+          range_by_class:
+            pq: { lo: 0, hi: 50, unit: "ms" }
+            wfq: { lo: 100, hi: 500, unit: "ms" }
+          notes: >
+            Under PQ, EF traffic drains via priority queue so aggregate OWD
+            tracks EF's near-zero baseline (mean ~14 ms over 200 s). Under
+            WFQ, EF receives weight-proportional service so aggregate OWD
+            settles to a steady high value (mean ~410 ms, max ~423 ms).
+            The throughput ranking is identical across schedulers (the
+            sr-TCM meter at the edge caps EF at CIR before the scheduler
+            sees traffic) — the scheduler differentiation lives in latency.
+
+      # Plot 2 — the mechanism: EF queue occupancy differs by scheduler.
+      - type: owd-time-series
+        output_name: ef-queue-length
+        csv_glob: "EFQueueLen.tr"
+        csv_opts:
+          sep: " "
+          names: ["time", "queue_packets"]
+          header: null
+        x_col: time
+        y_col: queue_packets
+        series_col: __arm__
+        title: "EF queue occupancy — PQ vs WFQ (diffserv-example-1)"
+        xlabel: "Time (s)"
+        ylabel: "EF queue length (packets)"
+        calibration:
+          source: handbook-§7.2.1
+          range_by_class:
+            pq: { lo: 0, hi: 2, unit: "packets" }
+            wfq: { lo: 25, hi: 35, unit: "packets" }
+          notes: >
+            PQ keeps EF queue length near zero (priority queue drains EF
+            immediately whenever the link is available; observed 0-1
+            packets over 200 s). WFQ allows EF queue to build up to its
+            weight-proportional share (observed 28-30 packets steady) before
+            being drained. This is the mechanism that produces the OWD
+            differentiation seen in the companion plot.
+
+  diffserv-srtcm:
+    example_cmd: "diffserv-example-1 --scheduler=PQ --simTime=200"
+    output_glob: "output/ns3/example-1/PQ-0512/"
+    arms: overlay-all
+    plots:
+      - type: owd-time-series
+        output_name: owd-time-series
+        csv_glob: "ServiceRate.tr"
+        csv_opts:
+          sep: " "
+          names: ["time", "ef_kbps", "be_kbps"]
+          header: null
+        x_col: time
+        y_col: ef_kbps
+        series_col: __arm__
+        title: "EF service rate under sr-TCM — held at CIR 300 kbps (RFC 2697)"
+        xlabel: "Time (s)"
+        ylabel: "EF service rate (kbps)"
+        calibration:
+          source: rfc-2697
+          range_by_class:
+            ef_serviced: { lo: 280, hi: 320, unit: "kbps" }
+          notes: >
+            RFC 2697 sr-TCM: EF CIR 300 kbps, CBS 4687 B on 2 Mbps
+            bottleneck. EF source sends exactly at CIR; over-rate packets
+            are recoloured red and dropped at the policer, so the serviced
+            EF rate stays near 300 kbps. Visualises in-profile compliance
+            over the 200 s run as a time-series of serviced bytes
+            converted to kbps. See companion meter-colour-bar.svg for the
+            per-packet green/red marking breakdown.
+
+      - type: meter-colour-bar
+        output_name: meter-colour-bar
+        csv_glob: "MeterColour.csv"
+        x_col: colour
+        y_col: count
+        series_col: classId
+        title: "Policer marking proportions — diffserv-srtcm (token-bucket policer)"
+        xlabel: ""
+        ylabel: ""
+        calibration:
+          source: rfc-2697
+          notes: >
+            Aggregate green/yellow/red packet counts over the 200 s run for
+            the token-bucket policer. Traffic conforming to the committed
+            information rate is marked green; bursts that exceed the
+            bucket drain are marked red and dropped at the egress node.
+            The recipe name reflects the single-rate three-colour marking
+            story from RFC 2697; the underlying meter is a token-bucket
+            policer, which is the single-bucket subset of that scheme
+            (no excess-bucket dimension, so yellow is absent).
+            Observed over 200 s: green 13737 packets, yellow 0, red 797.
+
+  diffserv-trtcm:
+    example_cmd: "diffserv-example-2 --scheduler=PQ --simTime=100"
+    output_glob: "output/ns3/example-2/PQ/"
+    arms: overlay-all
+    plots:
+      - type: throughput-stacked
+        csv_glob: "ServiceRate.tr"
+        csv_opts:
+          sep: " "
+          names: ["time", "premium_kbps", "gold_kbps", "be_kbps"]
+          header: null
+        x_col: time
+        y_col: premium_kbps
+        series_col: __arm__
+        title: "Per-queue departure rates — tr-TCM metering (diffserv-example-2 PQ)"
+        xlabel: "Time (s)"
+        ylabel: "Rate (kbps)"
+        calibration:
+          source: handbook-§7.2.2
+          range_by_class:
+            premium: { lo: 250, hi: 330, unit: "kbps" }
+            gold:    { lo: 300, hi: 600, unit: "kbps" }
+            be:      { lo: 400, hi: 900, unit: "kbps" }
+          notes: >
+            Scenario 2: Premium (EF, TokenBucket 500 kbps), Gold (AF, TSW2CM 500 kbps),
+            BE (tail-drop). RIO-C WRED inside Gold queue protects AF11 (Telnet)
+            from AF13 (over-rate FTP). Premium rate stays within its CIR;
+            Gold and BE compete for remaining bandwidth.
+
+  diffserv-wfq-true-pgps:
+    example_cmd: "diffserv-example-1 --scheduler=WFQ --simTime=200"
+    output_glob: "output/ns3/example-1/WFQ-0512/"
+    arms: overlay-all
+    plots:
+      - type: owd-time-series
+        output_name: owd-time-series
+        csv_glob: "OWD.tr"
+        csv_opts:
+          sep: " "
+          names: ["time", "owd_ms"]
+          header: null
+        x_col: time
+        y_col: owd_ms
+        series_col: __arm__
+        title: "WFQ true-PGPS aggregate OWD — Parekh Theorem 1 reproduction (diffserv-example-1)"
+        xlabel: "Time (s)"
+        ylabel: "OWD (ms)"
+        calibration:
+          source: handbook-§3.2.2
+          range_by_class:
+            wfq_owd: { lo: 100, hi: 500, unit: "ms" }
+          notes: >
+            WFQ (true PGPS snapshot) with EF weight proportional to its CIR
+            share (300 kbps / 2 Mbps). Parekh Theorem 1 guarantees aggregate
+            OWD bounded by schedule-round-period in the fluid limit.
+            Observed mean ~410 ms, max ~423 ms over 200 s — the WFQ
+            queue-build steady state distinct from PQ's near-zero baseline.
+            See companion per-flow-bar.svg for the weight-proportional
+            throughput breakdown by class.
+
+      - type: throughput-stacked
+        output_name: per-flow-bar
+        csv_glob: "FlowRate.csv"
+        csv_opts:
+          header: 0
+        x_col: time
+        y_col: rate_kbps
+        series_col: classId
+        downsample_n: 300
+        title: "Per-class throughput shares — diffserv-wfq-true-pgps (WFQ rate fairness)"
+        xlabel: "Time (s)"
+        ylabel: "Rate (kbps)"
+        calibration:
+          source: handbook-§3.2.2
+          range_by_class:
+            ef: { lo: 0, hi: 400, unit: "kbps" }
+            be: { lo: 0, hi: 2000, unit: "kbps" }
+          notes: >
+            Per-class throughput over time under WFQ. EF (class 0) receives
+            service proportional to its weight share (CIR 300 kbps on a
+            2 Mbps bottleneck); observed mean ~281 kbps. BE (class 1)
+            receives the remaining capacity; observed mean ~1546 kbps.
+            The ratio reflects weight-proportional service as guaranteed
+            by the PGPS schedule. Each window is 0.1 s; rates above the
+            mean reflect quantisation of discrete packet arrivals within
+            each window.
+
+  # ---- L4S (3 recipes) ----
+  l4s-s1-latency:
+    example_cmd: "diffserv-l4s-s1-latency --mode=l4s-on --simTime=10"
+    output_glob: "output/ns3/l4s-s1-latency"
+    arms: overlay-all
+    plots:
+      - type: ecdf
+        csv_glob: "l4s-*__owd-ef.csv"
+        x_col: owd_ms
+        series_col: __file__
+        series_label_map:
+          "l4s-on__owd-ef":  "L4S-on (DualPI2 with coupling)"
+          "l4s-off__owd-ef": "L4S-off (classic RED only)"
+        title: "EF probe OWD ECDF — priority routing functional in both modes"
+        xlabel: "EF probe OWD (ms)"
+        ylabel: "ECDF"
+        calibration:
+          source: rfc-9332
+          range_by_class:
+            ef_l4s_on:  { lo: 6.0, hi: 10.0, unit: "ms" }
+            ef_l4s_off: { lo: 6.0, hi: 10.0, unit: "ms" }
+          notes: >
+            EF probe (500 kbps, ECT(1) in L4S mode, DSCP-routed in classic mode)
+            on a 10 Mbps bottleneck. Both modes give EF priority access — the
+            chart shows priority wiring is functional in both. Full L4S vs no-L4S
+            differentiation requires Scalable congestion control (e.g. TcpDctcp
+            with UseEct0=false) that responds to per-packet CE marks, not UDP CBR.
+
+  l4s-s2-classic-vs-l4s:
+    example_cmd: "diffserv-l4s-s2-equivalence --simTime=10"
+    output_glob: "output/ns3/l4s-s2-equivalence"
+    arms: overlay-all
+    plots:
+      - type: ecdf
+        csv_glob: "coupling.csv"
+        x_col: pL
+        series_col: __arm__
+        title: "DualPI2 L4S mark probability (p_L) ECDF — coupling-formula output"
+        xlabel: "p_L (L4S mark probability)"
+        ylabel: "ECDF"
+        calibration:
+          source: rfc-9332
+          range_by_class:
+            pL: { lo: 0.0, hi: 1.0, unit: "probability" }
+          notes: >
+            RFC 9332 §2.1 eq. (1): p_L = min(k·p', 1), k=2. Under the
+            defaults' non-responsive UDP overload the controller rides high
+            (mean p' ~0.75 with clamp episodes at 1.0), so p_L saturates to 1
+            for much of the run; the cascade is verified across the full
+            range. (The earlier "weak engagement, p' in [1e-5, 1e-2]"
+            calibration was measured against the classic lane's constructor
+            trap state — see the 2026-06-10 L4S validation audit.)
+            Responsive-flow demonstration with Scalable congestion control
+            (e.g. TcpDctcp with UseEct0=false) is queued as future work.
+
+  l4s-coupled-marking:
+    example_cmd: "diffserv-l4s-s2-equivalence --simTime=10"
+    output_glob: "output/ns3/l4s-s2-equivalence"
+    arms: overlay-all
+    plots:
+      - type: ecdf
+        csv_glob: "coupling.csv"
+        x_col: pPrime
+        series_col: __arm__
+        title: "DualPI2 base probability (p') ECDF — P.I.² controller under non-responsive overload"
+        xlabel: "p' (base probability)"
+        ylabel: "ECDF"
+        calibration:
+          source: rfc-9332
+          range_by_class:
+            pPrime: { lo: 0.0, hi: 1.0, unit: "probability" }
+          notes: >
+            RFC 9332 App. A.1: the P.I.² controller drives p' above zero once
+            the classic sub-queue sojourn sustains above target. At the
+            defaults' r=1.5 non-responsive offered ratio the controller rides
+            high (mean p' ~0.75, clamp episodes at 1.0); p_C = p'² and
+            p_L = min(k·p', 1) track the cascade (§2.1 eq. (1)) at every
+            sample across the full range. This recipe and l4s-s2-classic-vs-l4s share the
+            same coupling.csv — they visualize different stages of the same
+            cascade (p' upstream, p_L downstream).
+
+  # ---- CAKE (4 recipes) ----
+  cake-diffserv4:
+    example_cmd: "diffserv-cake --outDir=output/ns3/cake/default --simTime=8"
+    output_glob: "output/ns3/cake/*/"
+    arms: overlay-all
+    plots:
+      - type: per-flow-bar
+        csv_glob: "per-tin-rates.csv"
+        csv_opts:
+          sep: ","
+          header: 0
+        x_col: tin
+        y_col: rxBps
+        series_col: __arm__
+        ylim_max_multiplier: 1.10
+        title: "Per-tin received rate vs configured share — CAKE DiffServ4"
+        xlabel: "Tin (Bulk / BE / Video / Voice)"
+        ylabel: "Received rate (bps)"
+        calibration:
+          source: handbook-§11.4
+          range_by_class:
+            bulk:  { lo: 500000,  hi: 750000,  unit: "bps" }
+            be:    { lo: 8000000, hi: 10000000, unit: "bps" }
+            video: { lo: 4000000, hi: 5500000,  unit: "bps" }
+            voice: { lo: 2000000, hi: 2800000,  unit: "bps" }
+          notes: >
+            CAKE DiffServ4 shares: Bulk 6.25%, BE 100%, Video 50%, Voice 25%
+            of 10 Mbps link. Each tin offered 5 Mbps saturating CBR.
+            DRR across tins enforces the per-tin TBF cap.
+            Jain fairness across tins > 0.85 (tc-cake diffserv4 reference).
+
+  cake-ack-filter:
+    example_cmd: "cake-tcp-4up-squarewave --bw=100Mbps --rtt=40ms --length=60"
+    output_glob: "output/ns3/cake-tcp-4up-squarewave/*/"
+    arms: overlay-all
+    plots:
+      - type: throughput-stacked
+        csv_glob: "tcp_up_flow*.csv"
+        csv_opts:
+          sep: ","
+          header: 0
+        x_col: t
+        y_col: goodput_mbps
+        series_col: __arm__
+        title: "Square-wave 4-flow TCP fairness — CAKE rate-based shaper"
+        xlabel: "Time (s)"
+        ylabel: "Goodput (Mbps)"
+        calibration:
+          source: handbook-§11.3
+          range_by_class:
+            single_flow:  { lo: 90,  hi: 100, unit: "Mbps" }
+            two_flows:    { lo: 45,  hi: 55,  unit: "Mbps" }
+            four_flows:   { lo: 20,  hi: 30,  unit: "Mbps" }
+          notes: >
+            Four TCP uploads staggered at t=0/5/10/15 s, stops at t=45/50/55/60 s.
+            Rate-based shaper caps aggregate at 100 Mbps; FqCobalt divides evenly.
+            1-flow window ~100 Mbps; 2-flow ~50 Mbps each; 4-flow ~25 Mbps each.
+
+  cake-rrul:
+    example_cmd: "cake-rrul-diffserv --bw=50Mbps --rtt=80ms --length=60"
+    output_glob: "output/ns3/cake-rrul-diffserv/*/"
+    arms: overlay-all
+    plots:
+      - type: owd-time-series
+        csv_glob: "ping_icmp.csv"
+        csv_opts:
+          sep: ","
+          header: 0
+        x_col: t
+        y_col: rtt_ms
+        series_col: __arm__
+        title: "ICMP ping RTT under RRUL load — CAKE DiffServ4 (50 Mbps, 80 ms base RTT)"
+        xlabel: "Time (s)"
+        ylabel: "RTT (ms)"
+        calibration:
+          source: paper
+          paper_section: "ICNS3 2026 §7.3"
+          range_by_class:
+            ping_rtt: { lo: 80, hi: 120, unit: "ms" }
+          notes: >
+            RRUL workload: 4 TCP-down + 4 TCP-up + 4 UDP probes + 1 ICMP ping.
+            CAKE DiffServ4 keeps ping RTT within ~20 ms of base RTT (80 ms)
+            under full 50 Mbps bidirectional load. Compare with cake-rrul
+            (no DSCP marking) where ping RTT may exceed 200 ms under load.
+
+  # ---- Wireless (2 recipes) ----
+  wireless-edca-vs-qdisc:
+    example_cmd: "diffserv-wifi-scheduler-comparison --scheduler=pq --simTime=10"
+    output_glob: "output/ns3/wifi-sched/*/"
+    arms: overlay-all
+    plots:
+      - type: per-flow-bar
+        csv_glob: "scheduler-summary.csv"
+        x_col: flow_class
+        y_col: rx_kbps
+        series_col: __arm__
+        title: "Per-class throughput — 8 schedulers on Wi-Fi AP (802.11a 6 Mb/s)"
+        xlabel: "Flow class"
+        ylabel: "Throughput (kbps)"
+        calibration:
+          source: hardcoded
+          range_by_class:
+            ef: { lo: 200, hi: 400, unit: "kbps" }
+            af: { lo: 1500, hi: 5000, unit: "kbps" }
+            be: { lo: 200, hi: 2100, unit: "kbps" }
+            bk: { lo: 0, hi: 1700, unit: "kbps" }
+          notes: >
+            802.11a 6 Mb/s link, class 0=EF (DSCP 46), class 1=AF41 (34),
+            class 2=BE (0), class 3=BK (8). EF source is rate-limited
+            to ~300 kbps so cls0 always sits 235-330 kbps regardless of
+            scheduler. AF gets most residual bandwidth (1640-4674 kbps
+            across schedulers; PQ gives AF the most because EF can't
+            consume more than its source rate). BE+BK ranges reflect
+            scheduler behaviour: PQ starves cls2/cls3; RR gives equal
+            shares; weighted schedulers (WFQ/WF2Q+/SCFQ/LLQ/WIRR/WRR)
+            sit in between. Measured at --simTime=10.
+
+  wireless-aqm-evaluation:
+    example_cmd: "diffserv-wifi-demo --simTime=10"
+    output_glob: "output/ns3/wifi-aqm/*/"
+    arms: overlay-all
+    plots:
+      - type: per-flow-bar
+        csv_glob: "flow-summary.csv"
+        csv_opts:
+          sep: " "
+          names: ["flow", "rx_kbps", "p99_ms"]
+          header: null
+        x_col: flow
+        y_col: rx_kbps
+        series_col: __arm__
+        title: "EF vs BE throughput — Stratum edge on 802.11ax AP (with / without DiffServ)"
+        xlabel: "Flow"
+        ylabel: "Received throughput (kbps)"
+        calibration:
+          source: hardcoded
+          range_by_class:
+            ef: { lo: 150, hi: 350, unit: "kbps" }
+            be: { lo: 35000, hi: 45000, unit: "kbps" }
+          notes: >
+            802.11ax AP, EF target 300 kbps, BE saturating 50 Mb/s with
+            ~40 Mb/s achieved goodput. With DiffServ enabled EF rx ≈ 195
+            kbps (DSCP shaping holds EF below CIR); without it EF rx ≈
+            270 kbps (no shaping, competes for AC_VO). BE rx is identical
+            in both arms (~40 Mb/s) because BE saturates the link
+            regardless of EF treatment. Ranges measured at --simTime=10
+            (binary default). No external calibration oracle (handbook §12.1).
+
+  # ---- AQM-eval (2 recipes) ----
+  aqm-eval-runner:
+    example_cmd: "aqm-eval-runner --aqm=ns3::CobaltQueueDisc --scenario=steady --simTime=4"
+    output_glob: "output/ns3/aqm-eval/*/"
+    arms: overlay-all
+    plots:
+      - type: aqm-envelope
+        csv_glob: "steady-*-perflow.csv"
+        csv_opts:
+          sep: ","
+          header: 0
+        x_col: mean_delay_ms
+        y_col: rx_rate_bps
+        y_unit_convert: bps_to_mbps
+        y_aggregate: sum
+        series_col: __arm__
+        title: "AQM throughput envelope — aggregate goodput vs mean delay (steady scenario)"
+        xlabel: "Mean delay (ms)"
+        ylabel: "Aggregate goodput (Mbps)"
+        calibration:
+          source: paper
+          paper_section: "ICNS3 2026 §5 / Fig 2"
+          range:
+            lo: 8.5
+            hi: 9.9
+            unit: "Mbps"
+          notes: >
+            Aggregate goodput on a 10 Mbps bottleneck. Per-flow CSV rows are
+            aggregated per (AQM × scenario) cell. Working AQMs sit in
+            [8.5, 9.9] Mbps aggregate with mean delay below per-AQM target.
+            Load-percentage series labels (100/80/50) document flow groupings
+            within the steady scenario; see aqm-eval-runner.cc for the binding.
+
+  aqm-eval-cobalt:
+    example_cmd: "aqm-eval-runner --aqm=ns3::CobaltQueueDisc --simTime=4"
+    output_glob: "output/ns3/aqm-eval/ns3::CobaltQueueDisc/*/"
+    arms: overlay-all
+    plots:
+      - type: ecdf
+        csv_glob: "steady-*-perflow.csv"
+        csv_opts:
+          sep: ","
+          header: 0
+        x_col: mean_delay_ms
+        series_col: flow
+        title: "Cobalt per-flow delay ECDF — steady scenario across loads"
+        xlabel: "Mean delay (ms)"
+        ylabel: "ECDF"
+        calibration:
+          source: handbook-§13.3
+          range:
+            lo: 2.0
+            hi: 15.0
+            unit: "ms"
+          notes: >
+            ns3::CobaltQueueDisc on the 10 Mbps x 5 ms RFC-7928 dumbbell.
+            Well-configured Cobalt keeps mean delay 2-15 ms across
+            50-100% load; tail (P99) below 30 ms. Values outside this
+            range indicate misconfigured target or unexpectedly deep queues.
+
+            DEFERRED v1.5: same data-contract issue as aqm-eval-runner —
+            the recipe expects a <load> dimension that the binary does
+            not produce. Cobalt's "load" series would require a multi-
+            invocation wrapper or a binary-side --load knob.
+
+  # ---- L4S responsive-flow recipes (v1.8) ----
+  l4s-s2-coexistence:
+    example_cmd: "diffserv-l4s-s2-coexistence --simTime=60 --warmup=10"
+    output_glob: "output/ns3/diffserv-l4s-s2-coexistence"
+    arms: overlay-all
+    plots:
+      - type: owd-time-series
+        output_name: cwnd-evolution
+        csv_glob: "cwnd-?.csv"
+        csv_opts:
+          sep: ","
+          header: 0
+        x_col: time_s
+        y_col: cwnd_bytes
+        series_col: __file__
+        series_label_map:
+          "cwnd-L": "L4S (TcpDctcp+ECT(1))"
+          "cwnd-C": "Classic (TcpCubic+ECT(0))"
+        title: "TCP cwnd evolution — L4S and Classic both react to congestion (RFC 9332 §2.1)"
+        xlabel: "Time (s)"
+        ylabel: "cwnd (bytes)"
+        calibration:
+          source: measured
+          notes: >
+            DualPI2 bottleneck at 10 Mbps, 60 s run (10 s warmup). cwnd-L.csv and
+            cwnd-C.csv each carry time_s,cwnd_bytes. Both senders show 100+ reduction
+            events per trace confirming responsive behaviour. The L4S sender uses
+            TcpDctcp with ECT(1) marking; the Classic sender uses TcpCubic with
+            ECT(0). Both cwnd traces converge to similar steady-state values
+            post-warmup, consistent with RFC 9332's coexistence goal (§2.1).
+      - type: ecdf
+        output_name: coupling-probability-ecdf
+        csv_glob: "coupling.csv"
+        csv_opts:
+          sep: ","
+          header: 0
+        x_col: p_L
+        title: "DualPI2 L4S mark probability (p_L) ECDF — responsive-flow coexistence"
+        xlabel: "p_L (L4S mark probability)"
+        ylabel: "ECDF"
+        calibration:
+          source: measured
+          notes: >
+            p_L time series sampled every 50 ms over 60 s. Both flows are responsive;
+            observed L:C throughput ratio mean = 1.224 (in fixture envelope [0.979, 1.469]).
+            p_L distribution captures the DualPI2 marking regime under real congestion:
+            values cluster near zero post-convergence, spiking during cwnd reduction events.
+            The third plot (L:C ratio ECDF) is omitted because derived_col is not
+            implemented in plot_recipe.py; the coupling.csv p_L ECDF and cwnd evolution
+            carry the coexistence story without it.
+
+  l4s-s1-advantage:
+    example_cmd:
+      - "diffserv-l4s-s1-advantage --simTime=60 --warmup=10 --bulkSenders=2 --mode=l4s"
+      - "diffserv-l4s-s1-advantage --simTime=60 --warmup=10 --bulkSenders=2 --mode=fqcodel"
+      - "diffserv-l4s-s1-advantage --simTime=60 --warmup=10 --bulkSenders=2 --mode=fifo"
+    output_glob: "output/ns3/diffserv-l4s-s1-advantage/*"
+    arms: overlay-all
+    plots:
+      - type: ecdf
+        output_name: probe-owd-ecdf
+        csv_glob: "probe-owd.csv"
+        csv_opts:
+          sep: ","
+          header: 0
+        x_col: owd_ms
+        series_label_map:
+          "l4s": "L4S (DualPI2)"
+          "fqcodel": "FqCoDel"
+          "fifo": "FIFO (no AQM)"
+        title: "Probe OWD ECDF — AQM (DualPI2, FqCoDel) vs no-AQM (FIFO)"
+        xlabel: "Probe OWD (ms)"
+        ylabel: "ECDF"
+        calibration:
+          source: measured
+          notes: >
+            Calibration-locked at bulkSenders=2 saturating 10 Mbps bottleneck.
+            L4S P95 = 8.9 ms, FqCoDel P95 = 8.9 ms (both AQMs protect probe to ~9 ms floor);
+            FIFO P95 = 238 ms (26x gap). The L4S-vs-FqCoDel comparison demonstrates
+            equivalence at the AQM floor — both achieve equivalent low-latency protection
+            of ECT(1)-marked traffic. The L4S-specific signal would require a load regime
+            where DualPI2 instant marking gives a clear advantage over FqCoDel interval-based
+            marking; that regime is queued for a future cycle. The bulk-throughput bar plot
+            (spec §4.5) is omitted because the binary writes only probe-owd.csv per mode;
+            bulk throughput saturation is implicit in the FIFO tail (bloat implies saturation).
+      - type: owd-time-series
+        output_name: probe-owd-timeseries
+        csv_glob: "probe-owd.csv"
+        csv_opts:
+          sep: ","
+          header: 0
+        x_col: time_s
+        y_col: owd_ms
+        series_label_map:
+          "l4s": "L4S"
+          "fqcodel": "FqCoDel"
+          "fifo": "FIFO"
+        title: "Probe OWD time-series (post-warmup, bulkSenders=2)"
+        xlabel: "Time (s)"
+        ylabel: "OWD (ms)"
+        calibration:
+          source: measured
+          notes: >
+            Post-warmup window (t >= 10 s). L4S and FqCoDel both hold probe OWD near
+            9 ms throughout; FIFO shows high variance with sustained delay of 200-250 ms.
+            The 26x gap (AQM vs no-AQM) is the substantive demonstration; L4S vs FqCoDel
+            comparison is equivalent at this operating point.
+
+  l4s-fqcodel-comparison:
+    example_cmd:
+      - "diffserv-l4s-fqcodel-comparison --simTime=60 --warmup=10 --bulkSenders=2  --mode=l4s-wred --output=output/ns3/diffserv-l4s-fqcodel-comparison"
+      - "diffserv-l4s-fqcodel-comparison --simTime=60 --warmup=10 --bulkSenders=2  --mode=l4s-coupled-only --output=output/ns3/diffserv-l4s-fqcodel-comparison"
+      - "diffserv-l4s-fqcodel-comparison --simTime=60 --warmup=10 --bulkSenders=2  --mode=l4s-fqcodel-classic --output=output/ns3/diffserv-l4s-fqcodel-comparison"
+      - "diffserv-l4s-fqcodel-comparison --simTime=60 --warmup=10 --bulkSenders=2  --mode=fqcodel --output=output/ns3/diffserv-l4s-fqcodel-comparison"
+      - "diffserv-l4s-fqcodel-comparison --simTime=60 --warmup=10 --bulkSenders=2  --mode=classic-only --output=output/ns3/diffserv-l4s-fqcodel-comparison"
+      - "diffserv-l4s-fqcodel-comparison --simTime=60 --warmup=10 --bulkSenders=5  --mode=l4s-wred --output=output/ns3/diffserv-l4s-fqcodel-comparison"
+      - "diffserv-l4s-fqcodel-comparison --simTime=60 --warmup=10 --bulkSenders=5  --mode=l4s-coupled-only --output=output/ns3/diffserv-l4s-fqcodel-comparison"
+      - "diffserv-l4s-fqcodel-comparison --simTime=60 --warmup=10 --bulkSenders=5  --mode=l4s-fqcodel-classic --output=output/ns3/diffserv-l4s-fqcodel-comparison"
+      - "diffserv-l4s-fqcodel-comparison --simTime=60 --warmup=10 --bulkSenders=5  --mode=fqcodel --output=output/ns3/diffserv-l4s-fqcodel-comparison"
+      - "diffserv-l4s-fqcodel-comparison --simTime=60 --warmup=10 --bulkSenders=5  --mode=classic-only --output=output/ns3/diffserv-l4s-fqcodel-comparison"
+      - "diffserv-l4s-fqcodel-comparison --simTime=60 --warmup=10 --bulkSenders=10 --mode=l4s-wred --output=output/ns3/diffserv-l4s-fqcodel-comparison"
+      - "diffserv-l4s-fqcodel-comparison --simTime=60 --warmup=10 --bulkSenders=10 --mode=l4s-coupled-only --output=output/ns3/diffserv-l4s-fqcodel-comparison"
+      - "diffserv-l4s-fqcodel-comparison --simTime=60 --warmup=10 --bulkSenders=10 --mode=l4s-fqcodel-classic --output=output/ns3/diffserv-l4s-fqcodel-comparison"
+      - "diffserv-l4s-fqcodel-comparison --simTime=60 --warmup=10 --bulkSenders=10 --mode=fqcodel --output=output/ns3/diffserv-l4s-fqcodel-comparison"
+      - "diffserv-l4s-fqcodel-comparison --simTime=60 --warmup=10 --bulkSenders=10 --mode=classic-only --output=output/ns3/diffserv-l4s-fqcodel-comparison"
+      - "diffserv-l4s-fqcodel-comparison --simTime=60 --warmup=10 --bulkSenders=20 --mode=l4s-wred --output=output/ns3/diffserv-l4s-fqcodel-comparison"
+      - "diffserv-l4s-fqcodel-comparison --simTime=60 --warmup=10 --bulkSenders=20 --mode=l4s-coupled-only --output=output/ns3/diffserv-l4s-fqcodel-comparison"
+      - "diffserv-l4s-fqcodel-comparison --simTime=60 --warmup=10 --bulkSenders=20 --mode=l4s-fqcodel-classic --output=output/ns3/diffserv-l4s-fqcodel-comparison"
+      - "diffserv-l4s-fqcodel-comparison --simTime=60 --warmup=10 --bulkSenders=20 --mode=fqcodel --output=output/ns3/diffserv-l4s-fqcodel-comparison"
+      - "diffserv-l4s-fqcodel-comparison --simTime=60 --warmup=10 --bulkSenders=20 --mode=classic-only --output=output/ns3/diffserv-l4s-fqcodel-comparison"
+      - "diffserv-l4s-fqcodel-comparison --simTime=60 --warmup=10 --bulkSenders=40 --mode=l4s-wred --output=output/ns3/diffserv-l4s-fqcodel-comparison"
+      - "diffserv-l4s-fqcodel-comparison --simTime=60 --warmup=10 --bulkSenders=40 --mode=l4s-coupled-only --output=output/ns3/diffserv-l4s-fqcodel-comparison"
+      - "diffserv-l4s-fqcodel-comparison --simTime=60 --warmup=10 --bulkSenders=40 --mode=l4s-fqcodel-classic --output=output/ns3/diffserv-l4s-fqcodel-comparison"
+      - "diffserv-l4s-fqcodel-comparison --simTime=60 --warmup=10 --bulkSenders=40 --mode=fqcodel --output=output/ns3/diffserv-l4s-fqcodel-comparison"
+      - "diffserv-l4s-fqcodel-comparison --simTime=60 --warmup=10 --bulkSenders=40 --mode=classic-only --output=output/ns3/diffserv-l4s-fqcodel-comparison"
+    output_glob: "output/ns3/diffserv-l4s-fqcodel-comparison/*"
+    arms: overlay-all
+    plots:
+      - type: ecdf
+        output_name: ecdf-N2
+        csv_glob: "N2/probe-owd.csv"
+        csv_opts: {sep: ",", header: 0}
+        x_col: owd_ms
+        series_label_map:
+          l4s-wred: "DualPI2 (WRED classic)"
+          l4s-coupled-only: "DualPI2 (coupled-only)"
+          l4s-fqcodel-classic: "DualPI2 (FqCoDel classic)"
+          fqcodel: "FqCoDel"
+          classic-only: "FIFO (no AQM)"
+        title: "Per-flow OWD ECDF — 5 AQM modes @ N=2 TcpDctcp bulks"
+        xlabel: "One-way delay (ms)"
+        ylabel: "ECDF"
+        calibration:
+          source: measured
+          notes: >
+            Shape-C scenario: TcpDctcp ECT(1) bulks all on L4 lane,
+            UDP ECT(1) probe with DiffServSendTimeTag.
+            Bottleneck 10 Mbps / 5 ms RTT. simTime=60s, warmup=10s.
+      - type: ecdf
+        output_name: ecdf-N5
+        csv_glob: "N5/probe-owd.csv"
+        csv_opts: {sep: ",", header: 0}
+        x_col: owd_ms
+        series_label_map:
+          l4s-wred: "DualPI2 (WRED classic)"
+          l4s-coupled-only: "DualPI2 (coupled-only)"
+          l4s-fqcodel-classic: "DualPI2 (FqCoDel classic)"
+          fqcodel: "FqCoDel"
+          classic-only: "FIFO (no AQM)"
+        title: "Per-flow OWD ECDF — 5 AQM modes @ N=5 TcpDctcp bulks"
+        xlabel: "One-way delay (ms)"
+        ylabel: "ECDF"
+        calibration:
+          source: measured
+          notes: >
+            Same setup as ecdf-N2; 5 bulk senders.
+            Bottleneck 10 Mbps / 5 ms RTT. simTime=60s, warmup=10s.
+      - type: ecdf
+        output_name: ecdf-N10
+        csv_glob: "N10/probe-owd.csv"
+        csv_opts: {sep: ",", header: 0}
+        x_col: owd_ms
+        series_label_map:
+          l4s-wred: "DualPI2 (WRED classic)"
+          l4s-coupled-only: "DualPI2 (coupled-only)"
+          l4s-fqcodel-classic: "DualPI2 (FqCoDel classic)"
+          fqcodel: "FqCoDel"
+          classic-only: "FIFO (no AQM)"
+        title: "Per-flow OWD ECDF — 5 AQM modes @ N=10 TcpDctcp bulks"
+        xlabel: "One-way delay (ms)"
+        ylabel: "ECDF"
+        calibration:
+          source: measured
+          notes: >
+            Same setup as ecdf-N2; 10 bulk senders.
+            Bottleneck 10 Mbps / 5 ms RTT. simTime=60s, warmup=10s.
+      - type: ecdf
+        output_name: ecdf-N20
+        csv_glob: "N20/probe-owd.csv"
+        csv_opts: {sep: ",", header: 0}
+        x_col: owd_ms
+        series_label_map:
+          l4s-wred: "DualPI2 (WRED classic)"
+          l4s-coupled-only: "DualPI2 (coupled-only)"
+          l4s-fqcodel-classic: "DualPI2 (FqCoDel classic)"
+          fqcodel: "FqCoDel"
+          classic-only: "FIFO (no AQM)"
+        title: "Per-flow OWD ECDF — 5 AQM modes @ N=20 TcpDctcp bulks"
+        xlabel: "One-way delay (ms)"
+        ylabel: "ECDF"
+        calibration:
+          source: measured
+          notes: >
+            Same setup as ecdf-N2; 20 bulk senders.
+            Bottleneck 10 Mbps / 5 ms RTT. simTime=60s, warmup=10s.
+      - type: ecdf
+        output_name: ecdf-N40
+        csv_glob: "N40/probe-owd.csv"
+        csv_opts: {sep: ",", header: 0}
+        x_col: owd_ms
+        xscale: log
+        series_label_map:
+          l4s-wred: "DualPI2 (WRED classic)"
+          l4s-coupled-only: "DualPI2 (coupled-only)"
+          l4s-fqcodel-classic: "DualPI2 (FqCoDel classic)"
+          fqcodel: "FqCoDel"
+          classic-only: "FIFO (no AQM)"
+        title: "Per-flow OWD ECDF — 5 AQM modes @ N=40 TcpDctcp bulks (log scale)"
+        xlabel: "One-way delay (ms, log scale)"
+        ylabel: "ECDF"
+        calibration:
+          source: measured
+          notes: >
+            Same setup as ecdf-N2; 40 bulk senders. Log scale used because
+            fqcodel P95 reaches ~29000 ms (buffer-bloat regime) while the
+            three DualPI2 modes stay at ~7.8 ms; linear scale makes the
+            L4S cluster invisible. classic-only sits at ~488 ms P95.
+
+  l4s-fqcodel-fairness:
+    example_cmd:
+      - "diffserv-l4s-fqcodel-comparison --simTime=60 --warmup=10 --bulkSenders=40 --mode=l4s-wred --output=output/ns3/diffserv-l4s-fqcodel-comparison"
+      - "diffserv-l4s-fqcodel-comparison --simTime=60 --warmup=10 --bulkSenders=40 --mode=l4s-coupled-only --output=output/ns3/diffserv-l4s-fqcodel-comparison"
+      - "diffserv-l4s-fqcodel-comparison --simTime=60 --warmup=10 --bulkSenders=40 --mode=l4s-fqcodel-classic --output=output/ns3/diffserv-l4s-fqcodel-comparison"
+      - "diffserv-l4s-fqcodel-comparison --simTime=60 --warmup=10 --bulkSenders=40 --mode=fqcodel --output=output/ns3/diffserv-l4s-fqcodel-comparison"
+      - "diffserv-l4s-fqcodel-comparison --simTime=60 --warmup=10 --bulkSenders=40 --mode=classic-only --output=output/ns3/diffserv-l4s-fqcodel-comparison"
+    output_glob: "output/ns3/diffserv-l4s-fqcodel-comparison/*"
+    arms: overlay-all
+    plots:
+      - type: steady-state-bar
+        output_name: per-flow-goodput-cv
+        csv_glob: "N40/bulk-goodput.csv"
+        csv_opts: {sep: ",", header: 0}
+        x_col: flow_id
+        y_col: goodput_mbps
+        y_aggregate: cv
+        series_label_map:
+          l4s-wred: "DualPI2 (WRED classic)"
+          l4s-coupled-only: "DualPI2 (coupled-only)"
+          l4s-fqcodel-classic: "DualPI2 (FqCoDel classic)"
+          fqcodel: "FqCoDel"
+          classic-only: "FIFO (no AQM)"
+        title: "Per-flow goodput CV @ N=40 — bulk-flow fairness across compositions"
+        xlabel: "AQM mode (see legend)"
+        ylabel: "Coefficient of variation (lower = fairer)"
+        calibration:
+          source: measured
+          notes: >
+            Lower CV = more uniform per-flow goodput share at N=40.
+            DualPI2 modes share one L4 lane (per-flow uniformity via
+            DCTCP+coupled marking). FqCoDel isolates per sub-flow.
+            classic-only has no AQM; per-flow uniformity may be poor
+            under drop-driven backoff.

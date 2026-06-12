@@ -1,0 +1,1481 @@
+diff --git a/src/traffic-control/CMakeLists.txt b/src/traffic-control/CMakeLists.txt
+index 088ca6f63..a4281efbb 100644
+--- a/src/traffic-control/CMakeLists.txt
++++ b/src/traffic-control/CMakeLists.txt
+@@ -5,6 +5,7 @@ build_lib(
+     helper/traffic-control-helper.cc
+     model/cobalt-queue-disc.cc
+     model/codel-queue-disc.cc
++    model/dualpi2-queue-disc.cc
+     model/fifo-queue-disc.cc
+     model/fq-cobalt-queue-disc.cc
+     model/fq-codel-queue-disc.cc
+@@ -23,6 +24,7 @@ build_lib(
+     helper/traffic-control-helper.h
+     model/cobalt-queue-disc.h
+     model/codel-queue-disc.h
++    model/dualpi2-queue-disc.h
+     model/fifo-queue-disc.h
+     model/fq-cobalt-queue-disc.h
+     model/fq-codel-queue-disc.h
+@@ -41,6 +43,7 @@ build_lib(
+     test/adaptive-red-queue-disc-test-suite.cc
+     test/cobalt-queue-disc-test-suite.cc
+     test/codel-queue-disc-test-suite.cc
++    test/dualpi2-queue-disc-test-suite.cc
+     test/fifo-queue-disc-test-suite.cc
+     test/pie-queue-disc-test-suite.cc
+     test/prio-queue-disc-test-suite.cc
+diff --git a/src/traffic-control/doc/dualpi2.rst b/src/traffic-control/doc/dualpi2.rst
+new file mode 100644
+index 000000000..08f28d5ce
+--- /dev/null
++++ b/src/traffic-control/doc/dualpi2.rst
+@@ -0,0 +1,106 @@
++.. include:: replace.txt
++.. highlight:: cpp
++
++Dual PI2 queue disc
++===================
++
++This chapter describes the Dual PI2 ([RFC9332]_) queue disc implementation
++in |ns3|.
++
++The model provides the necessary node-level infrastructure for the Low Latency, 
++Low Loss, and Scalable throughput (L4S) architecture. It performs traffic 
++isolation by steering ECT(1) packets into a dedicated L4S queue, while 
++maintaining a coupled marking probability between the L4S and Classic queues. 
++The implementation aims for functional parity with the Linux kernel's 
++``sch_dualpi2.c``, providing mechanisms such as a credit-based WRR scheduler 
++and a step-threshold marking function to maintain low queuing delay for 
++compatible L4S flows.
++
++Model Description
++*****************
++The source code for the Dual PI2 model is located in the directory
++``src/traffic-control/model`` and consists of 2 files: `dualpi2-queue-disc.h` and
++`dualpi2-queue-disc.cc` defining a DualPi2QueueDisc class. The code 
++was ported to |ns3| by Maria Eduarda Veras, Eduardo Freitas and Djamel Sadok based on
++the Linux kernel code.
++
++This model implements the Dual-Queue framework, providing two internal queues to
++isolate L4S traffic from Classic traffic. The L4S queue is intended for ECT(1) and
++CE packets and uses a Step AQM for congestion signaling. The Classic queue is managed
++by the PI2 algorithm. Both queues are coupled through their marking probabilities
++and served by a credit-based scheduler.
++
++* class :cpp:class:`DualPi2QueueDisc`: This class implements the main DualQ Coupled PI2 algorithm:
++
++  * ``DualPi2QueueDisc::DoEnqueue()``: This routine is the entry point for incoming packets. It first checks the total byte count against the `m_queueLimit`; if the buffer is full, the packet is dropped (overflow). If space is available, the routine classifies the packet based on its IP ECN field: packets marked as ECT(1) or CE are directed to the internal L4S queue, while ECT(0) or Not-ECT packets are directed to the Classic queue. An internal ns-3 Tag is then attached to the packet solely to store a boolean indicator of whether the Step AQM should be applied during dequeue. This mechanism ensures that even if internal queue state changes, the packet is processed according to its classification at entry. Finally, if the `m_dropEarly` is enabled, the routine may invoke MustDrop() to decide whether to discard the packet based on the current PI2 probability.
++
++  * ``DualPi2QueueDisc::DualPi2Update()``: This routine is called at regular intervals defined by the `m_Tupdate` attribute. It computes the queuing delay as the maximum sojourn time between the head-of-queue packets of both internal queues, then updates m_baseProb using a PI controller with gains A and B, clamping the result to [0, 1]. The Classic drop probability is derived as m_pC = m_baseProb * m_baseProb and the L4S mark probability as m_pL = m_baseProb * k, coupling both queues through a shared base probability.
++
++  * ``DualPi2QueueDisc::MustDrop()``: This routine implements the core signaling and overload logic. No action is taken if the total queue size is below two MTUs. Overload is detected when `m_baseProb` * `m_k` > 1.0; in this state, Classic packets are dropped instead of marked, and L4S packets are dropped with probability `m_pC` if `m_dropOverload` is enabled. Under normal conditions, L4S packets are probabilistically marked with probability `m_pL`, and Classic packets are marked or dropped with probability `m_pC`.
++
++  * ``DualPi2QueueDisc::StepAqm()``: This method applies CE marking to L4S packets only. It marks a packet if the enqueue-time tag indicates step marking is eligible and the sojourn time exceeds `m_L4SMarkThreshold`. When `m_StepInPackets` is true, the instantaneous L4S queue length is used instead of sojourn time. This routine never drops packets.
++
++  * ``DualPi2QueueDisc::DoDequeue()``: This routine retrieves a packet from the ``DualPi2QueueDisc::Scheduler()`` and applies AQM signaling before forwarding it. ``DualPi2QueueDisc::MustDrop()`` is evaluated first for all packets; if it returns true, the packet is dropped with `OVERLOAD_DROP` and the next packet is selected. For L4S packets that pass ``DualPi2QueueDisc::MustDrop()``, ``DualPi2QueueDisc::StepAqm()`` is then called to apply step-threshold CE marking.
++
++  * ``DualPi2QueueDisc::Scheduler()``: This method implements a credit-based WRR to select which internal queue to serve. The credit is initialised as `m_mtu` * (`m_wClassic` - `m_wL4S`); a negative credit favours the L4S queue and a positive credit favours the Classic queue. After each dequeue the credit is adjusted by the served packet's size weighted by the opposing queue's weight, ensuring the Classic queue receives approximately `m_wClassic`% of the total service rate.
++
++* class :cpp:class:`DualPi2StepTag`: This class implements a custom ns-3 Tag used to carry packet-specific state across the queue disc; it stores a boolean flag determined during enqueuing to indicate whether the Step AQM should be applied at the dequeue stage.
++
++Attributes
++==========
++
++The :cpp:class:`DualPi2QueueDisc` class holds the following attributes:
++
++* ``Mtu:`` The device MTU in bytes. If set to 0, it is automatically configured from the attached NetDevice
++* ``A:`` The integral gain factor (alpha) for the PI2 controller. The default value is 0.16
++* ``B:`` The proportional gain factor (beta) for the PI2 controller. The default value is 3.2
++* ``Tupdate:`` The sampling interval for the PI2 probability update timer. The default value is 16 ms
++* ``QueueLimit:`` The total maximum size of the queue disc in bytes.
++* ``Target:`` The reference queuing delay target for the Classic queue. The default value is 15 ms
++* ``L4SMarkThreshold:`` The threshold for the L4S step-AQM marking function. The default value is 1 ms
++* ``MinQLenStep:`` The minimum L4S queue length (in packets) required to allow the step-AQM to trigger. The default value is 0
++* ``StepInPackets:`` Whether to apply step function based on queue length in packets (true) instead of delay (false). The default value is false
++* ``DropEarly:`` Whether to drop at enqueue (true) or dequeue (false). The default value is false
++* ``DropOverload:`` Whether to drop on overload (true) or overflow (false). The default value is true
++* ``K:`` The coupling factor (k) between the L4S and Classic queues. The default value is 2
++* ``ClassicWeight:`` The percentage of service rate (0-100) guaranteed to the Classic queue by the WRR scheduler. The default value is 10
++* ``StartTime:`` Time to start the queue disc. The default value is 0 s
++
++Examples
++========
++ 
++``dualpi2-example.cc``: This example demonstrates the coexistence of a
++DCTCP flow (L4S queue) and a TCP Cubic flow (Classic queue) sharing a bottleneck
++link managed by the Dual PI2 queue disc. It measures per-flow throughput,
++congestion window evolution, RTT, and queue sojourn times across a range of
++bottleneck bandwidths (4, 12, 40, 120, 200 Mbps) and base RTTs (5, 10, 20, 50,
++100 ms), reproducing the experimental conditions described in [Netdev0x13]_.
++
++Validation
++**********
++ 
++The Dual PI2 model is tested using :cpp:class:`DualPi2QueueDiscTestSuite`
++class defined in ``src/traffic-control/test/dualpi2-queue-disc-test-suite.cc``.
++The suite includes the following test cases:
++ 
++* Test 1: packets with ECN codepoints Not-ECT and ECT(0) are enqueued into the Classic queue; packets with ECT(1) and CE are enqueued into the L4S queue.
++* Test 2: the ``DualPi2StepTag`` attached at enqueue controls CE marking at dequeue; a packet enqueued below ``MinQLenStep`` is not marked even if its sojourn time exceeds ``L4SMarkThreshold``, while a packet enqueued at or above the threshold is marked.
++* Test 3: ``StepAqm()`` marks packets based on sojourn time when ``StepInPackets`` is false; a packet dequeued before ``L4SMarkThreshold`` is not marked, while one dequeued after is marked.
++* Test 4: with ``ClassicWeight`` set to 10, the fraction of packets served from the Classic queue over 100 dequeue operations converges to approximately 10%.
++* Test 5: when the queue reaches ``QueueLimit``, the next packet is dropped with reason ``FORCED_DROP`` and the queue size does not increase.
++* Test 6: when ``m_baseProb * k > 1.0`` and ``DropOverload`` is true, both Classic ECT(0) and L4S ECT(1) packets are dropped with ``OVERLOAD_DROP`` instead of being marked.
++ 
++The test suite can be run using the following commands:
++ 
++.. sourcecode:: bash
++ 
++   $ ./ns3 configure --enable-examples --enable-tests
++   $ ./ns3 build
++   $ ./test.py -s dualpi2-queue-disc-test-suite
++
++
++References
++==========
++.. [RFC9332] K. De Schepper, B. Briscoe, and G. White, "Dual-Queue Coupled Active Queue Management (AQM) for Low Latency, Low Loss, and Scalable Throughput (L4S)", RFC 9332, January 2023, <https://www.rfc-editor.org/rfc/rfc9332.html>.
++.. [Netdev0x13] B. Briscoe, K. De Schepper, and G. White, "DualPI2: A Dual-Queue Coupled PI2 AQM for L4S", Linux Plumbers Conference 2021, <https://www.bobbriscoe.net/projects/latency/dualpi2_netdev0x13.pdf>.
++
+diff --git a/src/traffic-control/model/dualpi2-queue-disc.cc b/src/traffic-control/model/dualpi2-queue-disc.cc
+new file mode 100644
+index 000000000..7107b14ab
+--- /dev/null
++++ b/src/traffic-control/model/dualpi2-queue-disc.cc
+@@ -0,0 +1,664 @@
++/* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
++/*
++ * Copyright (c) 2017 NITK Surathkal
++ * Copyright (c) 2019 Tom Henderson (update to IETF draft -10)
++ * Copyright (c) 2026 Maria Eduarda Veras (update to linux code)
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation;
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++ *
++ * Author: Shravya K.S. <shravya.ks0@gmail.com>
++ * Modified by:
++ *          Maria Eduarda Veras <eduarda.martins@gprt.ufpe.br>
++ *          Eduardo Freitas <eduardo.freitas@gprt.ufpe.br>
++ *          Djamel Fawzi Dadj Sadok <jamel@gprt.ufpe.br>
++ */
++#include "dualpi2-queue-disc.h"
++
++#include "ns3/abort.h"
++#include "ns3/assert.h"
++#include "ns3/double.h"
++#include "ns3/drop-tail-queue.h"
++#include "ns3/enum.h"
++#include "ns3/fatal-error.h"
++#include "ns3/log.h"
++#include "ns3/net-device-queue-interface.h"
++#include "ns3/object-factory.h"
++#include "ns3/simulator.h"
++#include "ns3/string.h"
++#include "ns3/uinteger.h"
++
++#include <cmath>
++#include <cstddef>
++
++namespace ns3
++{
++
++/**
++ * Tag used to carry the "apply_step" state from Enqueue to Dequeue.
++ *
++ * In the Linux kernel implementation (sch_dualpi2.c), the decision to apply
++ * the Step AQM is made at enqueue time (checking if queue len >= min_qlen_step)
++ * and stored in the skb control buffer (cb).
++ *
++ * Since ns-3 queues do not natively persist metadata outside the packet,
++ * this Tag mimics the Linux "cb" behavior, ensuring the Step AQM logic
++ * strictly follows the reference implementation.
++ */
++class DualPi2StepTag : public Tag
++{
++  public:
++    static TypeId GetTypeId(void)
++    {
++        static TypeId tid = TypeId("ns3::DualPi2StepTag")
++                                .SetParent<Tag>()
++                                .SetGroupName("TrafficControl")
++                                .AddConstructor<DualPi2StepTag>();
++        return tid;
++    }
++
++    virtual TypeId GetInstanceTypeId(void) const
++    {
++        return GetTypeId();
++    }
++
++    virtual uint32_t GetSerializedSize(void) const
++    {
++        return 1;
++    }
++
++    virtual void Serialize(TagBuffer i) const
++    {
++        i.WriteU8(m_applyStep);
++    }
++
++    virtual void Deserialize(TagBuffer i)
++    {
++        m_applyStep = i.ReadU8();
++    }
++
++    virtual void Print(std::ostream& os) const
++    {
++        os << "Apply step: " << (uint32_t)m_applyStep;
++    }
++
++    void SetApplyStep(uint8_t step)
++    {
++        m_applyStep = step;
++    }
++
++    bool GetApplyStep() const
++    {
++        return m_applyStep;
++    }
++
++  private:
++    uint8_t m_applyStep{0}; //!< Whether to apply step or not
++};
++
++NS_OBJECT_ENSURE_REGISTERED(DualPi2StepTag);
++
++NS_LOG_COMPONENT_DEFINE("DualPi2QueueDisc");
++
++NS_OBJECT_ENSURE_REGISTERED(DualPi2QueueDisc);
++
++const std::size_t CLASSIC = 0;
++const std::size_t L4S = 1;
++const double MAX_PROB = 1.0;
++
++TypeId
++DualPi2QueueDisc::GetTypeId(void)
++{
++    static TypeId tid =
++        TypeId("ns3::DualPi2QueueDisc")
++            .SetParent<QueueDisc>()
++            .SetGroupName("TrafficControl")
++            .AddConstructor<DualPi2QueueDisc>()
++            .AddAttribute("Mtu",
++                          "Device MTU (bytes); if zero, will be automatically configured",
++                          UintegerValue(0),
++                          MakeUintegerAccessor(&DualPi2QueueDisc::m_mtu),
++                          MakeUintegerChecker<uint32_t>())
++            .AddAttribute("A",
++                          "Value of alpha (Hz)",
++                          DoubleValue(0.156250),
++                          MakeDoubleAccessor(&DualPi2QueueDisc::m_alpha),
++                          MakeDoubleChecker<double>())
++            .AddAttribute("B",
++                          "Value of beta (Hz)",
++                          DoubleValue(3.195312),
++                          MakeDoubleAccessor(&DualPi2QueueDisc::m_beta),
++                          MakeDoubleChecker<double>())
++            .AddAttribute("Tupdate",
++                          "Time period to calculate drop probability",
++                          TimeValue(MilliSeconds(16)),
++                          MakeTimeAccessor(&DualPi2QueueDisc::m_tUpdate),
++                          MakeTimeChecker())
++            .AddAttribute("QueueLimit",
++                          "Queue limit in bytes",
++                          UintegerValue(1562500), // 250 ms at 50 Mbps
++                          MakeUintegerAccessor(&DualPi2QueueDisc::m_queueLimit),
++                          MakeUintegerChecker<uint32_t>())
++            .AddAttribute("Target",
++                          "PI AQM Classic queue delay target",
++                          TimeValue(MilliSeconds(15)),
++                          MakeTimeAccessor(&DualPi2QueueDisc::m_target),
++                          MakeTimeChecker())
++            .AddAttribute("L4SMarkThreshold",
++                          "L4S marking threshold in Time",
++                          TimeValue(MilliSeconds(1)),
++                          MakeTimeAccessor(&DualPi2QueueDisc::m_minTh),
++                          MakeTimeChecker())
++            .AddAttribute("MinQLenStep",
++                          "Minimum L4S queue length (in packets) to apply step marking",
++                          UintegerValue(0),
++                          MakeUintegerAccessor(&DualPi2QueueDisc::m_minQLenStep),
++                          MakeUintegerChecker<uint32_t>())
++            .AddAttribute("StepInPackets",
++                          "Whether to apply step marking based on queue length instead of delay",
++                          BooleanValue(false),
++                          MakeBooleanAccessor(&DualPi2QueueDisc::m_stepInPackets),
++                          MakeBooleanChecker())
++            .AddAttribute("DropEarly",
++                          "Whether to drop at enqueue (true) or dequeue (false)",
++                          BooleanValue(false),
++                          MakeBooleanAccessor(&DualPi2QueueDisc::m_dropEarly),
++                          MakeBooleanChecker())
++            .AddAttribute("DropOverload",
++                          "Whether to drop on overload (true) or overflow (false)",
++                          BooleanValue(true),
++                          MakeBooleanAccessor(&DualPi2QueueDisc::m_dropOverload),
++                          MakeBooleanChecker())
++            .AddAttribute("K",
++                          "Coupling factor",
++                          DoubleValue(2),
++                          MakeDoubleAccessor(&DualPi2QueueDisc::m_k),
++                          MakeDoubleChecker<double>())
++            .AddAttribute("StartTime", // Only if user wants to change queue start time
++                          "Simulation time to start scheduling the update timer",
++                          TimeValue(Seconds(0.0)),
++                          MakeTimeAccessor(&DualPi2QueueDisc::m_startTime),
++                          MakeTimeChecker())
++            .AddAttribute("ClassicWeight",
++                          "Weight for classic queue in %.",
++                          UintegerValue(10),
++                          MakeUintegerAccessor(&DualPi2QueueDisc::m_wClassic),
++                          MakeUintegerChecker<uint32_t>())
++            .AddTraceSource("ProbL",
++                            "L4S mark probability (p_L)",
++                            MakeTraceSourceAccessor(&DualPi2QueueDisc::m_pL),
++                            "ns3::TracedValueCallback::Double")
++            .AddTraceSource("ProbC",
++                            "Classic drop/mark probability (p_C)",
++                            MakeTraceSourceAccessor(&DualPi2QueueDisc::m_pC),
++                            "ns3::TracedValueCallback::Double")
++            .AddTraceSource("ClassicSojournTime",
++                            "Sojourn time of the last packet dequeued from the Classic queue",
++                            MakeTraceSourceAccessor(&DualPi2QueueDisc::m_traceClassicSojourn),
++                            "ns3::Time::TracedCallback")
++            .AddTraceSource("L4sSojournTime",
++                            "Sojourn time of the last packet dequeued from the L4S queue",
++                            MakeTraceSourceAccessor(&DualPi2QueueDisc::m_traceL4sSojourn),
++                            "ns3::Time::TracedCallback");
++    return tid;
++}
++
++DualPi2QueueDisc::DualPi2QueueDisc()
++    : QueueDisc()
++{
++    NS_LOG_FUNCTION(this);
++    m_uv = CreateObject<UniformRandomVariable>();
++    m_rtrsEvent = Simulator::Schedule(m_startTime, &DualPi2QueueDisc::DualPi2Update, this);
++}
++
++DualPi2QueueDisc::~DualPi2QueueDisc()
++{
++    NS_LOG_FUNCTION(this);
++}
++
++void
++DualPi2QueueDisc::DoDispose(void)
++{
++    NS_LOG_FUNCTION(this);
++    m_rtrsEvent.Cancel();
++    QueueDisc::DoDispose();
++}
++
++void
++DualPi2QueueDisc::SetQueueLimit(uint32_t lim)
++{
++    NS_LOG_FUNCTION(this << lim);
++    m_queueLimit = lim;
++}
++
++uint32_t
++DualPi2QueueDisc::GetQueueSize(void) const
++{
++    return (GetInternalQueue(CLASSIC)->GetNBytes() + GetInternalQueue(L4S)->GetNBytes());
++}
++
++int64_t
++DualPi2QueueDisc::AssignStreams(int64_t stream)
++{
++    NS_LOG_FUNCTION(this << stream);
++    m_uv->SetStream(stream);
++    return 1;
++}
++
++bool
++DualPi2QueueDisc::IsL4S(Ptr<QueueDiscItem> item)
++{
++    uint8_t tosByte = 0;
++    if (item->GetUint8Value(QueueItem::IP_DSFIELD, tosByte))
++    {
++        // ECT(1) or CE
++        if ((tosByte & 0x3) == 1 || (tosByte & 0x3) == 3)
++        {
++            return true;
++        }
++    }
++    return false;
++}
++
++bool
++DualPi2QueueDisc::DoEnqueue(Ptr<QueueDiscItem> item)
++{
++    NS_LOG_FUNCTION(this << item);
++    std::size_t queueNumber = CLASSIC;
++
++    uint32_t nQueued = GetQueueSize();
++    if (nQueued + item->GetSize() > m_queueLimit)
++    {
++        // Drops due to queue limit
++        DropBeforeEnqueue(item, FORCED_DROP);
++        return false;
++    }
++
++    if (m_dropEarly && MustDrop(item))
++    {
++        DropBeforeEnqueue(item, OVERLOAD_DROP);
++        return false;
++    }
++
++    if (IsL4S(item))
++    {
++        queueNumber = L4S;
++        bool applyStep = (GetInternalQueue(L4S)->GetNPackets() >= m_minQLenStep);
++
++        DualPi2StepTag tag;
++        tag.SetApplyStep(applyStep);
++        item->GetPacket()->AddPacketTag(tag);
++    }
++
++    if (queueNumber == CLASSIC)
++    {
++        NS_LOG_DEBUG("Classic enqueue at t=" << Simulator::Now().GetSeconds()
++                     << " qlen=" << GetInternalQueue(CLASSIC)->GetNPackets()
++                     << " item_ts=" << item->GetTimeStamp().GetSeconds());
++    }
++    else
++    {
++        NS_LOG_DEBUG("L4S enqueue at t=" << Simulator::Now().GetSeconds()
++                     << " qlen=" << GetInternalQueue(L4S)->GetNPackets()
++                     << " item_ts=" << item->GetTimeStamp().GetSeconds());
++    }
++
++    bool retval = GetInternalQueue(queueNumber)->Enqueue(item);
++    NS_LOG_LOGIC("Packets enqueued in queue-" << queueNumber << ": "
++                                              << GetInternalQueue(queueNumber)->GetNPackets());
++    return retval;
++}
++
++void
++DualPi2QueueDisc::InitializeParams(void)
++{
++    if (m_mtu == 0)
++    {
++        Ptr<NetDeviceQueueInterface> ndqi = GetNetDeviceQueueInterface();
++        Ptr<NetDevice> dev;
++        // if the NetDeviceQueueInterface object is aggregated to a
++        // NetDevice, get the MTU of such NetDevice
++        if (ndqi && (dev = ndqi->GetObject<NetDevice>()))
++        {
++            m_mtu = dev->GetMtu();
++        }
++    }
++    NS_ABORT_MSG_IF(m_mtu < 68, "Error: MTU does not meet RFC 791 minimum");
++    m_prevQ = Time(Seconds(0));
++    m_pC = 0;
++    m_pL = 0;
++    m_minThPkts = 0;
++
++    m_wL4S = 100 - m_wClassic;
++    m_creditInit = (int32_t)m_mtu * ((int32_t)m_wClassic - (int32_t)m_wL4S);
++    m_credit = m_creditInit;
++
++    // m_dropEarly = false;
++    // m_dropOverload = true;
++    m_thLen = 2 * m_mtu;
++
++    NS_LOG_INFO("DualQ Init: WRR Weights C/L=" << m_wClassic << "/" << m_wL4S
++                                               << " InitCredit=" << m_creditInit);
++}
++
++void
++DualPi2QueueDisc::DualPi2Update()
++{
++    NS_LOG_FUNCTION(this);
++
++    Ptr<const QueueDiscItem> item;
++    Time curQ = Seconds(0);
++    Time lDelay = Seconds(0);
++    Time cDelay = Seconds(0);
++
++    if ((item = GetInternalQueue(CLASSIC)->Peek()))
++    {
++        cDelay = Simulator::Now() - item->GetTimeStamp();
++    }
++    if ((item = GetInternalQueue(L4S)->Peek()))
++    {
++        lDelay = Simulator::Now() - item->GetTimeStamp();
++    }
++
++    curQ = std::max(cDelay, lDelay);
++
++    m_baseProb = m_baseProb + m_alpha * (curQ - m_target).GetSeconds() +
++                 m_beta * (curQ - m_prevQ).GetSeconds();
++    // clamp p' to within [0,1]; page 34 of Internet-Draft
++    m_baseProb = std::max<double>(m_baseProb, 0);
++    m_baseProb = std::min<double>(m_baseProb, MAX_PROB);
++
++    if (!m_dropOverload)
++    {
++        // if we do not drop on overload, ensure we cap the L4S probability
++        // to 100% to keep window fairness when overflowing.
++        m_baseProb = std::min<double>(m_baseProb, MAX_PROB / m_k);
++    }
++
++    // m_pC = m_baseProb * m_baseProb;
++    // m_pL = m_baseProb * m_k;
++    m_prevQ = curQ;
++
++    NS_LOG_INFO("PI2Update: t=" << Simulator::Now().GetSeconds()
++    << " cDelay=" << cDelay.GetMilliSeconds()
++    << " lDelay=" << lDelay.GetMilliSeconds()
++    << " curQ=" << curQ.GetMilliSeconds()
++    << " prevQ=" << m_prevQ.GetMilliSeconds()
++    << " baseProb=" << m_baseProb
++    << " cSize=" << GetInternalQueue(CLASSIC)->GetNBytes()
++    << " lSize=" << GetInternalQueue(L4S)->GetNBytes());
++
++    m_rtrsEvent = Simulator::Schedule(m_tUpdate, &DualPi2QueueDisc::DualPi2Update, this);
++}
++
++Ptr<QueueDiscItem>
++DualPi2QueueDisc::DoDequeue()
++{
++    NS_LOG_FUNCTION(this);
++    Ptr<QueueDiscItem> item;
++    int32_t credit = 0;
++
++    while (GetQueueSize() > 0)
++    {
++        item = Scheduler(credit);
++
++        if (!item)
++        {
++            NS_LOG_LOGIC("Scheduler returned no item");
++            return 0;
++        }
++
++        if (!m_dropEarly && MustDrop(item))
++        {
++            DropAfterDequeue(item, OVERLOAD_DROP);
++            continue;
++        }
++
++        m_credit += credit;
++
++        if (IsL4S(item))
++        {
++            StepAqm(item);
++        }
++
++        return item;
++    }
++    return 0;
++}
++
++/**
++ * Weight round-robin scheduler to decide which queue to dequeue from
++ * The credit is updated based on the queue weights and the size of the dequeued packet,
++ * following the logic in the Linux kernel implementation (sch_dualpi2.c).
++ */
++Ptr<QueueDiscItem>
++DualPi2QueueDisc::Scheduler(int32_t& credit)
++{
++    NS_LOG_FUNCTION(this);
++
++    credit = 0;
++    Ptr<QueueDiscItem> item = 0;
++
++    Ptr<InternalQueue> classicQueue = GetInternalQueue(CLASSIC);
++    Ptr<InternalQueue> l4sQueue = GetInternalQueue(L4S);
++
++    bool lHasPackets = l4sQueue->GetNPackets() > 0;
++    bool cHasPackets = classicQueue->GetNPackets() > 0;
++
++    if (lHasPackets && (!cHasPackets || m_credit <= 0))
++    {
++        item = l4sQueue->Dequeue();
++        m_traceL4sSojourn(Simulator::Now() - item->GetTimeStamp());
++        NS_LOG_DEBUG("L4S sojourn time: " 
++             << (Simulator::Now() - item->GetTimeStamp()).GetMilliSeconds()
++             << " enqueued at: " << item->GetTimeStamp().GetSeconds()
++             << " dequeued at: " << Simulator::Now().GetSeconds()
++             << " queue lengths: L4S=" << l4sQueue->GetNPackets() 
++             << " Classic=" << classicQueue->GetNPackets());
++        NS_LOG_LOGIC("L4S queue packet dequeued");
++        if (cHasPackets)
++        {
++            credit = (int32_t)m_wClassic;
++        }
++    }
++    else if (cHasPackets)
++    {
++        item = classicQueue->Dequeue();
++        m_traceClassicSojourn(Simulator::Now() - item->GetTimeStamp());
++        NS_LOG_DEBUG("Classic sojourn time: " 
++             << (Simulator::Now() - item->GetTimeStamp()).GetMilliSeconds()
++             << " enqueued at: " << item->GetTimeStamp().GetSeconds()
++             << " dequeued at: " << Simulator::Now().GetSeconds()
++             << " queue lengths: L4S=" << l4sQueue->GetNPackets() 
++             << " Classic=" << classicQueue->GetNPackets());
++        NS_LOG_LOGIC("Classic queue packet dequeued");
++        if (lHasPackets)
++        {
++            credit = -((int32_t)m_wL4S);
++        }
++    }
++    else
++    {
++        NS_LOG_LOGIC("No packets in either queue");
++        m_credit = m_creditInit;
++        return 0;
++    }
++
++    credit *= (int32_t)item->GetSize();
++    return item;
++}
++
++bool
++DualPi2QueueDisc::StepAqm(Ptr<QueueDiscItem> item)
++{
++    NS_LOG_FUNCTION(this << item);
++    NS_ASSERT_MSG(IsL4S(item), "StepAqm should only be called for L4S packets");
++
++    bool conditionStep = false;
++    bool applyStep = false;
++
++    DualPi2StepTag tag;
++    if (item->GetPacket()->PeekPacketTag(tag))
++    {
++        applyStep = tag.GetApplyStep();
++    }
++
++    if (m_stepInPackets)
++    {
++        uint32_t qLen = GetInternalQueue(L4S)->GetNPackets();
++        conditionStep = qLen > m_minThPkts;
++    }
++    else
++    {
++        Time qDelay = Simulator::Now() - item->GetTimeStamp();
++        conditionStep = qDelay > m_minTh;
++    }
++
++    if (applyStep && conditionStep)
++    {
++        Mark(item, UNFORCED_L4S_MARK);
++    }
++    return false;
++}
++
++bool
++DualPi2QueueDisc::MustDrop(Ptr<QueueDiscItem> item)
++{
++    NS_LOG_FUNCTION(this << item);
++
++    if (GetQueueSize() < 2 * m_mtu)
++    {
++        NS_LOG_DEBUG("Queue size less than 2 MTU, not dropping");
++        return false;
++    }
++
++    m_pL = m_baseProb * m_k;
++    m_pC = m_baseProb * m_baseProb;
++    bool overload = m_baseProb * m_k > MAX_PROB;
++
++    if (IsL4S(item))
++    {
++        if (overload)
++        {
++            if (!m_dropOverload || !(m_uv->GetValue() <= m_pC))
++            {
++                Mark(item, UNFORCED_L4S_MARK);
++                return false;
++            }
++            NS_LOG_DEBUG("Overload detected, dropping L4S packet");
++            return true;
++        }
++
++        if (m_uv->GetValue() <= m_pL)
++        {
++            bool retval = Mark(item, UNFORCED_L4S_MARK);
++            NS_ASSERT_MSG(retval == true, "Make sure we can mark in L4S queue");
++            return false;
++        }
++
++        return false;
++    }
++    else
++    {
++        if (m_uv->GetValue() <= m_pC)
++        {
++            if (overload || !Mark(item, UNFORCED_CLASSIC_MARK))
++            {
++                NS_LOG_DEBUG("Overload detected, dropping Classic packet");
++                return true;
++            }
++        }
++        return false;
++    }
++    return false;
++}
++
++Ptr<const QueueDiscItem>
++DualPi2QueueDisc::DoPeek()
++{
++    NS_LOG_FUNCTION(this);
++    Ptr<const QueueDiscItem> item;
++
++    for (std::size_t i = 0; i < GetNInternalQueues(); i++)
++    {
++        if ((item = GetInternalQueue(i)->Peek()))
++        {
++            NS_LOG_LOGIC("Peeked from queue number " << i << ": " << item);
++            NS_LOG_LOGIC("Number packets queue number " << i << ": "
++                                                        << GetInternalQueue(i)->GetNPackets());
++            NS_LOG_LOGIC("Number bytes queue number " << i << ": "
++                                                      << GetInternalQueue(i)->GetNBytes());
++            return item;
++        }
++    }
++
++    NS_LOG_LOGIC("Queue empty");
++    return item;
++}
++
++bool
++DualPi2QueueDisc::CheckConfig(void)
++{
++    NS_LOG_FUNCTION(this);
++    if (GetNQueueDiscClasses() > 0)
++    {
++        NS_LOG_ERROR("DualPi2QueueDisc cannot have classes");
++        return false;
++    }
++
++    if (GetNPacketFilters() > 0)
++    {
++        NS_LOG_ERROR("DualPi2QueueDisc cannot have packet filters");
++        return false;
++    }
++
++    if (GetNInternalQueues() == 0)
++    {
++        // Create 2 DropTail queues
++        Ptr<InternalQueue> queue0 =
++            CreateObjectWithAttributes<DropTailQueue<QueueDiscItem>>("MaxSize",
++                                                                     QueueSizeValue(GetMaxSize()));
++        Ptr<InternalQueue> queue1 =
++            CreateObjectWithAttributes<DropTailQueue<QueueDiscItem>>("MaxSize",
++                                                                     QueueSizeValue(GetMaxSize()));
++        QueueSize queueSize(BYTES, m_queueLimit);
++        queue0->SetMaxSize(queueSize);
++        queue1->SetMaxSize(queueSize);
++        AddInternalQueue(queue0);
++        AddInternalQueue(queue1);
++    }
++
++    if (GetNInternalQueues() != 2)
++    {
++        NS_LOG_ERROR("DualPi2QueueDisc needs 2 internal queue");
++        return false;
++    }
++
++    if (GetInternalQueue(CLASSIC)->GetMaxSize().GetValue() < m_queueLimit)
++    {
++        NS_LOG_ERROR(
++            "The size of the internal Classic traffic queue is less than the queue disc limit");
++        return false;
++    }
++
++    if (GetInternalQueue(L4S)->GetMaxSize().GetValue() < m_queueLimit)
++    {
++        NS_LOG_ERROR(
++            "The size of the internal L4S traffic queue is less than the queue disc limit");
++        return false;
++    }
++
++    return true;
++}
++
++} // namespace ns3
+diff --git a/src/traffic-control/model/dualpi2-queue-disc.h b/src/traffic-control/model/dualpi2-queue-disc.h
+new file mode 100644
+index 000000000..3face6653
+--- /dev/null
++++ b/src/traffic-control/model/dualpi2-queue-disc.h
+@@ -0,0 +1,200 @@
++/* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
++/*
++ * Copyright (c) 2017 NITK Surathkal
++ * Copyright (c) 2019 Tom Henderson (update to IETF draft -10)
++ * Copyright (c) 2026 Maria Eduarda Veras (update to linux code)
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation;
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++ *
++ * Author: Shravya K.S. <shravya.ks0@gmail.com>
++ * Modified by:
++ *          Maria Eduarda Veras <eduarda.martins@gprt.ufpe.br>
++ *          Eduardo Freitas <eduardo.freitas@gprt.ufpe.br>
++ *          Djamel Fawzi Dadj Sadok <jamel@gprt.ufpe.br>
++ */
++
++#ifndef DUAL_PI2_QUEUE_DISC_H
++#define DUAL_PI2_QUEUE_DISC_H
++
++#include "ns3/queue-disc.h"
++
++#include "ns3/boolean.h"
++#include "ns3/data-rate.h"
++#include "ns3/event-id.h"
++#include "ns3/nstime.h"
++#include "ns3/packet.h"
++#include "ns3/random-variable-stream.h"
++#include "ns3/simulator.h"
++#include "ns3/string.h"
++#include "ns3/timer.h"
++#include "ns3/traced-value.h"
++
++#include <queue>
++
++namespace ns3
++{
++
++class UniformRandomVariable;
++
++/**
++ * @ingroup traffic-control
++ * 
++ * @brief Dual PI2 queue disc
++ *
++ * descrever dualpi BREVEMENTE aqui
++ */
++class DualPi2QueueDisc : public QueueDisc
++{
++  public:
++    /**
++     * @brief Get the type ID.
++     * @return the object TypeId
++     */
++    static TypeId GetTypeId(void);
++
++    /**
++     * @brief DualPi2QueueDisc Constructor
++     */
++    DualPi2QueueDisc();
++
++    /**
++     * @brief  Destructor
++     */
++    ~DualPi2QueueDisc() override;
++
++    /**
++     * @brief Get the current value of the queue in bytes.
++     *
++     * @returns The queue size in bytes.
++     */
++    uint32_t GetQueueSize() const;
++
++    /**
++     * @brief Set the limit of the queue in bytes.
++     *
++     * @param lim The limit in bytes.
++     */
++    void SetQueueLimit(uint32_t lim);
++
++    // Reasons for dropping packets
++    static constexpr const char* FORCED_DROP =
++        "Forced drop"; //!< Drops due to queue limit: reactive
++    static constexpr const char* OVERLOAD_DROP =
++        "Overload drop"; //!< Drops due to overload: reactive
++    static constexpr const char* UNFORCED_CLASSIC_MARK =
++        "Unforced classic mark"; //!< Unforced mark in classic queue
++    static constexpr const char* UNFORCED_L4S_MARK = "Unforced mark in L4S queue";
++
++    /**
++     * Assign a fixed random variable stream number to the random variables
++     * used by this model.  Return the number of streams (possibly zero) that
++     * have been assigned.
++     *
++     * @param stream first stream index to use
++     * @return the number of stream indices assigned by this model
++     */
++    int64_t AssignStreams(int64_t stream);
++
++  protected:
++    /**
++     * @brief Dispose of the object
++     */
++    void DoDispose() override;
++
++  private:
++    // Documented in base class
++    bool DoEnqueue(Ptr<QueueDiscItem> item) override;
++    Ptr<QueueDiscItem> DoDequeue() override;
++    Ptr<const QueueDiscItem> DoPeek() override;
++    bool CheckConfig() override;
++
++    /**
++     * @brief Initialize the queue parameters.
++     */
++    void InitializeParams() override;
++
++    /**
++     * @brief check if traffic is classified as L4S (ECT(1) or CE)
++     * @param item the QueueDiscItem to check
++     * @return true if ECT(1) or CE, false otherwise
++     */
++    bool IsL4S(Ptr<QueueDiscItem> item);
++
++    /**
++     * @brief Periodically calculate the drop probability
++     */
++    void DualPi2Update();
++
++    /**
++     * @brief 
++     * 
++     * @param item the QueueDiscItem to check
++     * @return true if the item should be dropped, false otherwise
++     */
++    bool StepAqm(Ptr<QueueDiscItem> item);
++
++    /**
++     * @brief Decide whether to drop the item based on the calculated drop probability
++     * 
++     * @param item the QueueDiscItem to check
++     * @return true if the item should be dropped, false otherwise
++     */
++    bool MustDrop(Ptr<QueueDiscItem> item);
++
++    /**
++     * @brief Weight round-robin scheduler to decide which queue to dequeue from
++     * 
++     * @param credit the credit used in the scheduler decision
++     * @return the QueueDiscItem to be dequeued, or null if no item should be dequeued
++     */
++    Ptr<QueueDiscItem> Scheduler(int32_t& credit);
++
++    // Values supplied by user
++    Time m_target;          //!< Queue delay target for Classic traffic
++    Time m_tUpdate;         //!< Time period after which CalculateP () is called
++    uint32_t m_mtu;         //!< Device MTU (bytes)
++    double m_alpha;         //!< Parameter to PI Square controller
++    double m_beta;          //!< Parameter to PI Square controller
++    Time m_minTh;           //!< L4S marking threshold (in time)
++    uint32_t m_minThPkts;   //!< L4S marking threshold (in packets)
++    bool m_stepInPackets;   //!< Whether to apply the step based on queue length instead of delay
++    double m_k;             //!< Coupling factor
++    uint32_t m_queueLimit;  //!< Queue limit in bytes
++    Time m_startTime;       //!< Start time of the update timer
++    bool m_dropEarly;       //!< Drop at enqueue instead of dequeue
++    bool m_dropOverload;    //!< Drop on overload (1) or overflow (0)
++    uint32_t m_minQLenStep; //!< Minimim queue length to apply step threshold
++
++    // Scheduler state variables
++    uint32_t m_wClassic;  //!< Classic queue weight
++    uint32_t m_wL4S;      //!< L4S queue weight
++    int32_t m_credit;     //!< Credit for scheduler decision (sign indicates wich queue)
++    int32_t m_creditInit; //!< Initial credit for scheduler decision
++
++    // Variables maintained by DualQ Coupled PI2
++    uint32_t m_thLen;         //!< Minimum threshold (in bytes) for marking
++    double m_baseProb;        //!< Variable used in calculation of drop probability
++    TracedValue<double> m_pC; //!< Classic drop/mark probability
++    TracedValue<double> m_pL; //!< L4S mark probability
++    TracedCallback<Time> m_traceClassicSojourn; //!< Classic sojourn time
++    TracedCallback<Time> m_traceL4sSojourn;     //!< L4S sojourn time
++    Time m_prevQ;                               //!< Old value of queue delay
++    EventId m_rtrsEvent; //!< Event used to decide the decision of interval of drop probability
++                         //!< calculation
++    Ptr<UniformRandomVariable> m_uv; //!< Rng stream
++};
++
++} // namespace ns3
++
++#endif
+diff --git a/src/traffic-control/test/dualpi2-queue-disc-test-suite.cc b/src/traffic-control/test/dualpi2-queue-disc-test-suite.cc
+new file mode 100644
+index 000000000..d659ca5a3
+--- /dev/null
++++ b/src/traffic-control/test/dualpi2-queue-disc-test-suite.cc
+@@ -0,0 +1,459 @@
++/* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
++/*
++ * Copyright (c) 2026 GPRT/UFPE
++ *
++ * SPDX-License-Identifier: GPL-2.0-only
++ *
++ * Author:
++ */
++
++#include "ns3/boolean.h"
++#include "ns3/double.h"
++#include "ns3/drop-tail-queue.h"
++#include "ns3/dualpi2-queue-disc.h"
++#include "ns3/log.h"
++#include "ns3/packet.h"
++#include "ns3/rng-seed-manager.h"
++#include "ns3/simulator.h"
++#include "ns3/string.h"
++#include "ns3/test.h"
++#include "ns3/uinteger.h"
++
++using namespace ns3;
++
++// ---------------------------------------------------------------------------
++// ECN codepoint constants
++// ---------------------------------------------------------------------------
++static const uint8_t ECN_NOT_ECT = 0x00;
++static const uint8_t ECN_ECT0 = 0x02;
++static const uint8_t ECN_ECT1 = 0x01;
++static const uint8_t ECN_CE = 0x03;
++
++// ---------------------------------------------------------------------------
++// Test item
++// ---------------------------------------------------------------------------
++
++/**
++ * @ingroup traffic-control-test
++ * @brief QueueDiscItem that reports a configurable IP DS field (ECN bits).
++ *
++ * DualPi2 classifies packets via QueueItem::GetUint8Value(IP_DSFIELD).
++ * This helper overrides that method so tests can inject any ECN codepoint
++ * without building a real IP packet.
++ *
++ * ECN encoding (low 2 bits):
++ *   0x00 Not-ECT | 0x02 ECT(0) -> Classic queue
++ *   0x01 ECT(1)  | 0x03 CE     -> L4S queue
++ */
++class DualPi2TestItem : public QueueDiscItem
++{
++  public:
++    DualPi2TestItem(Ptr<Packet> p, const Address& addr, uint8_t dsField)
++        : QueueDiscItem(p, addr, 0),
++          m_dsField(dsField)
++    {
++    }
++
++    DualPi2TestItem() = delete;
++    DualPi2TestItem(const DualPi2TestItem&) = delete;
++    DualPi2TestItem& operator=(const DualPi2TestItem&) = delete;
++
++    void AddHeader() override
++    {
++    }
++
++    bool Mark() override
++    {
++        m_dsField = (m_dsField & 0xFC) | ECN_CE;
++        return true;
++    }
++
++    bool GetUint8Value(Uint8Values field, uint8_t& value) const override
++    {
++        if (field == QueueItem::IP_DSFIELD)
++        {
++            value = m_dsField;
++            return true;
++        }
++        return false;
++    }
++
++  private:
++    uint8_t m_dsField;
++};
++
++// ---------------------------------------------------------------------------
++// Test case
++// ---------------------------------------------------------------------------
++
++/**
++ * @ingroup traffic-control-test
++ * @brief DualPi2 queue disc test case.
++ */
++class DualPi2QueueDiscTestCase : public TestCase
++{
++  public:
++    DualPi2QueueDiscTestCase();
++    void DoRun() override;
++
++  private:
++    /**
++     * Enqueue @p nPkt packets of @p size bytes with ECN codepoint @p dsField.
++     */
++    void Enqueue(Ptr<DualPi2QueueDisc> queue, uint32_t size, uint32_t nPkt, uint8_t dsField);
++
++    /**
++     * Create a DualPi2QueueDisc with the given MTU already set.
++     * MTU must be provided explicitly because unit tests have no NetDevice.
++     */
++    Ptr<DualPi2QueueDisc> CreateQueue(uint32_t mtu = 1500);
++};
++
++DualPi2QueueDiscTestCase::DualPi2QueueDiscTestCase()
++    : TestCase("Sanity check on the DualPi2 queue disc implementation")
++{
++}
++
++void
++DualPi2QueueDiscTestCase::Enqueue(Ptr<DualPi2QueueDisc> queue,
++                                  uint32_t size,
++                                  uint32_t nPkt,
++                                  uint8_t dsField)
++{
++    Address dest;
++    for (uint32_t i = 0; i < nPkt; i++)
++    {
++        queue->Enqueue(Create<DualPi2TestItem>(Create<Packet>(size), dest, dsField));
++    }
++}
++
++Ptr<DualPi2QueueDisc>
++DualPi2QueueDiscTestCase::CreateQueue(uint32_t mtu)
++{
++    Ptr<DualPi2QueueDisc> queue = CreateObject<DualPi2QueueDisc>();
++    NS_ABORT_MSG_IF(!queue->SetAttributeFailSafe("Mtu", UintegerValue(mtu)),
++                    "Could not set Mtu attribute");
++    return queue;
++}
++
++void
++DualPi2QueueDiscTestCase::DoRun()
++{
++    Address dest;
++
++    // -----------------------------------------------------------------------
++    // Test 1: Packet classification
++    //
++    // Not-ECT and ECT(0) must be enqueued into the Classic queue (index 0).
++    // ECT(1) and CE must be enqueued into the L4S queue (index 1).
++    // -----------------------------------------------------------------------
++    {
++        Ptr<DualPi2QueueDisc> queue = CreateQueue();
++        queue->Initialize();
++
++        queue->Enqueue(Create<DualPi2TestItem>(Create<Packet>(100), dest, ECN_NOT_ECT));
++        NS_TEST_ASSERT_MSG_EQ(queue->GetInternalQueue(0)->GetNPackets(),
++                              1,
++                              "Not-ECT must go to Classic queue");
++        NS_TEST_ASSERT_MSG_EQ(queue->GetInternalQueue(1)->GetNPackets(),
++                              0,
++                              "L4S queue must be empty after Not-ECT");
++
++        queue->Enqueue(Create<DualPi2TestItem>(Create<Packet>(100), dest, ECN_ECT0));
++        NS_TEST_ASSERT_MSG_EQ(queue->GetInternalQueue(0)->GetNPackets(),
++                              2,
++                              "ECT(0) must go to Classic queue");
++        NS_TEST_ASSERT_MSG_EQ(queue->GetInternalQueue(1)->GetNPackets(),
++                              0,
++                              "L4S queue must still be empty after ECT(0)");
++
++        queue->Enqueue(Create<DualPi2TestItem>(Create<Packet>(100), dest, ECN_ECT1));
++        NS_TEST_ASSERT_MSG_EQ(queue->GetInternalQueue(1)->GetNPackets(),
++                              1,
++                              "ECT(1) must go to L4S queue");
++        NS_TEST_ASSERT_MSG_EQ(queue->GetInternalQueue(0)->GetNPackets(),
++                              2,
++                              "Classic queue must be unchanged after ECT(1)");
++
++        queue->Enqueue(Create<DualPi2TestItem>(Create<Packet>(100), dest, ECN_CE));
++        NS_TEST_ASSERT_MSG_EQ(queue->GetInternalQueue(1)->GetNPackets(),
++                              2,
++                              "CE must go to L4S queue");
++        NS_TEST_ASSERT_MSG_EQ(queue->GetInternalQueue(0)->GetNPackets(),
++                              2,
++                              "Classic queue must be unchanged after CE");
++
++        Simulator::Destroy();
++    }
++
++    // -----------------------------------------------------------------------
++    // Test 2: StepTag controls Step AQM CE marking
++    //
++    // A packet enqueued below MinQLenStep must NOT be CE-marked even if its
++    // sojourn time later exceeds L4SMarkThreshold.
++    // A packet enqueued at or above MinQLenStep MUST be CE-marked when the
++    // sojourn condition is also met.
++    // -----------------------------------------------------------------------
++    {
++        Ptr<DualPi2QueueDisc> queue = CreateQueue();
++        NS_TEST_ASSERT_MSG_EQ(queue->SetAttributeFailSafe("MinQLenStep", UintegerValue(2)),
++                              true,
++                              "Could not set MinQLenStep");
++        NS_TEST_ASSERT_MSG_EQ(
++            queue->SetAttributeFailSafe("L4SMarkThreshold", TimeValue(MilliSeconds(5))),
++            true,
++            "Could not set L4SMarkThreshold");
++        queue->Initialize();
++
++        // p1: L4S queue empty (0 < 2) -> applyStep = false
++        queue->Enqueue(Create<DualPi2TestItem>(Create<Packet>(100), dest, ECN_ECT1));
++        // p2, p3: bring queue to 2 packets
++        queue->Enqueue(Create<DualPi2TestItem>(Create<Packet>(100), dest, ECN_ECT1));
++        queue->Enqueue(Create<DualPi2TestItem>(Create<Packet>(100), dest, ECN_ECT1));
++        // p4: L4S queue has 3 packets (>= 2) -> applyStep = true
++        queue->Enqueue(Create<DualPi2TestItem>(Create<Packet>(100), dest, ECN_ECT1));
++
++        // Advance time so sojourn exceeds L4SMarkThreshold for all packets
++        Simulator::Stop(MilliSeconds(50));
++        Simulator::Run();
++
++        // Dequeue p1: applyStep=false -> no mark
++        queue->Dequeue();
++        NS_TEST_ASSERT_MSG_EQ(
++            queue->GetStats().GetNMarkedPackets(DualPi2QueueDisc::UNFORCED_L4S_MARK),
++            0,
++            "p1 must NOT be CE-marked (applyStep was false)");
++
++        queue->Dequeue(); // p2
++        queue->Dequeue(); // p3
++
++        uint64_t marksBefore =
++            queue->GetStats().GetNMarkedPackets(DualPi2QueueDisc::UNFORCED_L4S_MARK);
++
++        // Dequeue p4: applyStep=true and sojourn > threshold -> CE mark
++        queue->Dequeue();
++        NS_TEST_ASSERT_MSG_EQ(
++            queue->GetStats().GetNMarkedPackets(DualPi2QueueDisc::UNFORCED_L4S_MARK),
++            marksBefore + 1,
++            "p4 must be CE-marked by StepAqm (applyStep=true, sojourn > threshold)");
++
++        Simulator::Destroy();
++    }
++
++    // -----------------------------------------------------------------------
++    // Test 3: Step AQM — sojourn time threshold
++    //
++    // StepInPackets=false: packet below sojourn threshold is not marked;
++    // packet above sojourn threshold is marked.
++    // -----------------------------------------------------------------------
++    {
++        Ptr<DualPi2QueueDisc> queue = CreateQueue();
++        NS_TEST_ASSERT_MSG_EQ(queue->SetAttributeFailSafe("StepInPackets", BooleanValue(false)),
++                              true,
++                              "Could not set StepInPackets");
++        NS_TEST_ASSERT_MSG_EQ(queue->SetAttributeFailSafe("MinQLenStep", UintegerValue(0)),
++                              true,
++                              "Could not set MinQLenStep");
++        NS_TEST_ASSERT_MSG_EQ(
++            queue->SetAttributeFailSafe("L4SMarkThreshold", TimeValue(MilliSeconds(5))),
++            true,
++            "Could not set L4SMarkThreshold");
++        queue->Initialize();
++
++        // Enqueue and dequeue immediately: sojourn < threshold -> no mark
++        queue->Enqueue(Create<DualPi2TestItem>(Create<Packet>(100), dest, ECN_ECT1));
++        queue->Dequeue();
++        NS_TEST_ASSERT_MSG_EQ(
++            queue->GetStats().GetNMarkedPackets(DualPi2QueueDisc::UNFORCED_L4S_MARK),
++            0,
++            "Below sojourn threshold must NOT be marked");
++
++        // Enqueue and let sojourn exceed threshold
++        queue->Enqueue(Create<DualPi2TestItem>(Create<Packet>(100), dest, ECN_ECT1));
++        Simulator::Stop(MilliSeconds(50));
++        Simulator::Run();
++        queue->Dequeue();
++        NS_TEST_ASSERT_MSG_EQ(
++            queue->GetStats().GetNMarkedPackets(DualPi2QueueDisc::UNFORCED_L4S_MARK),
++            1,
++            "Above sojourn threshold must be marked");
++
++        Simulator::Destroy();
++    }
++
++    // -----------------------------------------------------------------------
++    // Test 4: WRR scheduler respects ClassicWeight
++    //
++    // With ClassicWeight=10, the Classic queue must be served ~10% of the
++    // time over 100 dequeue operations (tolerance ±5%).
++    // -----------------------------------------------------------------------
++    {
++        Ptr<DualPi2QueueDisc> queue = CreateQueue(100);
++        NS_TEST_ASSERT_MSG_EQ(queue->SetAttributeFailSafe("ClassicWeight", UintegerValue(10)),
++                              true,
++                              "Could not set ClassicWeight");
++        queue->Initialize();
++
++        const uint32_t N = 100;
++        for (uint32_t i = 0; i < N; i++)
++        {
++            queue->Enqueue(Create<DualPi2TestItem>(Create<Packet>(100), dest, ECN_NOT_ECT));
++            queue->Enqueue(Create<DualPi2TestItem>(Create<Packet>(100), dest, ECN_ECT1));
++        }
++
++        uint32_t classicCount = 0;
++        for (uint32_t i = 0; i < N; i++)
++        {
++            Ptr<QueueDiscItem> item = queue->Dequeue();
++            if (item)
++            {
++                uint8_t ds = 0;
++                item->GetUint8Value(QueueItem::IP_DSFIELD, ds);
++                if ((ds & 0x3) == ECN_NOT_ECT || (ds & 0x3) == ECN_ECT0)
++                {
++                    classicCount++;
++                }
++            }
++        }
++
++        double fraction = static_cast<double>(classicCount) / N;
++        NS_TEST_ASSERT_MSG_GT(fraction, 0.05, "Classic fraction must be above 5%");
++        NS_TEST_ASSERT_MSG_LT(fraction, 0.15, "Classic fraction must be below 15%");
++
++        Simulator::Destroy();
++    }
++
++    // -----------------------------------------------------------------------
++    // Test 5: Queue limit triggers FORCED_DROP
++    //
++    // When the queue is full, the next enqueue must fail and increment
++    // FORCED_DROP; the queue size must not change.
++    // -----------------------------------------------------------------------
++    {
++        const uint32_t mtu = 1500;
++        const uint32_t limit = 3 * mtu;
++
++        Ptr<DualPi2QueueDisc> queue = CreateQueue(mtu);
++        NS_TEST_ASSERT_MSG_EQ(queue->SetAttributeFailSafe("QueueLimit", UintegerValue(limit)),
++                              true,
++                              "Could not set QueueLimit");
++        queue->Initialize();
++
++        Enqueue(queue, mtu, 3, ECN_NOT_ECT);
++        uint32_t sizeBefore = queue->GetQueueSize();
++
++        bool ok = queue->Enqueue(Create<DualPi2TestItem>(Create<Packet>(mtu), dest, ECN_NOT_ECT));
++        NS_TEST_ASSERT_MSG_EQ(ok, false, "Enqueue beyond limit must fail");
++        NS_TEST_ASSERT_MSG_EQ(queue->GetStats().GetNDroppedPackets(DualPi2QueueDisc::FORCED_DROP),
++                              1,
++                              "FORCED_DROP counter must be incremented");
++        NS_TEST_ASSERT_MSG_EQ(queue->GetQueueSize(),
++                              sizeBefore,
++                              "Queue size must not change after FORCED_DROP");
++
++        Simulator::Destroy();
++    }
++
++    // -----------------------------------------------------------------------
++    // Test 6: OVERLOAD_DROP for Classic and L4S packets
++    //
++    // Overload fires when baseProb * k > 1.0.  With DropOverload=true,
++    // Classic ECT(0) packets are dropped instead of marked.  L4S ECT(1)
++    // packets are dropped when the RNG draw falls within m_pC.
++    //
++    // To reach overload deterministically: fill only the L4S queue without
++    // dequeuing so sojourn time grows, then advance 500 ms so DualPi2Update
++    // converges (beta=3.2 adds ~0.051 per 16 ms tick; overload fires when
++    // baseProb > 0.5 with k=2, i.e. after ~10 ticks / ~160 ms).
++    // -----------------------------------------------------------------------
++    {
++        // Sub-case A: Classic overload drop
++        {
++            RngSeedManager::SetSeed(1);
++            RngSeedManager::SetRun(1);
++
++            Ptr<DualPi2QueueDisc> queue = CreateQueue();
++            queue->AssignStreams(1);
++            NS_TEST_ASSERT_MSG_EQ(queue->SetAttributeFailSafe("DropOverload", BooleanValue(true)),
++                                  true,
++                                  "Could not set DropOverload");
++            queue->Initialize();
++
++            Enqueue(queue, 100, 50, ECN_ECT1); // build sojourn time
++            Enqueue(queue, 100, 10, ECN_ECT0); // Classic packets to drain under overload
++
++            Simulator::Stop(MilliSeconds(500));
++            Simulator::Run();
++
++            bool gotDrop = false;
++            for (int i = 0; i < 10 && !gotDrop; i++)
++            {
++                uint64_t before =
++                    queue->GetStats().GetNDroppedPackets(DualPi2QueueDisc::OVERLOAD_DROP);
++                queue->Dequeue();
++                uint64_t after =
++                    queue->GetStats().GetNDroppedPackets(DualPi2QueueDisc::OVERLOAD_DROP);
++                gotDrop = (after > before);
++            }
++
++            NS_TEST_ASSERT_MSG_EQ(gotDrop,
++                                  true,
++                                  "Overload: at least one Classic packet must be OVERLOAD_DROPped");
++
++            Simulator::Destroy();
++        }
++
++        // Sub-case B: L4S overload drop
++        {
++            RngSeedManager::SetSeed(1);
++            RngSeedManager::SetRun(1);
++
++            Ptr<DualPi2QueueDisc> queue = CreateQueue();
++            queue->AssignStreams(1);
++            NS_TEST_ASSERT_MSG_EQ(queue->SetAttributeFailSafe("DropOverload", BooleanValue(true)),
++                                  true,
++                                  "Could not set DropOverload");
++            queue->Initialize();
++
++            Enqueue(queue, 100, 60, ECN_ECT1);
++
++            Simulator::Stop(MilliSeconds(500));
++            Simulator::Run();
++
++            bool gotDrop = false;
++            for (int i = 0; i < 60 && !gotDrop; i++)
++            {
++                uint64_t before =
++                    queue->GetStats().GetNDroppedPackets(DualPi2QueueDisc::OVERLOAD_DROP);
++                queue->Dequeue();
++                uint64_t after =
++                    queue->GetStats().GetNDroppedPackets(DualPi2QueueDisc::OVERLOAD_DROP);
++                gotDrop = (after > before);
++            }
++
++            NS_TEST_ASSERT_MSG_EQ(gotDrop,
++                                  true,
++                                  "Overload: at least one L4S packet must be OVERLOAD_DROPped");
++
++            Simulator::Destroy();
++        }
++    }
++}
++
++// ---------------------------------------------------------------------------
++// Test Suite registration
++// ---------------------------------------------------------------------------
++
++/**
++ * @ingroup traffic-control-test
++ * @brief DualPi2 queue disc test suite.
++ */
++static class DualPi2QueueDiscTestSuite : public TestSuite
++{
++  public:
++    DualPi2QueueDiscTestSuite()
++        : TestSuite("dualpi2-queue-disc", Type::UNIT)
++    {
++        AddTestCase(new DualPi2QueueDiscTestCase(), TestCase::Duration::QUICK);
++    }
++} g_dualPi2QueueDiscTestSuite;

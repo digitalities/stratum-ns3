@@ -1,0 +1,34 @@
+schema: stratum-bridge/scenario/v1
+name: cake-16-16-newreno
+description: |
+  16 NewReno flows on host A vs 16 NewReno flows on host B,
+  100 Mbps shared bottleneck, 20 ms one-way delay, CAKE
+  triple-isolate. Ground truth share_A from
+  docs/superpowers/findings/2026-05-16-phase-1-5-empirical-anchor:
+  0.5002 +/- 0.0011 (3-replica mean +/- std).
+
+topology:
+  kind: shared-bottleneck
+
+bottleneck:
+  bandwidth_mbps: 100
+  one_way_delay_ms: 20
+
+hosts:
+  a:
+    flow_count: 16
+  b:
+    flow_count: 16
+
+qdisc:
+  kind: cake
+  mode: triple-isolate
+
+traffic:
+  protocol: newreno
+  duration_s: 30
+  replicas: [1, 2, 3]
+
+backend:
+  kind: linux-netns
+  vm: cake-host-fairness

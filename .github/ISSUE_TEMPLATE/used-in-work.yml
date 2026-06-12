@@ -1,0 +1,42 @@
+name: Used in my work
+description: "Tell us about a paper, project, or evaluation where you used Stratum"
+title: "[used-in-work] "
+labels: ["kind/show-and-tell", "kind/adoption"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        We'd love to hear how Stratum is being used. This is the highest-signal feedback we can get — real adoption with real details.
+  - type: input
+    id: project
+    attributes:
+      label: Paper / project / evaluation name
+    validations:
+      required: true
+  - type: input
+    id: link
+    attributes:
+      label: Link
+      placeholder: "DOI, arXiv, project page, repository — whatever's public"
+  - type: textarea
+    id: usage
+    attributes:
+      label: How was Stratum used?
+      description: "Which clients (DiffServ / L4S / CAKE)? Which capabilities? What did it enable?"
+    validations:
+      required: true
+  - type: textarea
+    id: lessons
+    attributes:
+      label: Lessons learned
+      description: "Anything that surprised you — good, bad, or unexpected. What worked, what didn't, what was missing?"
+  - type: dropdown
+    id: collaboration
+    attributes:
+      label: Open to a brief case-study collaboration?
+      options:
+        - "Yes — happy to discuss"
+        - "Maybe — depends on scope"
+        - "No — just sharing the result"
+    validations:
+      required: true

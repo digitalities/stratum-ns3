@@ -1,0 +1,11 @@
+{
+  "test_name": "host_isolation",
+  "length_s": "30.000",
+  "step_size_s": "0.500",
+  "bandwidth_bps": "100000000",
+  "rtt_ms": "40.000",
+  "topology_class": "two-host-asymmetric",
+  "ns3_build_sha": "golden",
+  "aqm": "ds-cake-triple-isolate",
+  "dscp_map": {}
+}

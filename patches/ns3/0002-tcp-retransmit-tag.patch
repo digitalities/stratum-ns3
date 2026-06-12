@@ -1,0 +1,400 @@
+diff --git a/RELEASE_NOTES.md b/RELEASE_NOTES.md
+index 23dd5fffc..e4a3f4366 100644
+--- a/RELEASE_NOTES.md
++++ b/RELEASE_NOTES.md
+@@ -44,6 +44,7 @@ been tested on Linux. As of this release, the latest known version to work with
+ - (spectrum) Added the Sionna RT channel model, including `SionnaRtChannelModel` and `SionnaRtSpectrumPropagationLossModel`, enabling ray-traced phased-array spectrum propagation via `sionna.rt` scenes and solver integration.
+ - (wifi) Added a round-robin MAC queue scheduler (`RrWifiQueueScheduler`).
+ - (wifi) Added support for Power Save mode.
++- (internet) Added TcpRetransmitTag, a one-byte packet tag stamped by TcpSocketBase on retransmitted segments and removed at the receiver.
+ 
+ ### Bugs fixed
+ 
+diff --git a/src/internet/CMakeLists.txt b/src/internet/CMakeLists.txt
+index 6e9c8c806..78ef8706e 100644
+--- a/src/internet/CMakeLists.txt
++++ b/src/internet/CMakeLists.txt
+@@ -108,6 +108,7 @@ set(source_files
+     model/tcp-prr-recovery.cc
+     model/tcp-rate-ops.cc
+     model/tcp-recovery-ops.cc
++    model/tcp-retransmit-tag.cc
+     model/tcp-rx-buffer.cc
+     model/tcp-scalable.cc
+     model/tcp-socket-base.cc
+@@ -234,6 +235,7 @@ set(header_files
+     model/tcp-prr-recovery.h
+     model/tcp-rate-ops.h
+     model/tcp-recovery-ops.h
++    model/tcp-retransmit-tag.h
+     model/tcp-rx-buffer.h
+     model/tcp-scalable.h
+     model/tcp-socket-base.h
+@@ -321,6 +323,7 @@ set(test_sources
+     test/tcp-pkts-acked-test.cc
+     test/tcp-prr-recovery-test.cc
+     test/tcp-rate-ops-test.cc
++    test/tcp-retransmit-tag-test.cc
+     test/tcp-rto-test.cc
+     test/tcp-rtt-estimation.cc
+     test/tcp-rx-buffer-test.cc
+diff --git a/src/internet/model/tcp-retransmit-tag.cc b/src/internet/model/tcp-retransmit-tag.cc
+new file mode 100644
+index 000000000..2d2b064ad
+--- /dev/null
++++ b/src/internet/model/tcp-retransmit-tag.cc
+@@ -0,0 +1,66 @@
++/*
++ * Copyright (c) 2026 Sergio Andreozzi
++ *
++ * SPDX-License-Identifier: GPL-2.0-only
++ *
++ * Author: Sergio Andreozzi <digitalities@gmail.com>
++ */
++
++#include "tcp-retransmit-tag.h"
++
++namespace ns3
++{
++
++NS_OBJECT_ENSURE_REGISTERED(TcpRetransmitTag);
++
++TypeId
++TcpRetransmitTag::GetTypeId()
++{
++    static TypeId tid = TypeId("ns3::TcpRetransmitTag")
++                            .SetParent<Tag>()
++                            .SetGroupName("Internet")
++                            .AddConstructor<TcpRetransmitTag>();
++    return tid;
++}
++
++TypeId
++TcpRetransmitTag::GetInstanceTypeId() const
++{
++    return GetTypeId();
++}
++
++TcpRetransmitTag::TcpRetransmitTag()
++    : m_retxCount(1)
++{
++}
++
++TcpRetransmitTag::TcpRetransmitTag(uint8_t retxCount)
++    : m_retxCount(retxCount)
++{
++}
++
++uint32_t
++TcpRetransmitTag::GetSerializedSize() const
++{
++    return 1;
++}
++
++void
++TcpRetransmitTag::Serialize(TagBuffer i) const
++{
++    i.WriteU8(m_retxCount);
++}
++
++void
++TcpRetransmitTag::Deserialize(TagBuffer i)
++{
++    m_retxCount = i.ReadU8();
++}
++
++void
++TcpRetransmitTag::Print(std::ostream& os) const
++{
++    os << "retx=" << static_cast<uint32_t>(m_retxCount);
++}
++
++} // namespace ns3
+diff --git a/src/internet/model/tcp-retransmit-tag.h b/src/internet/model/tcp-retransmit-tag.h
+new file mode 100644
+index 000000000..5208322b8
+--- /dev/null
++++ b/src/internet/model/tcp-retransmit-tag.h
+@@ -0,0 +1,72 @@
++/*
++ * Copyright (c) 2026 Sergio Andreozzi
++ *
++ * SPDX-License-Identifier: GPL-2.0-only
++ *
++ * Author: Sergio Andreozzi <digitalities@gmail.com>
++ */
++
++#ifndef TCP_RETRANSMIT_TAG_H
++#define TCP_RETRANSMIT_TAG_H
++
++#include "ns3/packet.h"
++#include "ns3/tag.h"
++
++namespace ns3
++{
++
++/**
++ * @ingroup tcp
++ *
++ * Tag stamped on retransmitted TCP segments. Stamped by TcpSocketBase
++ * before transmit and removed at the receiver. Intermediate queue
++ * disciplines and AQM modules can read it via Packet::PeekPacketTag.
++ */
++class TcpRetransmitTag : public Tag
++{
++  public:
++    /**
++     * @brief Get the type ID.
++     * @return the object TypeId
++     */
++    static TypeId GetTypeId();
++    TypeId GetInstanceTypeId() const override;
++
++    TcpRetransmitTag();
++
++    /**
++     * @brief Constructor with explicit retransmission attempt count.
++     * @param retxCount retransmission attempt index (1 = first retry)
++     */
++    explicit TcpRetransmitTag(uint8_t retxCount);
++
++    uint32_t GetSerializedSize() const override;
++    void Serialize(TagBuffer i) const override;
++    void Deserialize(TagBuffer i) override;
++    void Print(std::ostream& os) const override;
++
++    /**
++     * @brief Always true; presence of the tag is the signal.
++     * @return true
++     */
++    bool IsRetransmit() const
++    {
++        return true;
++    }
++
++    /**
++     * @brief Get the retransmission attempt count.
++     * @return retransmission attempt index (1 = first retry)
++     */
++    uint8_t GetRetxCount() const
++    {
++        return m_retxCount;
++    }
++
++  private:
++    uint8_t m_retxCount; //!< retransmission attempt count (1 = first retry)
++};
++
++} // namespace ns3
++
++#endif // TCP_RETRANSMIT_TAG_H
+diff --git a/src/internet/model/tcp-socket-base.cc b/src/internet/model/tcp-socket-base.cc
+index caed537e4..043d5a5ee 100644
+--- a/src/internet/model/tcp-socket-base.cc
++++ b/src/internet/model/tcp-socket-base.cc
+@@ -33,6 +33,7 @@
+ #include "tcp-option-winscale.h"
+ #include "tcp-rate-ops.h"
+ #include "tcp-recovery-ops.h"
++#include "tcp-retransmit-tag.h"
+ #include "tcp-rx-buffer.h"
+ #include "tcp-tx-buffer.h"
+ 
+@@ -1383,6 +1384,10 @@ TcpSocketBase::DoForwardUp(Ptr<Packet> packet, const Address& fromAddress, const
+     SocketPriorityTag priorityTag;
+     packet->RemovePacketTag(priorityTag);
+ 
++    // in case the packet still has a retx tag attached, remove it
++    TcpRetransmitTag retxTag;
++    packet->RemovePacketTag(retxTag);
++
+     // Peel off TCP header
+     TcpHeader tcpHeader;
+     packet->RemoveHeader(tcpHeader);
+@@ -3347,6 +3352,13 @@ TcpSocketBase::SendDataPacket(SequenceNumber32 seq, uint32_t maxSize, bool withA
+         m_retxEvent = Simulator::Schedule(m_rto, &TcpSocketBase::ReTxTimeout, this);
+     }
+ 
++    if (isRetransmission)
++    {
++        // Observable by intermediate queue discs; stripped at receiver DoForwardUp.
++        TcpRetransmitTag retxTag(1);
++        p->AddPacketTag(retxTag);
++    }
++
+     m_txTrace(p, header, this);
+     if (isRetransmission)
+     {
+diff --git a/src/internet/test/tcp-retransmit-tag-test.cc b/src/internet/test/tcp-retransmit-tag-test.cc
+new file mode 100644
+index 000000000..8c3294056
+--- /dev/null
++++ b/src/internet/test/tcp-retransmit-tag-test.cc
+@@ -0,0 +1,167 @@
++/*
++ * Copyright (c) 2026 Sergio Andreozzi
++ *
++ * SPDX-License-Identifier: GPL-2.0-only
++ *
++ * Author: Sergio Andreozzi <digitalities@gmail.com>
++ */
++
++#include "tcp-general-test.h"
++
++#include "ns3/config.h"
++#include "ns3/error-model.h"
++#include "ns3/log.h"
++#include "ns3/tcp-retransmit-tag.h"
++
++#include <list>
++
++using namespace ns3;
++
++NS_LOG_COMPONENT_DEFINE("TcpRetransmitTagTestSuite");
++
++/**
++ * @ingroup internet-test
++ *
++ * Verify that TcpSocketBase stamps TcpRetransmitTag on retransmitted
++ * segments only, and that the tag is removed before delivery to the
++ * receiver socket.
++ */
++class TcpRetransmitTagTest : public TcpGeneralTest
++{
++  public:
++    /**
++     * @brief Constructor.
++     * @param dropSegment Segment to drop at the receiver (1-indexed).
++     * @param desc Test description.
++     */
++    TcpRetransmitTagTest(uint32_t dropSegment, const std::string& desc);
++
++  protected:
++    void ConfigureEnvironment() override;
++    void ConfigureProperties() override;
++    Ptr<ErrorModel> CreateReceiverErrorModel() override;
++    void Tx(const Ptr<const Packet> p, const TcpHeader& h, SocketWho who) override;
++    void Rx(const Ptr<const Packet> p, const TcpHeader& h, SocketWho who) override;
++    void FinalChecks() override;
++
++  private:
++    uint32_t m_dropSegment;         //!< Segment number to drop at the receiver.
++    uint32_t m_taggedTx{0};         //!< Sender-side transmissions carrying TcpRetransmitTag.
++    uint32_t m_untaggedTx{0};       //!< Sender-side transmissions without the tag.
++    uint32_t m_minRetxCount{0};     //!< Minimum retxCount value observed on any tag.
++    uint32_t m_taggedReceiverRx{0}; //!< Receiver-side Rx packets still carrying the tag.
++};
++
++TcpRetransmitTagTest::TcpRetransmitTagTest(uint32_t dropSegment, const std::string& desc)
++    : TcpGeneralTest(desc),
++      m_dropSegment(dropSegment)
++{
++}
++
++void
++TcpRetransmitTagTest::ConfigureEnvironment()
++{
++    TcpGeneralTest::ConfigureEnvironment();
++    SetAppPktSize(500);
++    SetAppPktCount(50);
++    SetAppPktInterval(MilliSeconds(1));
++    SetPropagationDelay(MilliSeconds(5));
++    SetTransmitStart(Seconds(2));
++    Simulator::Stop(Seconds(20));
++}
++
++void
++TcpRetransmitTagTest::ConfigureProperties()
++{
++    TcpGeneralTest::ConfigureProperties();
++    SetSegmentSize(SENDER, 500);
++    SetSegmentSize(RECEIVER, 500);
++    SetInitialCwnd(SENDER, 10);
++}
++
++Ptr<ErrorModel>
++TcpRetransmitTagTest::CreateReceiverErrorModel()
++{
++    Ptr<ReceiveListErrorModel> rem = CreateObject<ReceiveListErrorModel>();
++    std::list<uint32_t> errorList;
++    errorList.push_back(m_dropSegment);
++    rem->SetList(errorList);
++    return rem;
++}
++
++void
++TcpRetransmitTagTest::Tx(const Ptr<const Packet> p, const TcpHeader& h, SocketWho who)
++{
++    if (who != SENDER)
++    {
++        return;
++    }
++    // Tag only attaches to data segments; empty payloads (ACK/SYN/FIN)
++    // are skipped above SendDataPacket.
++    TcpRetransmitTag tag;
++    if (p->PeekPacketTag(tag))
++    {
++        ++m_taggedTx;
++        uint32_t retx = tag.GetRetxCount();
++        if (m_minRetxCount == 0 || retx < m_minRetxCount)
++        {
++            m_minRetxCount = retx;
++        }
++    }
++    else if (p->GetSize() > 0)
++    {
++        ++m_untaggedTx;
++    }
++}
++
++void
++TcpRetransmitTagTest::Rx(const Ptr<const Packet> p, const TcpHeader& h, SocketWho who)
++{
++    if (who != RECEIVER)
++    {
++        return;
++    }
++    // Rx fires after DoForwardUp strips the tag; any tagged packet here
++    // means the strip is broken.
++    TcpRetransmitTag tag;
++    if (p->PeekPacketTag(tag))
++    {
++        ++m_taggedReceiverRx;
++    }
++}
++
++void
++TcpRetransmitTagTest::FinalChecks()
++{
++    NS_TEST_ASSERT_MSG_GT(m_taggedTx, 0, "Expected at least one tagged retransmission");
++    NS_TEST_ASSERT_MSG_GT(m_untaggedTx, 0, "Expected at least one untagged fresh transmission");
++    NS_TEST_ASSERT_MSG_GT(m_untaggedTx,
++                          m_taggedTx,
++                          "Fresh transmissions should outnumber retransmissions");
++    NS_TEST_ASSERT_MSG_GT_OR_EQ(m_minRetxCount, 1, "Tag retxCount must be at least 1");
++    NS_TEST_ASSERT_MSG_EQ(m_taggedReceiverRx,
++                          0,
++                          "Strip at DoForwardUp failed: receiver Rx trace saw a "
++                          "packet still carrying TcpRetransmitTag");
++}
++
++/**
++ * @ingroup internet-test
++ *
++ * Test suite for TcpRetransmitTag stamping behaviour.
++ */
++class TcpRetransmitTagTestSuite : public TestSuite
++{
++  public:
++    TcpRetransmitTagTestSuite()
++        : TestSuite("tcp-retransmit-tag", Type::UNIT)
++    {
++        // Drop segment 10 of the bulk transfer; subsequent segments deliver
++        // duplicate ACKs that trigger fast retransmit on the sender.
++        AddTestCase(new TcpRetransmitTagTest(10, "fast retx stamps TcpRetransmitTag"),
++                    TestCase::Duration::QUICK);
++    }
++};
++
++static TcpRetransmitTagTestSuite
++    g_tcpRetransmitTagTestSuite; //!< Static variable for test initialization

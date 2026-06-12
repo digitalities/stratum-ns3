@@ -1,0 +1,13 @@
+{
+  "schedulers": [
+    {"fileTag": "pq", "displayName": "PQ", "family": "priority", "parameterShape": "priority-winlen", "needsLinkBandwidth": false, "description": "Strict priority — queue 0 served first; WinLen is the rate-estimator window for the optional per-queue rate cap"},
+    {"fileTag": "rr", "displayName": "RR", "family": "round-robin", "parameterShape": "none", "needsLinkBandwidth": false, "description": "Plain round-robin across all queues; no weights"},
+    {"fileTag": "wrr", "displayName": "WRR", "family": "round-robin", "parameterShape": "rr-weights", "needsLinkBandwidth": false, "description": "Weighted round-robin; per-queue integer-style weights via SetParam"},
+    {"fileTag": "wirr", "displayName": "WIRR", "family": "round-robin", "parameterShape": "rr-weights", "needsLinkBandwidth": false, "description": "Weighted interleaved round-robin; per-queue integer weights"},
+    {"fileTag": "scfq", "displayName": "SCFQ", "family": "fair-queue", "parameterShape": "fq-shares", "needsLinkBandwidth": true, "description": "Self-clocked fair queueing; per-queue fractional weights summing to 1"},
+    {"fileTag": "sfq", "displayName": "SFQ", "family": "fair-queue", "parameterShape": "fq-shares", "needsLinkBandwidth": true, "description": "Start-time fair queueing; per-queue fractional weights summing to 1"},
+    {"fileTag": "wfq", "displayName": "WFQ", "family": "fair-queue", "parameterShape": "fq-shares", "needsLinkBandwidth": true, "description": "Parekh-Gallager PGPS — true V(t) snapshot; per-queue fractional weights"},
+    {"fileTag": "wf2qp", "displayName": "WF2Q+", "family": "fair-queue", "parameterShape": "fq-shares", "needsLinkBandwidth": true, "description": "Worst-case fair WFQ+ (Bennett-Zhang 1997, time-discrete); per-queue weights"},
+    {"fileTag": "llq", "displayName": "LLQ", "family": "hybrid", "parameterShape": "hybrid-llq", "needsLinkBandwidth": true, "description": "Cisco LLQ: queue 0 is strict-priority slot (weight=0 sentinel); queues 1..N share residual via WFQ-style weights summing to 1"}
+  ]
+}

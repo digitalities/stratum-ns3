@@ -1,0 +1,69 @@
+cff-version: 1.2.0
+title: "Stratum: A QoS Substrate Composing DiffServ, L4S, and CAKE in ns-3"
+message: >-
+  If you use this software in academic work, please cite the
+  software via this entry (repository-code).
+type: software
+authors:
+  - given-names: Sergio
+    family-names: Andreozzi
+    email: sergio.andreozzi@gmail.com
+    orcid: "https://orcid.org/0000-0001-5567-4000"
+    affiliation: "Independent Researcher"
+version: "v1.1"
+date-released: "2026-06-12"
+license: GPL-2.0-only
+repository-code: "https://github.com/digitalities/stratum-ns3"
+url: "https://github.com/digitalities/stratum-ns3"
+abstract: >-
+  Stratum is a composable QoS substrate for ns-3 hosting Differentiated
+  Services, Low Latency Low Loss Scalable-throughput (L4S), and Common
+  Applications Kept Enhanced (CAKE) as three first-class clients.  Four
+  pluggable primitives — Classify-and-Meter, Mark-and-Route, a per-class
+  Slot array, and an across-slot Service Policy — let any client compose
+  a queueing discipline by picking one strategy per stage.  The substrate
+  inherits the 2001 DiffServ4NS ns-2 module as its classical-DiffServ
+  client; the 2001 ns-2 sources and a 2026 port layer are available at
+  https://github.com/digitalities/diffserv4ns.
+keywords:
+  - ns-3
+  - QoS
+  - DiffServ
+  - L4S
+  - DualPI2
+  - CAKE
+  - COBALT
+  - tc-cake
+  - FqCobalt
+  - "fair queueing"
+  - WFQ
+  - "WF2Q+"
+  - SCFQ
+  - SFQ
+  - LLQ
+  - "active queue management"
+  - AQM
+  - "quality of service"
+  - traffic-control
+  - "network simulation"
+  - "RFC 2474"
+  - "RFC 2697"
+  - "RFC 2698"
+  - "RFC 7928"
+  - "RFC 9331"
+  - "RFC 9332"
+  - "research software"
+  - reproducibility
+references:
+  - type: thesis
+    title: "DiffServ simulations using the Network Simulator: requirements, issues and solutions"
+    authors:
+      - family-names: Andreozzi
+        given-names: Sergio
+        orcid: "https://orcid.org/0000-0001-5567-4000"
+    year: 2001
+    institution:
+      name: "Lappeenranta University of Technology / Universita degli Studi di Pisa"
+    thesis-type: "Master's thesis"
+    doi: "10.5281/zenodo.19662899"
+    notes: "Authoritative design specification of the original DiffServ4NS module (Chapter 3.3.3, Figure 3.11)."

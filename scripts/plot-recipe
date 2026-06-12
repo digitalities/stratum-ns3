@@ -1,0 +1,20 @@
+#!/usr/bin/env python3
+"""Stratum plot-recipe — render baseline figures for user-guide recipes.
+
+Usage:
+    ./scripts/plot-recipe <recipe-name> [--format=svg|png] [--out=<dir>] [--arm=<id>]
+    ./scripts/plot-recipe --list
+    ./scripts/plot-recipe --validate
+    ./scripts/plot-recipe --list-arms <recipe-name>
+
+See docs/superpowers/specs/2026-05-12-stratum-user-guide-v1.2-design.md for the schema.
+"""
+from pathlib import Path
+import sys
+
+# Resolve the module path relative to this shim
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from plot_recipe import main
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

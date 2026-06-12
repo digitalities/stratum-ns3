@@ -1,0 +1,47 @@
+name: Recipe request
+description: "Suggest a worked example (a hands-on scenario with runnable code)"
+title: "[recipe] "
+labels: ["kind/docs", "kind/recipe-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Help us grow the worked-example collection. Describe a recipe you'd like to see — a hands-on scenario with a runnable example.
+  - type: dropdown
+    id: topic
+    attributes:
+      label: Which substrate client does this recipe cover?
+      options:
+        - "Classical DiffServ"
+        - "L4S"
+        - "CAKE"
+        - "Wireless"
+        - "AQM characterisation"
+        - "Registry-based extension (adding an AQM or scheduler)"
+        - "I'm not sure — let's discuss"
+    validations:
+      required: true
+  - type: input
+    id: title
+    attributes:
+      label: Proposed recipe title
+      placeholder: "e.g., 'Sr-TCM edge under heavy-tailed traffic'"
+    validations:
+      required: true
+  - type: textarea
+    id: scenario
+    attributes:
+      label: What scenario does this cover?
+    validations:
+      required: true
+  - type: textarea
+    id: gap
+    attributes:
+      label: Why don't current recipes cover this?
+    validations:
+      required: true
+  - type: input
+    id: example
+    attributes:
+      label: Existing example to base it on (if any)
+      placeholder: "e.g., 'diffserv-example-2.cc' — leave blank if a new example would be needed"

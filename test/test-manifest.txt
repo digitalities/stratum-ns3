@@ -1,0 +1,306 @@
+# stratum ns-3 test manifest
+#
+# Snapshot of the test surface registered via AddTestCase() across
+# src/ns-3/test. A diff against this file at release-tag time flags any
+# suite-rename, test-class rename, or test-class add/remove that
+# changed the surface.
+#
+# Regenerate via: bash scripts/regen-test-manifest.sh
+#
+# Loop-unrolled registrations (e.g. AddTestCase(new XxxTestCase(i))
+# inside a for-loop) appear as a single line; the actual runtime
+# case count is therefore >= the lines listed per suite. To audit
+# runtime case counts, run
+#   "$(ls -t ./build/utils/ns3*-test-runner-default | head -1)" --suite=<suite> --verbose --fullness=EXTENSIVE
+# from inside ns3/ns-3-dev/.
+#
+# Suites are discovered from TestSuite("name", ...) constructor
+# calls in the sources. A discovered suite may be absent from the
+# built test runner when its source is standalone by design (e.g.
+# the RFC vector runner, driven by its own harness rather than
+# compiled into the module test library).
+#
+# Generated: 2026-06-11
+# ns-3-dev pin: d2add90b452d600cfb4859baed8e9ea633519447
+
+## stratum-cake-host-fairness-smoke (diffserv-cake-host-fairness-smoke-test.cc)
+
+CakeHostFairnessSmokeTestCase
+
+## stratum-cake-host-fairness-udp-smoke (diffserv-cake-host-fairness-udp-smoke-test.cc)
+
+CakeHostFairnessUdpSmokeTestCase
+
+## stratum-cake-host-iso-phase-1 (diffserv-cake-host-iso-phase-1-test-suite.cc)
+
+HostIsoPhase1CharacterisationCase
+
+## stratum-cake-q15 (diffserv-cake-q15-test-suite.cc)
+
+TestCake_PtmFramingGammaScaling
+TestCake_LinkPresetEthernet
+TestCake_LinkPresetPppoePtm
+TestCake_LinkPresetEtherVlanStacks
+TestCake_RttPresetInternetIsRfc8289Default
+TestCake_RttPresetSatelliteScalesTinAttributes
+TestCake_LiveBulkCounterTracksConcurrentFlows
+TestCake_AutorateTracksStepArrivalRate
+Diffserv4TinRatesTest
+RrulLatencyTest
+IntraTinFairnessTest
+SetAssocIsolationTest
+AckFilterAsymmetricTest
+ThreeWayCalibrationTest
+RrulLatencyLlqTest
+LlqLatencyCalibrationTest
+RrulMultiHostFairnessTest
+CakeFig3HostIsolationTest
+CakeFig5SparseFlowLatencyTest
+S17_41_RateBasedThroughputParityTestCase
+S17_44_RateBasedGlobalCapTestCase
+S17_52_PathAlphaBetaGammaComparisonTestCase
+S17_54_PathAlphaTinShapedCapsTestCase
+S17_56_RateBasedWorkConservationTestCase
+S17_57_RateBasedPrioritySelectionTestCase
+S17_58_IntegratedShapedWorkConservationTestCase
+S17_59_IntegratedShapedPrioritySelectionTestCase
+S17_60_Diffserv3IntegratedShapedWorkConservationTestCase
+S17_61_Diffserv8IntegratedShapedWorkConservationTestCase
+Q15_10_RrulFig9LatencyTest
+Q15_11_UdpCrossTrafficIsolationTest
+Q15_14_IntegratedShapedProbeJitterTestCase
+TestCake_IngressModeChargesShaperOnDrop
+
+## stratum-example-1-instrumentation (diffserv-example-1-instrumentation-test-suite.cc)
+
+TestSExample1PerClassOwd
+TestSExample1PerClassFlowRate
+TestSExample1MeterColourAggregate
+
+## stratum-flent-sink (diffserv-flent-sink-test-suite.cc)
+
+TestSFlentSinkHostColumnEmitted
+TestSFlentSinkHostAttributionCorrect
+TestSFlentSinkBackwardsCompatNoHostid
+
+## stratum-meter-trace (diffserv-meter-trace-test-suite.cc)
+
+MeterBaseTraceRegisteredTest
+TestSMeterTraceSrTcm
+TestSMeterTraceTrTcm
+TestSMeterTraceTsw2cm
+TestSMeterTraceTsw3cm
+TestSMeterTraceFw
+TestSMeterTraceTokenBucket
+TestSMeterTraceDumb
+
+## stratum-q16-chang-convergence (diffserv-q16-chang-convergence-test.cc)
+
+ChangConvergenceCase
+ChangConvergenceCase
+ChangConvergenceCase
+ChangConvergenceCase
+
+## stratum-q17-parekh-theorem1 (diffserv-q17-parekh-theorem1-test.cc)
+
+ParekhTheorem1Case
+ParekhTheorem1Case
+ParekhTheorem1Case
+ParekhTheorem1Case
+ParekhTheorem1Case
+ParekhTheorem1Case
+
+## stratum (diffserv-test-suite.cc)
+
+DumbMeterTestCase
+TokenBucketVectorTestCase
+SrTcmVectorTestCase
+TrTcmVectorTestCase
+TswEwmaConvergenceTestCase
+Tsw2cmUnderCirTestCase
+Tsw2cmOverCirTestCase
+Tsw3cmColourRatiosTestCase
+RrEqualShareTest
+WrrWeightedShareTest
+WirrBoundedBurstinessTest
+PqStrictPriorityTest
+PqRateCappedTest
+HigherPrecDropsMoreTest
+TailDropOverflowTest
+EwmaConvergenceTest
+EdgeDscpMarkingTest
+EdgeNoMatchPassthroughTest
+EdgeSpecificAddrMatchTest
+PortBasedMarkRuleTest
+MeterInjectionTest
+MeterAssignStreamsCascadeTest
+EdgeWithL4sInnerTest
+MeterCascadeHelperPathTest
+QueueStatsProviderInterfaceTest
+S3PerClassRatePreservationTest
+MultiSlotDscpRoutingTest
+MultiSlotStrictPriorityTest
+BackwardCompatSingleInnerTest
+PerSlotQueueStatsProbesTest
+EdgeSlotZeroDelegationParityTest
+L4sFqCoDelAutoDefaultQuantumTest
+SlotDispatcherByteIdentityTest
+TinShaperDrrQuantumHonoredTest
+TinShaperEmptyTinSkipTest
+TinShaperFairnessUnderMixedLoadTest
+AckFilterFunctionalContractTest
+AckFilterSackPreservationTest
+AckFilterAggressiveDropsSackTest
+AckFilterAggressiveSackArrivalTest
+CakeHelperDscpMapMatchesLinuxDiffserv4Test
+CakeHelperDscpMapMatchesLinuxDiffserv3Test
+CakeHelperDscpMapMatchesLinuxDiffserv8Test
+CakeDiffserv3UnshapedContentionRatioTest
+CakeHelperBestEffortMapsToSingleTinTest
+CakeHelperPrecedenceMapsAreByteExactTest
+CakeEndToEndSingleTinTest
+CakeHelperPathAlphaGammaEquivalenceTest
+HybridLlqStrictPriorityWinsOverDrrTest
+HybridLlqDrrFairnessWhenSpEmptyTest
+HybridLlqPeekIsSideEffectFreeTest
+HybridLlqOnDequeueAccountsOnlyDrrTest
+TinTokenBucketUnitTest
+TinShaperRateCapHonoredTest
+TbfAsInnerSlotRateCapHonoredTest
+TinShaperIdleNoRedistributeTest
+TinShaperPeekSideEffectFreeWithCapTest
+LlqTinShapingCompositionTest
+EgressDscpWashTest
+CakeMemLimitAttributeTest
+CakeOverheadStatisticalRateAdjustmentTest
+CakeRawModeNoRateAdjustmentTest
+CakeConservativePresetTest
+CakePerTinDiagnosticsTest
+SetAssociativeHashStructuralPropertiesTest
+EfPriorityServiceTest
+AfDropPrecedenceTest
+BestEffortLowestPriorityTest
+E2EToyScenarioTest
+HelperSrTcmConfigTest
+E2EEdgeCoreTopologyTest
+ScfqDequeueOrderTest
+ScfqThroughputSharesTest
+ScfqLabelMonotonicityTest
+SfqDequeueOrderTest
+SfqStartTagOrderTest
+SfqThroughputSharesTest
+Wf2qpThroughputSharesTest
+Wf2qpEligibilityTest
+WfqThroughputSharesTest
+WfqVirtualTimeMonotonicTest
+WfqNoReorderingTest
+TestDiffServMonitorHelperDtorCancelsEvents
+LlqPriorityFirstTest
+LlqFqManagesRemainingTest
+LlqRateCapSmokeTest
+WfqFairThroughputTest
+Wf2qpVsWfqDelayTest
+TestFWMeterDeterministic
+TestFWMeterProbabilistic
+TestFWMeterFlowTimeout
+TestFWMeterPeriodic
+TestFWMeterMultiFlowIsolation
+TestFWMeterEdgeDispatch
+PacketAccountingBalanceTest
+DropAttributionTest
+RetxByteAccountingTest
+AqmRegistryTemplateRoundTripTest
+SchedulerRegistrySmokeTest
+TestSAqmRunnerGoodputWindowFullSimtime
+TestSAqmRunnerUdpCbrRateBand
+TestSAqmStratumRedFactoryFourStep
+TestSAqmStratumL4sWredFactoryClassicLaneFunctional
+Example2ThreeClassTest
+AfDropPrecedenceQualityTest
+ThreeClassCoexistenceTest
+PerfRegressionTest
+S17_39_RateBasedMonotonicityTestCase
+S17_40_RateBasedCatchupTestCase
+S17_42_RateBasedAdjLenTestCase
+S17_43_ShaperModeDispatchTestCase
+TinShaperPerFlowStatsTest
+CakePrintTcStatsStructureTest
+CakeAutorateIngressApiContractTest
+
+## stratum-wf2qp-regression (diffserv-wf2qp-regression-test.cc)
+
+Wf2qpDrainNoStallCase
+Wf2qpDrainNoStallCase
+
+## stratum-trace-replay-application (ds-trace-replay-application-test.cc)
+
+TestTraceReplay_EmptyTraceNoOp
+TestTraceReplay_SinglePacket
+TestTraceReplay_OrderingPreserved
+TestTraceReplay_TimeAlignmentRelative
+TestTraceReplay_FiveTupleSynthesis
+TestTraceReplay_TwoPcapsMerged
+
+## stratum-empirical-cdf-loader (empirical-cdf-loader-test.cc)
+
+FrateCdfMeanTest
+SflowCdfMeanTest
+UserInterCdfBoundsTest
+FlowDurCdfBoundsTest
+MalformedFileTest
+
+## stratum-l4s (l4s-routing-test.cc)
+
+DsL4sRoutingTest
+DsL4sConfigTest
+DsL4sZeroLoadCouplingTest
+DsL4sSquaredRatioTest
+DsL4sCeIdempotenceTest
+DsL4sImmediateMarkThresholdTest
+DsL4sControllerStepResponseTest
+DsL4sControllerNoDriftTest
+DsL4sCoupledOnlyBypassWredTest
+DsL4sCoupledSchedulerStarvationTest
+DsL4sCoupledSchedulerL4sOnlyTest
+DsL4sFqCoDelInnerAqmTest
+TestSL4s13GoldenControllerVector
+TestSL4s14EcnCodepointTransitions
+TestSL4s15DscpPreservation
+DsL4sScenarioPiControlFiresTest
+DsL4sScenarioS1LatencyDifferentiationTest
+DsL4sScenarioS2CoexistenceThroughputEquivalenceTest
+DsL4sScenarioS1AdvantageLatencyDeltaTest
+DsL4sScenarioFqCoDelComparisonSmokePerModeTest
+DsL4sScenarioFqCoDelClassicCompositionalSafetyTest
+DsL4sScenarioDualPi2GprtParityTest
+DsL4sScenarioCakeCompositionFairnessTest
+DsL4sScenarioCakeCompositionThroughputParityTest
+
+## stratum-per-flow-classifier (per-flow-classifier-test.cc)
+
+PerFlowIsolationTest
+PerFlowRefillTest
+PerFlowPassthroughTest
+EdgeDispatchTest
+PerFlowWildcardTest
+
+## stratum-rfc-conformance (rfc-test-vectors-runner.cc)
+
+SrTcmRfcTestCase
+
+## stratum-count-ack-jitter (tcp-count-ack-jitter-test-suite.cc)
+
+CountAckJitterDefaultOffRegression
+CountAckJitterVarianceUnderJitter
+CountAckJitterDeferralSemantics
+
+## tcp-gso-egress (tcp-gso-egress-test.cc)
+
+TcpGsoEgressBaselineTestCase
+TcpGsoEgressEnabledTestCase
+
+## Summary
+
+Suite sources:           18
+AddTestCase invocations: 222
+(loop-unrolled registrations counted once)

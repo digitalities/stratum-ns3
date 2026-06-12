@@ -1,0 +1,323 @@
+From: Sergio Andreozzi <digitalities@gmail.com>
+Date: 2026-05-26
+Subject: [PATCH] queue: expose Begin/End/Remove(iterator)/RemoveSilent(iterator) on Queue<T>
+
+Adds four public methods to the Queue<T> template (in src/network/utils/queue.h)
+to enable in-place inspection and selective mid-queue removal:
+
+  ConstIterator Begin() const;
+  ConstIterator End() const;
+  Ptr<Item> Remove(ConstIterator pos);
+  Ptr<Item> RemoveSilent(ConstIterator pos);
+
+The CAKE ACK filter implementation (patches/ns3/0006) needs in-place
+removal of a specific eligible ACK from a per-flow queue without firing
+the inner->outer PacketEnqueued trace cascade that would violate the
+outer QueueDisc's nTotalReceivedPackets == nTotalDroppedPacketsBeforeEnqueue
++ nTotalEnqueuedPackets invariant at queue-disc.cc:896 under bidirectional
+saturating TCP.
+
+Begin()/End() return ConstIterators backed by the existing Iterator
+typedefs (promoted from protected: to public:, since the underlying
+Container::iterator / Container::const_iterator are already part of any
+standard container's public interface — exposing them through Queue<>
+imposes no new encapsulation cost). Remove(pos) wraps the existing
+protected DoRemove(pos), which already fires m_traceDequeue +
+DropAfterDequeue with the correct trace semantics for the use case.
+
+The new protected DoBegin()/DoEnd() accessors dispatch through a new
+MakeIteratorAccess<Container> traits struct (mirroring the existing
+MakeGetItem<Container> pattern). The SFINAE-detected specialization
+forwards to container.begin()/end() when those members exist (e.g.
+std::vector, std::list); the primary template falls back to
+NS_FATAL_ERROR for containers without begin()/end() (e.g.
+ns3::WifiMacQueueContainer), which are not expected to use the new
+Begin/End API. This dispatch is required because
+NS_OBJECT_TEMPLATE_CLASS_TWO_DEFINE forces explicit instantiation of
+every member function of Queue<WifiMpdu, WifiMacQueueContainer>.
+
+RemoveSilent(pos) is a sibling of Remove(pos) that skips the
+m_traceDequeue notification so the inner->outer DropAfterDequeue
+cascade does not fire. Callers (currently only CAKE's
+ScanAndDropRedundant in patch 0006) then call the outer QueueDisc's
+DropAfterDequeue(item, customReason) directly to attribute the
+removal to a custom drop-reason category. Without this method,
+custom-reason attribution requires either modifying the cascade
+contract (broad blast radius) or temporarily detaching the inner
+trace (brittle); RemoveSilent is the minimal additive primitive.
+
+Patches/ns3/0017 is a dependency for patches/ns3/0006's
+ScanAndDropRedundant in-place rewrite.
+
+---
+diff --git a/src/network/utils/queue.h b/src/network/utils/queue.h
+index ddaacbb16..cc9e5caac 100644
+--- a/src/network/utils/queue.h
++++ b/src/network/utils/queue.h
+@@ -303,12 +303,60 @@ class Queue : public QueueBase
+     /// Define ItemType as the type of the stored elements
+     typedef Item ItemType;
+ 
+-  protected:
+     /// Const iterator.
+     typedef typename Container::const_iterator ConstIterator;
+     /// Iterator.
+     typedef typename Container::iterator Iterator;
+ 
++    /**
++     * @brief Return a const iterator pointing at the head of the queue.
++     *
++     * Pairs with End() to enable in-place inspection of queued items.
++     * Companion to Remove(ConstIterator) for selective mid-queue removal.
++     *
++     * @return ConstIterator at queue head
++     */
++    ConstIterator Begin() const;
++
++    /**
++     * @brief Return a const iterator one past the tail of the queue.
++     *
++     * @return ConstIterator past queue tail
++     */
++    ConstIterator End() const;
++
++    /**
++     * @brief Remove the item at the given iterator position.
++     *
++     * Behaves like Remove() (the head-only variant), but operates at the
++     * supplied iterator position. Fires m_traceDequeue and DropAfterDequeue
++     * for the removed item.
++     *
++     * @param pos ConstIterator from a prior Begin()/End() walk
++     * @return Ptr to the removed item, or nullptr if pos == End()
++     */
++    Ptr<Item> Remove(ConstIterator pos);
++
++    /**
++     * @brief Remove a specific item without firing the dequeue/drop traces.
++     *
++     * The caller takes responsibility for drop accounting — typically by
++     * calling QueueDisc::DropAfterDequeue with the appropriate drop-reason
++     * constant.
++     *
++     * Use ONLY from callers that need to attribute the removal to a custom
++     * drop-reason category (the standard path is Remove(pos)). The trace
++     * bypass is what makes the custom attribution possible — calling
++     * Remove(pos) instead would trigger the QueueDisc internal-queue cascade,
++     * which hardcodes INTERNAL_QUEUE_DROP and overwrites the caller's intent.
++     *
++     * @param pos Iterator into this queue (must come from this->Begin()/End()
++     *            and remain valid through any concurrent enqueue/dequeue).
++     * @return The removed item, or nullptr if pos == End().
++     */
++    Ptr<Item> RemoveSilent(ConstIterator pos);
++
++  protected:
+     /**
+      * Get a const reference to the container of queue items.
+      *
+@@ -347,6 +395,14 @@ class Queue : public QueueBase
+      */
+     Ptr<Item> DoRemove(ConstIterator pos);
+ 
++    /**
++     * Pull an item out of the container at `pos` without notifying the
++     * dequeue/drop trace sources. Updates m_nPackets/m_nBytes consistently.
++     * Subclasses inherit the behavior from this primary template via the
++     * existing instantiation macros.
++     */
++    Ptr<Item> DoRemoveSilent(ConstIterator pos);
++
+     /**
+      * Peek the front item in the queue
+      * @param pos the position of the item to peek
+@@ -354,6 +410,18 @@ class Queue : public QueueBase
+      */
+     Ptr<const Item> DoPeek(ConstIterator pos) const;
+ 
++    /**
++     * @brief Const iterator at internal container begin.
++     * @return ConstIterator pointing at the first queued item.
++     */
++    ConstIterator DoBegin() const;
++
++    /**
++     * @brief Const iterator one past internal container end.
++     * @return ConstIterator past the last queued item.
++     */
++    ConstIterator DoEnd() const;
++
+     /**
+      * @brief Drop a packet before enqueue
+      * @param item item that was dropped
+@@ -420,6 +488,69 @@ class Queue : public QueueBase
+         }
+     };
+ 
++    /**
++     * Struct providing static methods returning the begin/end iterators of the
++     * container. The primary template is selected for containers without
++     * begin()/end() members (e.g. ns3::WifiMacQueueContainer) and aborts at
++     * runtime — those containers' Queue<> instantiations are not expected to
++     * call Begin()/End(). The specialization is selected for containers that
++     * expose begin()/end() (e.g. std::vector, std::list) and forwards to
++     * them.
++     */
++    template <class T, class = void>
++    struct MakeIteratorAccess
++    {
++        /**
++         * @return ConstIterator at the head of the container (unreachable for
++         *         containers lacking begin()/end()).
++         */
++        static ConstIterator Begin(const Container&)
++        {
++            NS_FATAL_ERROR("Queue<>::Begin() called on a Container without "
++                           "begin()/end() members");
++            return ConstIterator{};
++        }
++
++        /**
++         * @return ConstIterator one past the tail of the container
++         *         (unreachable for containers lacking begin()/end()).
++         */
++        static ConstIterator End(const Container&)
++        {
++            NS_FATAL_ERROR("Queue<>::End() called on a Container without "
++                           "begin()/end() members");
++            return ConstIterator{};
++        }
++    };
++
++    /**
++     * Specialization of MakeIteratorAccess used when the container exposes
++     * begin()/end() member functions.
++     */
++    template <class T>
++    struct MakeIteratorAccess<
++        T,
++        std::void_t<decltype(std::declval<T>().begin()), decltype(std::declval<T>().end())>>
++    {
++        /**
++         * @param container the container
++         * @return ConstIterator at the head of the container
++         */
++        static ConstIterator Begin(const Container& container)
++        {
++            return container.begin();
++        }
++
++        /**
++         * @param container the container
++         * @return ConstIterator one past the tail of the container
++         */
++        static ConstIterator End(const Container& container)
++        {
++            return container.end();
++        }
++    };
++
+     Container m_packets;     //!< the items in the queue
+     NS_LOG_TEMPLATE_DECLARE; //!< the log component
+ 
+@@ -592,6 +723,41 @@ Queue<Item, Container>::DoRemove(ConstIterator pos)
+     return item;
+ }
+ 
++template <typename Item, typename Container>
++Ptr<Item>
++Queue<Item, Container>::DoRemoveSilent(ConstIterator pos)
++{
++    NS_LOG_FUNCTION(this);
++
++    if (m_nPackets.Get() == 0)
++    {
++        NS_LOG_LOGIC("Queue empty");
++        return nullptr;
++    }
++
++    Ptr<Item> item = MakeGetItem<Container>::GetItem(m_packets, pos);
++
++    if (item)
++    {
++        m_packets.erase(pos);
++        NS_ASSERT(m_nBytes.Get() >= item->GetSize());
++        NS_ASSERT(m_nPackets.Get() > 0);
++
++        m_nBytes -= item->GetSize();
++        m_nPackets--;
++
++        // Fire the dequeue trace so any attached QueueDisc decrements
++        // its outer m_nPackets / m_nBytes via PacketDequeued. We
++        // intentionally do NOT call DropAfterDequeue here — that is
++        // the caller's responsibility, who will attribute the removal
++        // via QueueDisc::DropAfterDequeue(item, customReason) and
++        // thereby bypass the INTERNAL_QUEUE_DROP cascade.
++        NS_LOG_LOGIC("m_traceDequeue (p) [silent]");
++        m_traceDequeue(item);
++    }
++    return item;
++}
++
+ template <typename Item, typename Container>
+ void
+ Queue<Item, Container>::Flush()
+@@ -627,6 +793,58 @@ Queue<Item, Container>::DoPeek(ConstIterator pos) const
+     return MakeGetItem<Container>::GetItem(m_packets, pos);
+ }
+ 
++template <typename Item, typename Container>
++typename Queue<Item, Container>::ConstIterator
++Queue<Item, Container>::DoBegin() const
++{
++    return MakeIteratorAccess<Container>::Begin(m_packets);
++}
++
++template <typename Item, typename Container>
++typename Queue<Item, Container>::ConstIterator
++Queue<Item, Container>::DoEnd() const
++{
++    return MakeIteratorAccess<Container>::End(m_packets);
++}
++
++template <typename Item, typename Container>
++typename Queue<Item, Container>::ConstIterator
++Queue<Item, Container>::Begin() const
++{
++    return DoBegin();
++}
++
++template <typename Item, typename Container>
++typename Queue<Item, Container>::ConstIterator
++Queue<Item, Container>::End() const
++{
++    return DoEnd();
++}
++
++template <typename Item, typename Container>
++Ptr<Item>
++Queue<Item, Container>::Remove(ConstIterator pos)
++{
++    NS_LOG_FUNCTION(this);
++    if (pos == DoEnd())
++    {
++        return nullptr;
++    }
++    return DoRemove(pos);
++}
++
++template <typename Item, typename Container>
++Ptr<Item>
++Queue<Item, Container>::RemoveSilent(ConstIterator pos)
++{
++    NS_LOG_FUNCTION(this);
++    if (pos == DoEnd())
++    {
++        return nullptr;
++    }
++    return DoRemoveSilent(pos);
++}
++
+ template <typename Item, typename Container>
+ void
+ Queue<Item, Container>::DropBeforeEnqueue(Ptr<Item> item)

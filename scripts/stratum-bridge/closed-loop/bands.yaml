@@ -1,0 +1,40 @@
+# Stratum-Bridge closed-loop MVP — pre-registered acceptance bands
+#
+# Committed BEFORE first data collection. The verdict script reads this file
+# and records its git SHA in output/stratum-bridge-closed-loop/verdict.json
+# so any post-hoc adjustment is provable via `git log bands.yaml`.
+#
+# Reference points (Phase 1.5 anchor + PR #82 12-null baseline):
+#   ns3_stratum:  0.7619  (end-to-end ns-3 at (16,1) CUBIC)
+#   linux_native: 0.5201  (end-to-end Linux at (16,1) CUBIC)
+#   midpoint:     0.6410  (equidistant)
+
+cell: "(16,1)-cubic"
+
+reference_runs:
+  ns3_stratum:  0.7619
+  linux_native: 0.5201
+
+midpoint: 0.6410
+
+primary_verdict:
+  VALIDATED:   "mean_share <= 0.6410"
+  INVALIDATED: "mean_share > 0.6410"
+
+strength_qualifier:
+  STRONG_VALIDATION:     [0.500, 0.580]
+  MODERATE_VALIDATION:   [0.580, 0.641]
+  MODERATE_INVALIDATION: [0.641, 0.702]
+  STRONG_INVALIDATION:   [0.702, 0.785]
+  OUT_OF_RANGE_LOW:      [0.000, 0.500]
+  OUT_OF_RANGE_HIGH:     [0.785, 1.000]
+
+replicas: 3
+rng_seeds: [1, 2, 3]
+per_replica_duration_s: 60
+warmup_s: 10
+
+cross_validation:
+  ci95_max_width: 0.04
+  iperf3_vs_pcap_tolerance: 0.01
+  real_time_hard_limit_warnings: 0

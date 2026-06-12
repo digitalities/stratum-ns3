@@ -1,0 +1,578 @@
+diff --git a/src/traffic-control/CMakeLists.txt b/src/traffic-control/CMakeLists.txt
+index 088ca6f63..a9dbd441e 100644
+--- a/src/traffic-control/CMakeLists.txt
++++ b/src/traffic-control/CMakeLists.txt
+@@ -16,6 +16,7 @@ build_lib(
+     model/prio-queue-disc.cc
+     model/queue-disc.cc
+     model/red-queue-disc.cc
++    model/slot-dispatcher.cc
+     model/tbf-queue-disc.cc
+     model/traffic-control-layer.cc
+   HEADER_FILES
+@@ -34,6 +35,7 @@ build_lib(
+     model/prio-queue-disc.h
+     model/queue-disc.h
+     model/red-queue-disc.h
++    model/slot-dispatcher.h
+     model/tbf-queue-disc.h
+     model/traffic-control-layer.h
+   LIBRARIES_TO_LINK ${libnetwork}
+@@ -46,6 +48,7 @@ build_lib(
+     test/prio-queue-disc-test-suite.cc
+     test/queue-disc-traces-test-suite.cc
+     test/red-queue-disc-test-suite.cc
++    test/slot-dispatcher-test-suite.cc
+     test/tbf-queue-disc-test-suite.cc
+     test/tc-flow-control-test-suite.cc
+ )
+diff --git a/src/traffic-control/model/slot-dispatcher.cc b/src/traffic-control/model/slot-dispatcher.cc
+new file mode 100644
+index 000000000..03987b05b
+--- /dev/null
++++ b/src/traffic-control/model/slot-dispatcher.cc
+@@ -0,0 +1,75 @@
++/*
++ * Copyright (c) 2026 Sergio Andreozzi
++ *
++ * SPDX-License-Identifier: GPL-2.0-only
++ *
++ * Author: Sergio Andreozzi <digitalities@gmail.com>
++ */
++
++#include "slot-dispatcher.h"
++
++#include "queue-disc.h"
++
++#include "ns3/log.h"
++
++namespace ns3
++{
++
++NS_LOG_COMPONENT_DEFINE("SlotDispatcher");
++
++NS_OBJECT_ENSURE_REGISTERED(SlotDispatcher);
++
++TypeId
++SlotDispatcher::GetTypeId()
++{
++    NS_LOG_FUNCTION_NOARGS();
++    static TypeId tid =
++        TypeId("ns3::SlotDispatcher").SetParent<Object>().SetGroupName("TrafficControl");
++    return tid;
++}
++
++NS_OBJECT_ENSURE_REGISTERED(StrictPrioritySlotDispatcher);
++
++TypeId
++StrictPrioritySlotDispatcher::GetTypeId()
++{
++    NS_LOG_FUNCTION_NOARGS();
++    static TypeId tid = TypeId("ns3::StrictPrioritySlotDispatcher")
++                            .SetParent<SlotDispatcher>()
++                            .SetGroupName("TrafficControl")
++                            .AddConstructor<StrictPrioritySlotDispatcher>();
++    return tid;
++}
++
++int32_t
++StrictPrioritySlotDispatcher::SelectDequeueSlot(Ptr<QueueDisc> parent)
++{
++    NS_LOG_FUNCTION(this);
++    return FirstNonEmpty(parent);
++}
++
++int32_t
++StrictPrioritySlotDispatcher::PeekSlot(Ptr<QueueDisc> parent)
++{
++    NS_LOG_FUNCTION(this);
++    return FirstNonEmpty(parent);
++}
++
++int32_t
++StrictPrioritySlotDispatcher::FirstNonEmpty(Ptr<QueueDisc> parent) const
++{
++    NS_LOG_FUNCTION(this);
++    NS_ASSERT_MSG(parent, "StrictPrioritySlotDispatcher requires a non-null parent");
++    const std::size_t n = parent->GetNQueueDiscClasses();
++    for (std::size_t s = 0; s < n; ++s)
++    {
++        Ptr<QueueDisc> inner = parent->GetQueueDiscClass(s)->GetQueueDisc();
++        if (inner && inner->GetNPackets() > 0)
++        {
++            return static_cast<int32_t>(s);
++        }
++    }
++    return -1;
++}
++
++} // namespace ns3
+diff --git a/src/traffic-control/model/slot-dispatcher.h b/src/traffic-control/model/slot-dispatcher.h
+new file mode 100644
+index 000000000..d46d7edd5
+--- /dev/null
++++ b/src/traffic-control/model/slot-dispatcher.h
+@@ -0,0 +1,202 @@
++/*
++ * Copyright (c) 2026 Sergio Andreozzi
++ *
++ * SPDX-License-Identifier: GPL-2.0-only
++ *
++ * Author: Sergio Andreozzi <digitalities@gmail.com>
++ */
++
++#ifndef SLOT_DISPATCHER_H
++#define SLOT_DISPATCHER_H
++
++#include "ns3/object.h"
++#include "ns3/ptr.h"
++
++#include <cstdint>
++
++namespace ns3
++{
++
++class QueueDisc;
++class QueueDiscItem;
++
++/**
++ * @ingroup traffic-control
++ *
++ * @brief Per-slot counter snapshot exposed by a SlotDispatcher.
++ *
++ * Wire-byte accumulators (matching QueueDiscItem::GetSize() semantics)
++ * plus drop and mark counters. Dispatchers that maintain per-slot state
++ * (deficit counters, rate-shaped tins, weighted accumulators) populate
++ * these fields. Stateless dispatchers (e.g. strict priority) return
++ * zeros.
++ */
++struct SlotDispatcherStats
++{
++    uint64_t bytesEnqueued{0}; //!< Total wire bytes admitted on this slot
++    uint64_t bytesDequeued{0}; //!< Total wire bytes drained from this slot
++    uint64_t drops{0};         //!< Drop count attributed to this slot
++    uint64_t marks{0};         //!< Mark count attributed to this slot
++};
++
++/**
++ * @ingroup traffic-control
++ *
++ * @brief Pluggable strategy that decides which child class of a
++ * multi-class queue disc is serviced on the next dequeue.
++ *
++ * A multi-class QueueDisc holds a list of QueueDiscClass children
++ * (accessed by GetNQueueDiscClasses() and GetQueueDiscClass(i)). The
++ * across-class dequeue policy (strict priority, weighted round-robin,
++ * deficit round-robin, rate-shaped) is the policy a SlotDispatcher
++ * implements.
++ *
++ * Subclasses override:
++ * - SelectDequeueSlot() to pick the slot to drain (may mutate
++ *   dispatcher state, e.g. advance a round-robin cursor or charge a
++ *   deficit counter)
++ * - PeekSlot() to pick the slot a subsequent dequeue would drain,
++ *   without mutating dispatcher state
++ * - OnEnqueue() to observe a successful enqueue (default no-op)
++ * - OnDequeue() to observe a successful dequeue (default no-op)
++ * - GetSlotStats() to expose per-slot counters (default returns zeros)
++ *
++ * The host queue disc is passed by Ptr<QueueDisc>, allowing the
++ * dispatcher to discover its children at call time. This keeps the
++ * abstraction independent of any specific multi-class queue disc.
++ */
++class SlotDispatcher : public Object
++{
++  public:
++    /**
++     * @brief Get the type ID.
++     * @return the object TypeId
++     */
++    static TypeId GetTypeId();
++
++    ~SlotDispatcher() override = default;
++
++    /**
++     * @brief Pick the populated slot to drain next.
++     *
++     * May mutate dispatcher state. Returns -1 if no child class is
++     * ready to yield a packet (all children empty, or none selected by
++     * the policy at this instant).
++     *
++     * @param parent the host queue disc whose children to consult
++     * @return slot index in [0, parent->GetNQueueDiscClasses()), or -1
++     *         if no slot is ready
++     */
++    virtual int32_t SelectDequeueSlot(Ptr<QueueDisc> parent) = 0;
++
++    /**
++     * @brief Pick the slot a subsequent dequeue would drain.
++     *
++     * MUST NOT mutate dispatcher state. The QueueDisc base
++     * infrastructure calls peek idempotently, so a mutating peek would
++     * desynchronise dispatcher state with the host's peek-then-dequeue
++     * sequence.
++     *
++     * @param parent the host queue disc whose children to consult
++     * @return slot index in [0, parent->GetNQueueDiscClasses()), or -1
++     *         if no slot is ready
++     */
++    virtual int32_t PeekSlot(Ptr<QueueDisc> parent) = 0;
++
++    /**
++     * @brief Notification fired after a successful enqueue into a child
++     * queue disc.
++     *
++     * Default: no-op. Stateful subclasses override to update bookkeeping
++     * (e.g. mark a slot as newly active, increment a per-slot counter).
++     *
++     * @param slot the slot that received the packet
++     * @param item the enqueued item
++     * @param parent the host queue disc
++     */
++    virtual void OnEnqueue(uint32_t /*slot*/,
++                           Ptr<QueueDiscItem> /*item*/,
++                           Ptr<QueueDisc> /*parent*/)
++    {
++    }
++
++    /**
++     * @brief Notification fired after a successful dequeue from a child
++     * queue disc.
++     *
++     * Default: no-op. Stateful subclasses override to update bookkeeping
++     * (e.g. decrement a deficit counter, advance a round-robin cursor,
++     * deactivate a slot that drained to empty).
++     *
++     * @param slot the slot that yielded the packet
++     * @param item the dequeued item
++     * @param parent the host queue disc
++     */
++    virtual void OnDequeue(uint32_t /*slot*/,
++                           Ptr<QueueDiscItem> /*item*/,
++                           Ptr<QueueDisc> /*parent*/)
++    {
++    }
++
++    /**
++     * @brief Read-only per-slot diagnostic snapshot.
++     *
++     * Default: returns a zeroed SlotDispatcherStats. Subclasses that
++     * track per-slot counters override; stateless subclasses leave the
++     * default in place.
++     *
++     * @param slotIdx the slot whose counters to return
++     * @param parent the host queue disc (may be inspected for
++     *        inner-queue accessors at call time)
++     * @return per-slot counters
++     */
++    virtual SlotDispatcherStats GetSlotStats(uint32_t /*slotIdx*/,
++                                             Ptr<const QueueDisc> /*parent*/) const
++    {
++        return SlotDispatcherStats{};
++    }
++};
++
++/**
++ * @ingroup traffic-control
++ *
++ * @brief Strict-priority slot dispatcher.
++ *
++ * Walks child classes in index order and returns the first whose inner
++ * queue disc reports a non-zero packet count. Higher-index slots are
++ * served only when all lower-index slots are empty. This is the policy
++ * embedded in PrioQueueDisc::DoDequeue, exposed here as a reusable
++ * strategy.
++ *
++ * Stateless: SelectDequeueSlot() and PeekSlot() share the walk;
++ * OnEnqueue() and OnDequeue() remain no-ops; GetSlotStats() returns
++ * zeros.
++ */
++class StrictPrioritySlotDispatcher : public SlotDispatcher
++{
++  public:
++    /**
++     * @brief Get the type ID.
++     * @return the object TypeId
++     */
++    static TypeId GetTypeId();
++
++    StrictPrioritySlotDispatcher() = default;
++
++    int32_t SelectDequeueSlot(Ptr<QueueDisc> parent) override;
++    int32_t PeekSlot(Ptr<QueueDisc> parent) override;
++
++  private:
++    /**
++     * @brief Walk children in index order; return the first slot whose
++     * inner queue disc reports GetNPackets() > 0, or -1.
++     *
++     * @param parent the host queue disc
++     * @return slot index of first non-empty child, or -1
++     */
++    int32_t FirstNonEmpty(Ptr<QueueDisc> parent) const;
++};
++
++} // namespace ns3
++
++#endif /* SLOT_DISPATCHER_H */
+diff --git a/src/traffic-control/test/slot-dispatcher-test-suite.cc b/src/traffic-control/test/slot-dispatcher-test-suite.cc
+new file mode 100644
+index 000000000..8d37b3883
+--- /dev/null
++++ b/src/traffic-control/test/slot-dispatcher-test-suite.cc
+@@ -0,0 +1,255 @@
++/*
++ * Copyright (c) 2026 Sergio Andreozzi
++ *
++ * SPDX-License-Identifier: GPL-2.0-only
++ *
++ * Author: Sergio Andreozzi <digitalities@gmail.com>
++ */
++
++#include "ns3/fifo-queue-disc.h"
++#include "ns3/log.h"
++#include "ns3/packet.h"
++#include "ns3/prio-queue-disc.h"
++#include "ns3/queue-disc.h"
++#include "ns3/simulator.h"
++#include "ns3/slot-dispatcher.h"
++#include "ns3/socket.h"
++#include "ns3/string.h"
++#include "ns3/test.h"
++
++using namespace ns3;
++
++/**
++ * @ingroup traffic-control-test
++ *
++ * @brief Test item for the slot dispatcher test suite.
++ *
++ * Carries a SocketPriorityTag so that PrioQueueDisc's default priomap
++ * routes it to the band corresponding to its priority.
++ */
++class SlotDispatcherTestItem : public QueueDiscItem
++{
++  public:
++    /**
++     * Constructor.
++     *
++     * @param p the packet
++     * @param addr the address
++     * @param priority the packet priority
++     */
++    SlotDispatcherTestItem(Ptr<Packet> p, const Address& addr, uint8_t priority);
++    void AddHeader() override;
++    bool Mark() override;
++};
++
++SlotDispatcherTestItem::SlotDispatcherTestItem(Ptr<Packet> p, const Address& addr, uint8_t priority)
++    : QueueDiscItem(p, addr, 0)
++{
++    SocketPriorityTag priorityTag;
++    priorityTag.SetPriority(priority);
++    p->ReplacePacketTag(priorityTag);
++}
++
++void
++SlotDispatcherTestItem::AddHeader()
++{
++}
++
++bool
++SlotDispatcherTestItem::Mark()
++{
++    return false;
++}
++
++/**
++ * @ingroup traffic-control-test
++ *
++ * @brief Build a PrioQueueDisc with @p nBands child FifoQueueDisc
++ * classes, set an identity priomap so packet priority p maps to band p
++ * (for p in 0..min(nBands-1, 15)), and run Initialize().
++ *
++ * @param nBands the number of child classes to attach (>= 2)
++ * @return the initialised PrioQueueDisc
++ */
++static Ptr<PrioQueueDisc>
++BuildPrioHost(uint32_t nBands)
++{
++    Ptr<PrioQueueDisc> qdisc = CreateObject<PrioQueueDisc>();
++    // Identity priomap clamped to nBands - 1 for priorities >= nBands.
++    std::string priomap;
++    for (uint16_t p = 0; p < 16; ++p)
++    {
++        if (p > 0)
++        {
++            priomap += " ";
++        }
++        const uint16_t band = (p < nBands) ? p : (nBands - 1);
++        priomap += std::to_string(band);
++    }
++    qdisc->SetAttribute("Priomap", StringValue(priomap));
++    for (uint32_t i = 0; i < nBands; ++i)
++    {
++        Ptr<FifoQueueDisc> child = CreateObject<FifoQueueDisc>();
++        child->Initialize();
++        Ptr<QueueDiscClass> c = CreateObject<QueueDiscClass>();
++        c->SetQueueDisc(child);
++        qdisc->AddQueueDiscClass(c);
++    }
++    qdisc->Initialize();
++    return qdisc;
++}
++
++/**
++ * @ingroup traffic-control-test
++ *
++ * @brief Empty host returns -1 from SelectDequeueSlot and PeekSlot.
++ */
++class SlotDispatcherEmptyHostTestCase : public TestCase
++{
++  public:
++    SlotDispatcherEmptyHostTestCase()
++        : TestCase("Empty multi-class host returns -1")
++    {
++    }
++
++    void DoRun() override
++    {
++        Ptr<PrioQueueDisc> host = BuildPrioHost(4);
++        StrictPrioritySlotDispatcher dispatcher;
++
++        NS_TEST_ASSERT_MSG_EQ(dispatcher.SelectDequeueSlot(host),
++                              -1,
++                              "Empty host: SelectDequeueSlot must return -1");
++        NS_TEST_ASSERT_MSG_EQ(dispatcher.PeekSlot(host), -1, "Empty host: PeekSlot must return -1");
++
++        Simulator::Destroy();
++    }
++};
++
++/**
++ * @ingroup traffic-control-test
++ *
++ * @brief Strict priority: lowest non-empty slot is preferred.
++ *
++ * Enqueue first into the slot-2 child, then verify the dispatcher
++ * returns 2; enqueue into slot-1, expect 1; enqueue into slot-0,
++ * expect 0. After draining slot-0 (one packet), expect 1, then 2.
++ */
++class SlotDispatcherStrictPriorityTestCase : public TestCase
++{
++  public:
++    SlotDispatcherStrictPriorityTestCase()
++        : TestCase("Strict priority preference: lowest non-empty slot wins")
++    {
++    }
++
++    void DoRun() override
++    {
++        Ptr<PrioQueueDisc> host = BuildPrioHost(4);
++        StrictPrioritySlotDispatcher dispatcher;
++        Address dest;
++
++        // Enqueue into slot 2 first
++        host->Enqueue(Create<SlotDispatcherTestItem>(Create<Packet>(100), dest, 2));
++        NS_TEST_ASSERT_MSG_EQ(dispatcher.SelectDequeueSlot(host),
++                              2,
++                              "Only slot 2 populated: must return 2");
++
++        // Enqueue into slot 1 — strict priority now prefers 1
++        host->Enqueue(Create<SlotDispatcherTestItem>(Create<Packet>(100), dest, 1));
++        NS_TEST_ASSERT_MSG_EQ(dispatcher.SelectDequeueSlot(host),
++                              1,
++                              "Slots 1 and 2 populated: must prefer 1");
++
++        // Enqueue into slot 0 — strict priority now prefers 0
++        host->Enqueue(Create<SlotDispatcherTestItem>(Create<Packet>(100), dest, 0));
++        NS_TEST_ASSERT_MSG_EQ(dispatcher.SelectDequeueSlot(host),
++                              0,
++                              "Slots 0, 1, 2 populated: must prefer 0");
++
++        // Drain via the host's Dequeue (slot 0 yields, becomes empty)
++        Ptr<QueueDiscItem> first = host->Dequeue();
++        NS_TEST_ASSERT_MSG_NE(first, nullptr, "Host must yield the slot-0 packet");
++        NS_TEST_ASSERT_MSG_EQ(dispatcher.SelectDequeueSlot(host),
++                              1,
++                              "Slot 0 drained: must now prefer 1");
++
++        // Drain slot 1, expect 2 next
++        Ptr<QueueDiscItem> second = host->Dequeue();
++        NS_TEST_ASSERT_MSG_NE(second, nullptr, "Host must yield the slot-1 packet");
++        NS_TEST_ASSERT_MSG_EQ(dispatcher.SelectDequeueSlot(host),
++                              2,
++                              "Slot 1 drained: must now prefer 2");
++
++        Simulator::Destroy();
++    }
++};
++
++/**
++ * @ingroup traffic-control-test
++ *
++ * @brief PeekSlot is side-effect free: repeated calls return the same
++ * slot, and host packet counts are unchanged.
++ */
++class SlotDispatcherPeekIdempotentTestCase : public TestCase
++{
++  public:
++    SlotDispatcherPeekIdempotentTestCase()
++        : TestCase("PeekSlot is side-effect free under repeated calls")
++    {
++    }
++
++    void DoRun() override
++    {
++        Ptr<PrioQueueDisc> host = BuildPrioHost(3);
++        StrictPrioritySlotDispatcher dispatcher;
++        Address dest;
++
++        // Enqueue 2 into slot 1 and 1 into slot 2
++        host->Enqueue(Create<SlotDispatcherTestItem>(Create<Packet>(100), dest, 1));
++        host->Enqueue(Create<SlotDispatcherTestItem>(Create<Packet>(100), dest, 1));
++        host->Enqueue(Create<SlotDispatcherTestItem>(Create<Packet>(100), dest, 2));
++
++        const uint32_t before1 = host->GetQueueDiscClass(1)->GetQueueDisc()->GetNPackets();
++        const uint32_t before2 = host->GetQueueDiscClass(2)->GetQueueDisc()->GetNPackets();
++
++        const int32_t peek1 = dispatcher.PeekSlot(host);
++        const int32_t peek2 = dispatcher.PeekSlot(host);
++        const int32_t peek3 = dispatcher.PeekSlot(host);
++
++        NS_TEST_ASSERT_MSG_EQ(peek1, 1, "First peek must return slot 1");
++        NS_TEST_ASSERT_MSG_EQ(peek2, peek1, "Second peek must equal first");
++        NS_TEST_ASSERT_MSG_EQ(peek3, peek1, "Third peek must equal first");
++
++        const uint32_t after1 = host->GetQueueDiscClass(1)->GetQueueDisc()->GetNPackets();
++        const uint32_t after2 = host->GetQueueDiscClass(2)->GetQueueDisc()->GetNPackets();
++        NS_TEST_ASSERT_MSG_EQ(after1, before1, "Slot 1 count must be unchanged after peeks");
++        NS_TEST_ASSERT_MSG_EQ(after2, before2, "Slot 2 count must be unchanged after peeks");
++
++        // Default GetSlotStats returns zeros for the stateless subclass
++        SlotDispatcherStats stats = dispatcher.GetSlotStats(0, host);
++        NS_TEST_ASSERT_MSG_EQ(stats.bytesEnqueued, 0u, "Default stats: bytesEnqueued zero");
++        NS_TEST_ASSERT_MSG_EQ(stats.bytesDequeued, 0u, "Default stats: bytesDequeued zero");
++        NS_TEST_ASSERT_MSG_EQ(stats.drops, 0u, "Default stats: drops zero");
++        NS_TEST_ASSERT_MSG_EQ(stats.marks, 0u, "Default stats: marks zero");
++
++        Simulator::Destroy();
++    }
++};
++
++/**
++ * @ingroup traffic-control-test
++ *
++ * @brief Slot Dispatcher Test Suite.
++ */
++static class SlotDispatcherTestSuite : public TestSuite
++{
++  public:
++    SlotDispatcherTestSuite()
++        : TestSuite("slot-dispatcher", Type::UNIT)
++    {
++        AddTestCase(new SlotDispatcherEmptyHostTestCase(), TestCase::Duration::QUICK);
++        AddTestCase(new SlotDispatcherStrictPriorityTestCase(), TestCase::Duration::QUICK);
++        AddTestCase(new SlotDispatcherPeekIdempotentTestCase(), TestCase::Duration::QUICK);
++    }
++} g_slotDispatcherTestSuite; //!< Static variable for test initialization

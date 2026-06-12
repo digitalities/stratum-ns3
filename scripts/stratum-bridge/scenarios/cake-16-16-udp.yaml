@@ -1,0 +1,35 @@
+schema: stratum-bridge/scenario/v1
+name: cake-16-16-udp
+description: |
+  16 UDP CBR flows on host A vs 16 UDP CBR flows on host B, each
+  offered at 100/(N+M) Mbps, 100 Mbps shared bottleneck, 20 ms
+  one-way delay, CAKE triple-isolate. Ground truth share_A from
+  docs/superpowers/findings/2026-05-16-phase-1-5-empirical-anchor:
+  0.5000 +/- 0.0000 (3-replica mean +/- std). Symmetric control:
+  N == M means equal offered load, share_A converges to 0.5.
+
+topology:
+  kind: shared-bottleneck
+
+bottleneck:
+  bandwidth_mbps: 100
+  one_way_delay_ms: 20
+
+hosts:
+  a:
+    flow_count: 16
+  b:
+    flow_count: 16
+
+qdisc:
+  kind: cake
+  mode: triple-isolate
+
+traffic:
+  protocol: udp
+  duration_s: 30
+  replicas: [1, 2, 3]
+
+backend:
+  kind: linux-netns
+  vm: cake-host-fairness

@@ -1,0 +1,75 @@
+<?xml version="1.0"?>
+<!--
+  bakeconf.xml - Bake module definition for the Stratum ns-3 module.
+
+  Stratum is being prepared for distribution through the ns-3 App Store. Bake
+  is one supported install path (alongside a direct git clone into contrib/ or
+  a source-archive unpack). This file defines both the pinned ns-3 release and
+  the Stratum module so Bake can resolve them. Add it to Bake's contrib/
+  folder, then:
+
+      ./bake.py configure -e ns-3.48 -e stratum-1.1
+      ./bake.py download
+
+  Stratum depends on a small set of ns-3 mainline patches that apply against
+  the pinned ns-3 revision. Apply them to the downloaded ns-3 tree after
+  download and before build (this step is manual today):
+
+      NS3=<bake>/source/ns-3.48
+      for p in "$NS3"/contrib/stratum/patches/ns3/*.patch; do
+          ( cd "$NS3" && git apply "$p" )
+      done
+
+      ./bake.py build
+
+  Notes:
+    * Bake itself must run under Python 3.11-3.13 (3.14 breaks Bake's inline
+      build-class exec) and needs the "distro" and "requests" packages.
+    * ns-3.48 is defined here because Bake's stock catalogue does not yet carry
+      it; remove this definition once Bake's catalogue includes ns-3.48. The
+      module pins to exactly ns-3.48 (min/max), since the bundled patches
+      target that release.
+    * Applying mainline patches as a build step is the approach described for
+      patch-carrying modules in the ns-3 external-module guide, section 5.2:
+      https://www.nsnam.org/docs/contributing/html/external.html
+    * The module is GPLv2 (compatible with ns-allinone distribution). The
+      authoritative ns-3 pin lives in scripts/fetch-ns3.sh (queried with the
+      print-pin option); it is not duplicated here.
+-->
+<configuration>
+  <modules>
+
+    <!-- Pinned ns-3 release. Bake's stock catalogue tops out below ns-3.48,
+         so the exact release the patches target is defined here. -->
+    <module name="ns-3.48" type="ns">
+      <source type="git">
+        <attribute name="url" value="https://gitlab.com/nsnam/ns-3-dev.git"/>
+        <attribute name="module_directory" value="ns-3.48"/>
+        <attribute name="branch" value="master"/>
+        <attribute name="revision" value="ns-3.48"/>
+      </source>
+      <depends_on name="cmake" optional="False"/>
+      <build type="cmake" objdir="cmake-cache">
+        <attribute name="configure_arguments" value="-DCMAKE_BUILD_TYPE=default -DNS3_EXAMPLES=ON -DNS3_TESTS=ON -DNS3_WARNINGS_AS_ERRORS=OFF"/>
+      </build>
+    </module>
+
+    <module name="stratum-1.1" type="ns-contrib" min_version="ns-3.48" max_version="ns-3.48">
+      <source type="git">
+        <attribute name="url" value="https://github.com/digitalities/stratum-ns3.git"/>
+        <attribute name="module_directory" value="stratum"/>
+        <attribute name="revision" value="v1.1"/>
+      </source>
+      <depends_on name="ns-3.48" optional="False"/>
+      <!--
+        build type=none: Stratum sits in <ns-3>/contrib/stratum and is compiled
+        by ns-3's own build once the bundled mainline patches have been applied
+        to the ns-3 source tree (see header). Automating that patch step inside
+        Bake (a turnkey patch-first build for patch-carrying contrib modules) is
+        a planned follow-up to confirm with the App Store maintainers.
+      -->
+      <build type="none"/>
+    </module>
+
+  </modules>
+</configuration>

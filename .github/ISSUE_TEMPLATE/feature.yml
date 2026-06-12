@@ -1,0 +1,43 @@
+name: Feature request
+description: Suggest a new capability for Stratum
+title: "[feature] "
+labels: ["kind/feature", "status/triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Suggest a capability you'd like Stratum to support. Focus on the problem and scenario; we'll discuss approaches in the issue thread.
+  - type: dropdown
+    id: client
+    attributes:
+      label: Which client does this affect?
+      multiple: true
+      options:
+        - "Classical DiffServ"
+        - "L4S"
+        - "CAKE"
+        - "Wireless integration"
+        - "AQM-eval suite"
+        - "Registry / extension surface"
+        - "Cross-cutting (substrate-wide)"
+    validations:
+      required: true
+  - type: textarea
+    id: scenario
+    attributes:
+      label: What scenario would you like supported?
+      description: "Describe the use case. E.g., 'evaluate L4S under heavy CAKE-shaped background', 'integrate with ns-3 LTE module'."
+    validations:
+      required: true
+  - type: textarea
+    id: gap
+    attributes:
+      label: Why doesn't the current shape fit?
+      description: "What does the substrate currently lack? Are there workarounds we should be aware of?"
+    validations:
+      required: true
+  - type: textarea
+    id: pointers
+    attributes:
+      label: Related work or RFCs (optional)
+      description: "Links, citations, or pointers that would help us scope this."

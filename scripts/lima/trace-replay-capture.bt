@@ -1,0 +1,46 @@
+#!/usr/bin/env bpftrace
+//
+// Supplementary capture probe for trace-replay validation. Records the
+// per-call return value of cake_get_flow_quantum, so the replay-side
+// analysis can verify that Stratum's RNG-induced flow_quantum draw
+// distribution matches Linux's (mitigates the dithering-divergence risk
+// without forcing deterministic replay).
+//
+// The PRIMARY trace-replay input is captured separately by tcpdump on
+// rab1 ingress (router-a netns) and stored as linux-trace.pcap.
+//
+// Output rows: ts_ns,flow_ptr,quantum_returned
+//
+//   ts_ns           — nanoseconds since boot at return
+//   flow_ptr        — struct cake_flow* (stable per flow per run)
+//   quantum_returned — the value the function returned (after dithering)
+//
+// Usage:
+//   sudo bpftrace trace-replay-capture.bt > linux-flow-quantum.csv
+//
+// Run for the full canonical-anchor duration (>= 30 s after warmup).
+
+BEGIN {
+    printf("# Stratum trace-replay capture probe (cake_get_flow_quantum returns)\n");
+    printf("# Use alongside tcpdump capture for full replay input set.\n");
+    printf("ts_ns,flow_ptr,quantum_returned\n");
+}
+
+kfunc:cake_get_flow_quantum
+{
+    @entry_flow[tid] = (uint64)args->flow;
+}
+
+kretfunc:cake_get_flow_quantum
+{
+    $flow = @entry_flow[tid];
+    if ($flow != 0) {
+        printf("%llu,0x%llx,%u\n", nsecs, $flow, retval);
+    }
+    delete(@entry_flow[tid]);
+}
+
+END {
+    printf("# probe end\n");
+    clear(@entry_flow);
+}

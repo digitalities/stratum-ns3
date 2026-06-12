@@ -1,0 +1,66 @@
+diff --git a/src/internet/model/tcp-socket-base.cc b/src/internet/model/tcp-socket-base.cc
+index b694909fd..c27e3f3b1 100644
+--- a/src/internet/model/tcp-socket-base.cc
++++ b/src/internet/model/tcp-socket-base.cc
+@@ -222,6 +222,23 @@ TcpSocketBase::GetTypeId()
+                           UintegerValue(1500),
+                           MakeUintegerAccessor(&TcpSocketBase::m_maxGsoSize),
+                           MakeUintegerChecker<uint16_t>(1500, 65535))
++            .AddAttribute("EnableTsq",
++                          "Enable opt-in TCP Small Queues (TSQ) cap on bytes-in-flight "
++                          "per socket. When true, SendPendingData breaks the emission "
++                          "loop once BytesInFlight() >= TsqLimitBytes, deferring further "
++                          "sends until an ACK reduces the in-flight count. Matches the "
++                          "intent of Linux's tcp_limit_output_bytes. Default false.",
++                          BooleanValue(false),
++                          MakeBooleanAccessor(&TcpSocketBase::m_enableTsq),
++                          MakeBooleanChecker())
++            .AddAttribute("TsqLimitBytes",
++                          "Bytes-in-flight cap per socket when EnableTsq=true. Linux "
++                          "default is 1 MB (tcp_limit_output_bytes sysctl). At a 100 Mbps "
++                          "pacing rate this caps work-in-flight at ~80 ms, dominated by "
++                          "the BDP at typical RTTs.",
++                          UintegerValue(1048576),
++                          MakeUintegerAccessor(&TcpSocketBase::m_tsqLimitBytes),
++                          MakeUintegerChecker<uint32_t>(1500, 1u << 30))
+             .AddTraceSource("RTO",
+                             "Retransmission timeout",
+                             MakeTraceSourceAccessor(&TcpSocketBase::m_rto),
+@@ -3520,6 +3537,17 @@ TcpSocketBase::SendPendingData(bool withAck)
+             NS_LOG_INFO("Timer is not running");
+         }
+ 
++        // TCP Small Queues (TSQ) opt-in: cap bytes-in-flight per socket. When
++        // BytesInFlight() reaches m_tsqLimitBytes, break the emission loop;
++        // subsequent ACKs will re-enter SendPendingData via the standard
++        // ACK-side path, mirroring Linux's tcp_wfree() resumption mechanism.
++        if (m_enableTsq && BytesInFlight() >= m_tsqLimitBytes)
++        {
++            NS_LOG_LOGIC("TSQ cap reached: bytesInFlight=" << BytesInFlight()
++                         << " limit=" << m_tsqLimitBytes);
++            break;
++        }
++
+         if (m_tcb->m_congState == TcpSocketState::CA_OPEN && m_state == TcpSocket::FIN_WAIT_1)
+         {
+             NS_LOG_INFO("FIN_WAIT and OPEN state; no data to transmit");
+diff --git a/src/internet/model/tcp-socket-base.h b/src/internet/model/tcp-socket-base.h
+index de14ef054..c8ff0bb8f 100644
+--- a/src/internet/model/tcp-socket-base.h
++++ b/src/internet/model/tcp-socket-base.h
+@@ -1519,6 +1519,15 @@ class TcpSocketBase : public TcpSocket
+     // NetDevice::Send. Default off, zero regression risk.
+     bool m_enableGso{false};     //!< Opt-in flag for GSO egress.
+     uint16_t m_maxGsoSize{1500}; //!< Maximum super-segment payload bytes; range [1500, 65535].
++
++    // TCP Small Queues (TSQ) — opt-in cap on bytes-in-flight per socket.
++    // When EnableTsq=true, SendPendingData breaks the emission loop once
++    // BytesInFlight() >= TsqLimitBytes, deferring further sends until an
++    // ACK reduces the in-flight count. Matches the intent of Linux's
++    // `tcp_limit_output_bytes` (default ~1 MB): bound burst entry into
++    // the qdisc to ~2 ms of pacing-rate-equivalent work. Default off.
++    bool m_enableTsq{false};         //!< Opt-in flag for TSQ cap.
++    uint32_t m_tsqLimitBytes{1048576}; //!< Bytes-in-flight cap (1 MB Linux default).
+ };
+ 
+ /**

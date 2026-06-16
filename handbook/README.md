@@ -4,8 +4,8 @@ Stratum is a QoS substrate for ns-3 mainline that composes Differentiated
 Services, L4S, and CAKE as three first-class clients of one module. The
 substrate provides a four-slot pipeline — classify-and-meter, mark-and-route,
 per-class slot array, and across-slot service policy — that each client
-populates independently, yielding a single ns-3 contrib module covering the
-full range of IETF and Linux AQM practice. This handbook is the long-form
+populates independently, yielding a single ns-3 contrib module with a
+registry of IETF and Linux AQM cells. This handbook is the long-form
 reference for the substrate: how to use it, how it is designed, and how its
 behaviour has been validated against RFC test vectors, cross-simulator
 comparisons, and real-network heritage measurements.
@@ -35,7 +35,7 @@ The front matter (`00-preface.md`) describes provenance conventions and
 citation guidance that apply across all parts.
 
 For the ns-3-native Sphinx model documentation, see `doc/stratum.rst`
-in the repository root — that file is the ns-3-side reference; this handbook
+in the repository root: that file is the ns-3-side reference; this handbook
 is the long-form book.
 
 ---
@@ -55,7 +55,7 @@ Task-oriented recipes for building, configuring, and running the three clients.
 | Chapter | File | Description |
 |---|---|---|
 | I-01 | [I-01-introduction.md](I-01-introduction.md) | How Part I is organised, what the recipes assume, and where to start. |
-| I-02 | [I-02-quickstart.md](I-02-quickstart.md) | Build Stratum, run a DiffServ scenario, preview CAKE and L4S, and modify an example — from clone to working simulation in 15 minutes. |
+| I-02 | [I-02-quickstart.md](I-02-quickstart.md) | Build Stratum, run a DiffServ scenario, preview CAKE and L4S, and modify an example: from clone to working simulation in 15 minutes. |
 | I-03 | [I-03-diffserv.md](I-03-diffserv.md) | DiffServ recipes: single-edge foundation, meter configuration, DSCP-based PHB tables, AQM choice, and the full multi-tier pipeline. |
 | I-04 | [I-04-l4s.md](I-04-l4s.md) | L4S recipes: ECT(1) classification, DualPI2 coupled scheduler, coupling-formula validation, and head-to-head comparison with FqCoDel. |
 | I-05 | [I-05-cake.md](I-05-cake.md) | CAKE recipes: substrate demo, RRUL benchmark, host-pair isolation, and TCP fairness under load using the FqCobalt-based tin model. |
@@ -68,7 +68,7 @@ Task-oriented recipes for building, configuring, and running the three clients.
 
 ---
 
-## Part II — Architecture & design
+## Part II — Architecture and design
 
 The substrate top-down: the four-slot architecture, the three clients as peers, and the ns-3 port.
 
@@ -85,7 +85,7 @@ The substrate top-down: the four-slot architecture, the three clients as peers, 
 
 ---
 
-## Part III — Evidence & validation
+## Part III — Evidence and validation
 
 Three-way cross-simulator results, L4S and CAKE fidelity measurements, wireless coverage, and the AQM characterisation suite.
 

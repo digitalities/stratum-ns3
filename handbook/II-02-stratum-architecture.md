@@ -176,12 +176,11 @@ serve next. The default walks the slots in strict-priority order, slot 0
 first; a client overrides it by installing a different dispatcher.
 
 The DiffServ client has the full scheduler family inherited from the
-2001 module: PQ (strict priority), WFQ, WF2Q+, LLQ, hybrid-LLQ, WRR,
-SCFQ, and SFQ. They are not interchangeable. WF2Q+ bounds worst-case
+2001 module: PQ (strict priority), RR, WRR, WIRR, WFQ, WF2Q+, SCFQ,
+SFQ, and LLQ. They are not interchangeable. WF2Q+ bounds worst-case
 delay; SCFQ does not. LLQ gives one class strict precedence and shares the
-remainder fairly; hybrid-LLQ layers that priority queue over a weighted
-discipline. The choice is the operator's, and it is a one-call install on
-the helper. The L4S client does not schedule across slots the way the
+remainder fairly among the rest. The choice is the operator's, and it is a
+one-call install on the helper. The L4S client does not schedule across slots the way the
 DiffServ client does; its service policy is the coupled marking probability that ties the
 L4 queue's marking to the classic queue's drop probability inside the
 DualPI2 inner, so the "policy" is a congestion-signal coupling rather than
@@ -195,19 +194,19 @@ Each client is one row of slot bindings:
 
 | Client | Classify-and-Meter | Mark-and-Route | Slot array | Service policy |
 |---|---|---|---|---|
-| DiffServ | sr-TCM, tr-TCM, TSW2CM/3CM, byte-accounting | DSCP tag + PHB table | RED / RIO / drop-tail | PQ, WFQ, WF2Q+, LLQ, hybrid-LLQ, WRR, SCFQ, SFQ |
+| DiffServ | sr-TCM, tr-TCM, TSW2CM/3CM, byte-accounting | DSCP tag + PHB table | RED / RIO / drop-tail | PQ, RR, WRR, WIRR, WFQ, WF2Q+, SCFQ, SFQ, LLQ |
 | L4S | DualPI2 ECT(1) classifier | DSCP + L4S identifier | classic + L4 inners | coupled marking probability |
 | CAKE | DSCP-to-tin (besteffort / precedence / diffserv3 / diffserv4 / diffserv8) | tin assignment | per-tin `FqCobalt` | across-tin DRR + optional LLQ |
 
 The DiffServ client is the reference binding. It classifies on
 packet fields at the edge, meters with one of the RFC-specified meters,
 marks a DSCP, routes by PHB table, queues in multi-precedence RED, and
-schedules with one of the eight service policies. Its four primitives are
+schedules with one of the nine service policies. Its four primitives are
 ported from the 2001 ns-2 module, whose design is set down in the 2001
 thesis (§3.3.3 and Figure 3.11), and are the primitives the other
-two clients reuse. The port made three structural adaptations to fit ns-3:
-multi-precedence RED became a classful queue disc with per-precedence
-sub-queues, the scheduler became a pluggable subclass installed by a single
+two clients reuse. Three structural choices fit the primitives to ns-3:
+multi-precedence RED is a classful queue disc with per-precedence
+sub-queues, the scheduler is a pluggable subclass installed by a single
 call, and DSCP changes ride a tag applied on dequeue because the ns-3
 queue-disc API grants only read access to enqueued items. Its depth lives
 in [the DiffServ client](II-05-diffserv-client.md).

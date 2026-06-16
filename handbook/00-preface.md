@@ -7,9 +7,9 @@ last-updated: 2026-06-06
 
 # Preface
 
-This handbook is the long-form reference for the Stratum ns-3 substrate —
+This handbook is the long-form reference for the Stratum ns-3 substrate:
 how to use it (Part I), how it is designed (Part II), and how its behaviour
-has been validated (Part III). It is a companion to the 2001 thesis — not
+has been validated (Part III). It is a companion to the 2001 thesis, not
 the thesis itself. The thesis is preserved verbatim under
 `provenance/Andreozzi-2001-thesis.{pdf,txt}` and is never modified in place.
 
@@ -26,7 +26,7 @@ Three audiences:
   or the accompanying paper (submitted to ICNS3 2026), or citing the Zenodo
   release artifact.
 - **Students** learning the DiffServ architecture (RFC 2474/2475) from a
-  worked, validated, runnable reference — with the benefit of reading one
+  worked, validated, runnable reference, with the benefit of reading one
   architecture expressed in three simulator generations.
 - **Network-simulation practitioners** adopting the ns-3 module for their
   own DSCP-aware studies, or comparing ns-2 and ns-3 modelling choices.
@@ -115,7 +115,7 @@ The release repository ships a `CITATION.cff` at its root; a Zenodo
 concept DOI for the ns-3 substrate will be registered at a future tagged
 release. Cite the concept DOI when referring to "DiffServ4NS" as a moving
 target; cite the version-specific DOI when reproducing a specific figure or
-table. The `v1.1` tag marks the current release of the ns-3 substrate.
+table. The `v1.0` tag is the first release of the ns-3 substrate.
 
 ## See also
 
@@ -129,19 +129,19 @@ table. The `v1.1` tag marks the current release of the ns-3 substrate.
 The Stratum substrate has a 25-year history rooted in a master's thesis
 completed in 2001 at the University of Pisa, with research work carried out
 at Lappeenranta University of Technology in Finland. Sergio Andreozzi
-developed the original module — internally named *DiffServ+* — as part of
+developed the original module, internally named *DiffServ+*, as part of
 that thesis, building on real-network measurements from a deployed DiffServ
 infrastructure published by Tiziana Ferrari (INFN-CNAF) in 2000. Those
 measurements remain the founding validation ground truth for every downstream
 artefact. The thesis was published at ISCC 2002 and the module made available
 on the author's personal website the same year. In 2006, the code was ported
 from ns-2.1b8a to the ns-2.29 API, renamed DiffServ4NS, and released on
-SourceForge under GPLv2 — a release that preserved the original algorithms
+SourceForge under GPLv2; the release preserved the original algorithms
 exactly while adapting the C++ glue for the newer simulator version. The
 project then went dormant for two decades. In April 2026, active development
 resumed with a concurrent ns-2.35 port (backporting five latent defects and
 correcting the UDP header accounting) and a full ns-3 reimplementation that
-extended the DiffServ core with L4S and CAKE as co-equal clients —
+extended the DiffServ core with L4S and CAKE as co-equal clients,
 giving rise to the Stratum substrate documented in this handbook. The full
 provenance story, including checksums, SourceForge archive links, and
 per-milestone change notes, lives in the DiffServ4NS heritage repository

@@ -12,11 +12,11 @@ By the end you will have built Stratum, run a DiffServ scenario, previewed CAKE 
 - ~3 GB of free disk for the ns-3 source + build artefacts
 
 > [!NOTE]
-> This module builds against one pinned ns-3 release. The pin lives in exactly one place — the `NS3_PIN` constant in `scripts/fetch-ns3.sh` (query it with `scripts/fetch-ns3.sh --print-pin`). Either install path below lands at the pin automatically; if a fresh clone produces build failures, reset your ns-3 tree to it: `git checkout "$(<path-to>/scripts/fetch-ns3.sh --print-pin)"`.
+> This module builds against one pinned ns-3 release. The pin lives in exactly one place: the `NS3_PIN` constant in `scripts/fetch-ns3.sh` (query it with `scripts/fetch-ns3.sh --print-pin`). Either install path below lands at the pin automatically; if a fresh clone produces build failures, reset your ns-3 tree to it: `git checkout "$(<path-to>/scripts/fetch-ns3.sh --print-pin)"`.
 
 ## 1. Clone and bootstrap (2 minutes)
 
-Two install paths lead to the same result — pick the one that suits your workflow.
+Two install paths lead to the same result; pick the one that suits your workflow.
 
 ### Option A — Into an existing ns-3 tree (recommended)
 
@@ -35,7 +35,7 @@ for p in contrib/stratum/patches/ns3/*.patch; do git apply "$p"; done
 
 Already have an ns-3 tree? `cd` into it instead — it must be at the pinned release tag (`--print-pin` above) for the bundled patches to apply cleanly.
 
-**Option A is now built.** Skip to [step 3](#3-run-the-foundation-client-5-minutes).
+Option A is now built. Skip to [step 3](#3-run-the-foundation-client-5-minutes).
 
 ### Option B — Standalone (script-managed sibling clone)
 
@@ -120,7 +120,7 @@ Compare the per-class delay output to the PQ run. Observe:
 - EF's one-way delay rises (WFQ is work-conserving, not strict-priority)
 - BE's delay drops (it's no longer starved under EF load)
 
-This is the bandwidth-vs-latency trade-off classical schedulers make. **WFQ** treats EF as just another weighted class; **PQ** treats EF as preemptive. Which is correct depends on your scenario.
+This is the bandwidth-vs-latency trade-off classical schedulers make. WFQ treats EF as just another weighted class; PQ treats EF as preemptive. Which is correct depends on your scenario.
 
 For more on this trade-off: the [Schedulers section of the DiffServ client chapter](II-05-diffserv-client.md) + [DiffServ recipe 1](I-03-diffserv.md).
 

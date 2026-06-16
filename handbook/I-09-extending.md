@@ -15,7 +15,7 @@ These two recipes walk through the registration pattern. Both stay hands-on: you
 **You'll learn**:
 - The shape of an `AqmEntry` (dispatch name, file tag, display name, family, ECN flag, factory closure)
 - How `Register({...})` calls compose into the registry's enumeration
-- Why the registry pattern means you don't touch the runner, the helper, OR the plotting scripts when adding a new AQM
+- Why the registry pattern means you don't touch the runner, the helper, or the plotting scripts when adding a new AQM
 
 **Prerequisites**: [Quickstart](I-02-quickstart.md) (built ns-3, ran example-1); [`aqm-eval.md` recipe 1](I-06-aqm-eval.md) (ran `aqm-eval-runner --aqm=list`)
 
@@ -69,7 +69,7 @@ That's it. The runner picks the new cell up; `--aqm=list` shows it; output CSVs 
 3. Write a smoke test: drop a `TestCase` into `test/` that instantiates the registry, calls `Make("MyAqm", DataRate("10Mbps"))`, and verifies the returned `Ptr<QueueDisc>` is non-null. Run with `python3 test.py -s stratum`.
 
 > [!TIP]
-> The `family` field controls plot grouping in the AQM-eval plotting scripts. Use `Single` for vanilla AQMs, `Fq` for per-flow-queue variants, `Ds4` for substrate-specific composites — the plotter uses this to colour-code points on the ellipse diagram.
+> The `family` field controls plot grouping in the AQM-eval plotting scripts. Use `Single` for vanilla AQMs, `Fq` for per-flow-queue variants, `Ds4` for Stratum-specific composites — the plotter uses this to colour-code points on the ellipse diagram.
 
 ### Deep-dive
 

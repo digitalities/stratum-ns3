@@ -50,8 +50,7 @@ The three-step pipeline from the sibling chapter applies to all three:
 The sweep runner (`scripts/flent-export/run-figure-pack.sh`) covers a
 `(10 Mbps / 100 Mbps / 1000 Mbps) × (10 ms / 40 ms / 100 ms)` matrix per
 figure. The canonical cell used in the descriptions below is `(100 Mbps,
-40 ms)` at a 60-second simulation length (Fig 6 uses 60 s as well, with two
-isolation-mode variants per cell).
+40 ms)` at a 60-second simulation length.
 
 ```bash
 # Build the two examples (assumes scripts/fetch-ns3.sh has been run)
@@ -72,8 +71,8 @@ flent --plot=totals \
     -o handbook/figures/III-03A-flent/fig5-100Mbps-40ms-tin-stack.png
 ```
 
-The sweep matrix — 2 figures × 9 cells × ≈30 s each — totals 18 cells
-and takes 10–20 minutes on a typical laptop. The `.flent.gz` bundles are
+The sweep matrix has 2 figures × 9 cells = 18 cells, each run ≈30 s; the full
+sweep takes 10–20 minutes on a typical laptop. The `.flent.gz` bundles are
 deterministic given a fixed ns-3 build revision.
 
 ## Figure 4 — TCP square-wave fairness
@@ -154,7 +153,7 @@ with `EnableHostIsolation=true` via the local ns-3 patch — is described
 in [The CAKE client](II-07-cake-client.md#implementation-overview) and
 quantified in [CAKE validation](III-04-cake.md#host-fairness-empirical-anchor),
 including the ≤ 4.3 pp agreement with Linux `tc-cake`
-across CUBIC, NewReno, and BBR at the F2 operating point.
+across CUBIC, NewReno, and BBR at the host-fairness operating point.
 
 ## Schemas and converter
 

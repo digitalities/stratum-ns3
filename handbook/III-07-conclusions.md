@@ -32,7 +32,7 @@ between them.
 The architecture is registry-based: downstream consumers — CLI
 catalogues, plot palettes, and smoke-registry tests — auto-derive
 coverage from the in-tree set of registered cells. The substrate ships
-13 AQM cells and 9 scheduler cells, making the substrate-claim
+13 AQM cells and 9 scheduler cells, so the substrate-claim is
 machine-checkable rather than document-only.
 
 ## What the evidence established
@@ -175,14 +175,14 @@ Three extensions are identified in the paper for the next release:
 
 ## Closing
 
-Stratum is usable today in standard ns-3 mainline workflows — the module
+Stratum is usable today in standard ns-3 mainline workflows: the module
 lives in `contrib/stratum`, builds against the pinned ns-3 release (recorded once in the fetch script)
 via `scripts/fetch-ns3.sh`, and ships open-source under GPLv2. The
 validated scope covers the three clients described in this book: the
 faithful DiffServ reconstruction, the L4S DualPI2 prototype,
 and the Linux-calibrated CAKE client. Sharing four primitives across all
-three lets one substrate realise compositions — such as the per-tin
-DualPI2 inside CAKE's diffserv shaping — that neither mainline Linux nor
+three lets one substrate realise compositions (such as the per-tin
+DualPI2 inside CAKE's diffserv shaping) that neither mainline Linux nor
 BSD currently expresses. Further clients reach the same surface as new
 dispatcher and inner-disc subclasses, without touching the edge
 classifier, the PHB table, or the meter layer.

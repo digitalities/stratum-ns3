@@ -174,7 +174,7 @@ window** (TSW2CM, TSW3CM). Token buckets are deterministic given a packet
 trace; TSW estimators update an EWMA rate and make probabilistic decisions
 when the estimate exceeds CIR. Both families accept both colour-blind and
 colour-aware configuration in the RFC; DiffServ4NS v1 implements the
-colour-blind variant only (spec I-2.7).
+colour-blind variant only (see `specs/02-structural.md`).
 
 ### Markers
 
@@ -235,21 +235,21 @@ literature, is actually defined. RFC 2475 used the term informally; RFC
 <!-- added:2026 -->
 The 2026 ns-3 port implements a strict subset of the model above, with
 RFC-conformance-tested meters and the complete DiffServ4NS scheduler family.
-The mapping table below is indexed by §1–§4 of this chapter and cites the
-corresponding Intent specs (`specs/01-intent.md`).
+The mapping tables below are indexed by §1–§4 of this chapter; the
+corresponding capability assertions are in `specs/01-intent.md`.
 
 ### Architecture coverage
 
-| RFC 2475 concept | DiffServ4NS implementation | Spec |
-|---|---|---|
-| Edge router | `EdgeQueueDisc` (model/stratum-edge-queue-disc) | I-1 |
-| Core router | `CoreQueueDisc` (model/stratum-core-queue-disc) | I-4 |
-| BA classifier | DSCP read path in core edge disc | I-4 |
-| MF classifier | `diffserv::PolicyClassifier` (source, dest, proto, app-type) | I-1.1–I-1.4 |
-| Marking | `MarkRule` writes DSCP into IPv4 header | I-1.5 |
-| Metering | Meter class hierarchy (see [Meter coverage](#meter-coverage)) | I-2 |
-| Shaping | Not implemented (v1) | — |
-| Policing | Integrated into meter's applyPolicer step | I-2.8 |
+| RFC 2475 concept | DiffServ4NS implementation |
+|---|---|
+| Edge router | `EdgeQueueDisc` (model/stratum-edge-queue-disc) |
+| Core router | `CoreQueueDisc` (model/stratum-core-queue-disc) |
+| BA classifier | DSCP read path in core edge disc |
+| MF classifier | `diffserv::PolicyClassifier` (source, dest, proto, app-type) |
+| Marking | `MarkRule` writes DSCP into IPv4 header |
+| Metering | Meter class hierarchy (see [Meter coverage](#meter-coverage)) |
+| Shaping | Not implemented (v1) |
+| Policing | Integrated into meter's applyPolicer step |
 
 ### Meter coverage
 
@@ -271,17 +271,17 @@ The 25 deterministic vectors (5 TB + 10 srTCM + 10 trTCM) are catalogued in
 
 ### PHB coverage
 
-| PHB | DiffServ4NS mapping | Spec |
-|---|---|---|
-| EF (RFC 3246) | `PriorityScheduler` (optionally wrapped by `LlqScheduler`) | I-4.4 |
-| AF (RFC 2597) | Multi-queue scheduler + RIO per queue | I-4.5 |
-| Default (RFC 2474) | Unmarked or DSCP=0 traffic on the default queue | I-4.6 |
-| CS0–CS7 | Implicit via DSCP read-through; no dedicated queue | partial |
-| Voice-Admit (RFC 5865) | Not implemented | — |
-| LE PHB (RFC 8622) | Not implemented | — |
+| PHB | DiffServ4NS mapping |
+|---|---|
+| EF (RFC 3246) | `PriorityScheduler` (optionally wrapped by `LlqScheduler`) |
+| AF (RFC 2597) | Multi-queue scheduler + RIO per queue |
+| Default (RFC 2474) | Unmarked or DSCP=0 traffic on the default queue |
+| CS0–CS7 | Implicit via DSCP read-through; no dedicated queue (partial) |
+| Voice-Admit (RFC 5865) | Not implemented |
+| LE PHB (RFC 8622) | Not implemented |
 
 The missing pieces (Voice-Admit, LE) are straightforward to add as
-additional mark rules — the DSCP infrastructure already supports the full
+additional mark rules: the DSCP infrastructure already supports the full
 0–63 range; only the default topology wiring does not allocate a dedicated
 queue for them.
 
@@ -289,7 +289,7 @@ queue for them.
 
 To be explicit about scope:
 
-- **No colour-aware mode.** srTCM and trTCM are colour-blind only (I-2.7);
+- **No colour-aware mode.** srTCM and trTCM are colour-blind only;
   adding colour-aware is a bounded extension but deferred.
 - **No IPv6.** The DS field is read/written on IPv4 only; the ns-3 IPv6
   stack has compatible machinery and the port is architecturally ready
@@ -306,7 +306,7 @@ These are listed in `specs/01-intent.md` under "Out of scope for v1".
 
 - [The DiffServ client](II-05-diffserv-client.md) — maps the model onto the DiffServ4NS object hierarchy.
 - [Appendix A — RFC conformance vectors](appendix-A-rfc-conformance.md) — the 25 deterministic meter vectors.
-- `specs/01-intent.md` — capability assertions (I-1 through I-7) underlying §6.
+- `specs/01-intent.md` — capability assertions underlying §6.
 - RFC 2474 — DS field (1998).
 - RFC 2475 — DiffServ architecture (1998).
 - RFC 2597 — Assured Forwarding PHB group (1999).

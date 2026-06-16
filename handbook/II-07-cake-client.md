@@ -144,8 +144,8 @@ EdgeQueueDisc
 
 DRR with share-proportional quanta yields, in steady state on a
 saturated bottleneck, byte-shares matching tin weights. Idle-tin
-capacity redistributes to busy tins automatically — this is the
-**work-conserving** form that Linux `tc-cake(8)` ships by default.
+capacity redistributes to busy tins automatically; this is the
+work-conserving form that Linux `tc-cake(8)` ships by default.
 
 ### Hard rate-caps: three coexisting paths
 
@@ -170,7 +170,7 @@ selected through the `cake::Helper::ShaperMode` enum:
    a null `m_send` callback (inner discs do not have a NetDevice
    aggregate, so the callback is never set). A one-line guard in
    `TbfQueueDisc::DoDequeue` defers the pacing wake to the parent
-   qdisc when the TBF is composed as an inner disc; the guard ships
+   queue disc when the TBF is composed as an inner disc; the guard ships
    as a local ns-3 patch in the published artefact, with an upstream
    merge request queued. See [Diagnostic output](#diagnostic-output-tc--s-qdisc-show-cake-mirror).
 
@@ -182,12 +182,12 @@ relative quanta. This matches Linux `tc-cake`'s default
 work-conserving).
 
 Stacking `Helper::SetBandwidth` on a diffserv3-, diffserv4-, or
-diffserv8-composed edge yields the integrated shaped composition — the analog
+diffserv8-composed edge yields the integrated shaped composition, the analog
 of `tc-cake bandwidth N <profile>`: the aggregate virtual-clock pair is the
 only hard gate, per-tin clocks demote selection priority without capping, and
 each tin keeps its per-flow fair queueing and Cobalt AQM. Each composer
 records its profile on the edge (an aggregated marker object), and
-`SetBandwidth` derives that profile's Linux tin-rate ladder from the record —
+`SetBandwidth` derives that profile's Linux tin-rate ladder from the record,
 the analog of Linux re-deriving tin parameters from the stored `tin_mode`
 whenever any knob changes, so the caller never re-declares the profile at
 rate-set time. Without a bandwidth, the edge runs the work-conserving deficit
@@ -243,7 +243,7 @@ signature (default `false`; preserves source compatibility for
 existing positional callers).
 
 **Fidelity boundary.** The filter is a faithful port of the Linux
-`cake_ack_filter()` algorithm — candidate classification, the
+`cake_ack_filter()` algorithm: candidate classification, the
 cumulative-ACK trigger, the SACK and flag-change guards, and the
 conservative/aggressive split all follow `sch_cake.c`, verified by
 side-by-side source audit. Both IPv4 and IPv6 TCP flows are covered:
@@ -270,7 +270,7 @@ is outside the current scope. For empirical results see
 Compositionally, under host-isolation the ACK filter runs within each per-host
 bucket of the patched-mainline `FqCobaltQueueDisc`. Each bucket
 independently scans its own flow classes for redundant ACKs in
-matching 5-tuples. Cross-bucket comparison is structurally moot —
+matching 5-tuples. Cross-bucket comparison is structurally moot:
 host-isolation by construction places distinct 5-tuples into distinct
 buckets, and ACK redundancy is defined by 5-tuple identity. The
 `EnableAckFilter` and `EnableAckFilterAggressive` attributes are
@@ -298,7 +298,7 @@ tables:
 
 This is the standard CAKE deployment for residential gateways where
 voice and video classes need protection from bulk download traffic.
-Note that the AF1x codepoints are Best-Effort, not Bulk or Video —
+Note that the AF1x codepoints are Best-Effort, not Bulk or Video:
 `sch_cake` reserves Bulk for the explicit scavenger codepoints
 (LE, CS1).
 
@@ -311,7 +311,7 @@ Note that the AF1x codepoints are Best-Effort, not Bulk or Video —
 | 2 | Best-Effort | 100% | DF=0 and all others (default) |
 
 Simpler split: scavenge / latency-sensitive / best-effort. The
-Latency-Sensitive tin is deliberately narrow — only the five
+Latency-Sensitive tin is deliberately narrow: only the five
 codepoints `sch_cake` itself elevates; AF classes and CS2..CS5 ride
 Best-Effort.
 
@@ -374,8 +374,8 @@ byte-identical to the work-conserving DRR baseline.
 Tin-shaping installs a per-tin token-bucket gate inside
 `cake::TinShaperDispatcher` such that each tin's serve rate is hard-capped
 at `share × totalRate`. This matches Linux `tc-cake bandwidth N
-<profile>` — the production default for CAKE on home gateways and
-operator equipment. Idle-tin capacity does **not** redistribute to
+<profile>`, the production default for CAKE on home gateways and
+operator equipment. Idle-tin capacity does not redistribute to
 busy tins (unlike the work-conserving DRR-only mode of [The composition](#the-composition)):
 each tin runs against its own ceiling.
 
@@ -406,10 +406,10 @@ ns-2/ns-3 calibration tolerance.
 Composing LLQ-on-EF with per-tin rate-caps yields a fourth dispatcher
 mode in which the latency-sensitive tin (Voice in `diffserv4`,
 Latency-Sensitive in `diffserv3`, CS6/EF/VA in `diffserv8`) is served
-both with **strict-priority fast-path** (sub-floor jitter as in pure
-LLQ mode) **and** under a **hard ceiling** (the SP class can never
+both with strict-priority fast-path (sub-floor jitter as in pure
+LLQ mode) and under a hard ceiling (the SP class can never
 exceed its configured share). This mirrors Cisco MQC's `priority
-percent N` template — the most-deployed enterprise QoS pattern,
+percent N` template, the most-deployed enterprise QoS pattern,
 canonised in IOS LLQ documentation since 1999 and reproduced across
 Juniper, Arista, and most enterprise router vendors.
 
@@ -421,7 +421,7 @@ cake::Helper::SetAsCakeDiffserv4(edge, DataRate("10Mbps"),
 ```
 
 The composition is correct because the `Charge` step in
-`HybridLlqDispatcher::OnDequeue` runs **before** the SP early-return
+`HybridLlqDispatcher::OnDequeue` runs before the SP early-return
 branch: an SP-marked Voice slot with a configured rate cap drains its
 bucket on every dequeue, including
 the SP fast-path serves, so a saturating EF flow cannot escape the
@@ -431,7 +431,7 @@ would not hold.
 
 Use this mode for enterprise QoS replication (Cisco MQC LLQ +
 bandwidth-cap) and for modelling SLAs on EF/voice classes that demand
-both jitter protection AND a hard ceiling against EF starvation
+both jitter protection and a hard ceiling against EF starvation
 attacks. An in-suite structural test pins the Cisco MQC composition,
 paired with the cross-implementation latency calibration against
 Linux `tc-cake`.
@@ -440,62 +440,42 @@ Linux `tc-cake`.
 
 ### Implemented in this release
 
-- DRR-across-tins via `cake::TinShaperDispatcher` ✓
-- Per-tin `FqCobaltQueueDisc` with 8-way set-associative hash ✓
-- Per-flow COBALT AQM (inherited from FqCobalt) ✓
-- DSCP-to-tin maps for `diffserv3`, `diffserv4`, `diffserv8` ✓
-- Work-conserving bandwidth allocation (Linux `tc-cake` default mode) ✓
-- ACK filter (Linux `tc-cake` `ack-filter` mode) — functional via
+- DRR-across-tins via `cake::TinShaperDispatcher`- Per-tin `FqCobaltQueueDisc` with 8-way set-associative hash- Per-flow COBALT AQM (inherited from FqCobalt)- DSCP-to-tin maps for `diffserv3`, `diffserv4`, `diffserv8`- Work-conserving bandwidth allocation (Linux `tc-cake` default mode)- ACK filter (Linux `tc-cake` `ack-filter` mode) — functional via
   the `EnableAckFilter` attribute on mainline `FqCobaltQueueDisc`,
-  conservative + aggressive variants ✓
-- LLQ-on-EF mode via `HybridLlqDispatcher` ✓
-- Tin-shaping (path α) via `cake::TinTokenBucket` gate in
-  `cake::TinShaperDispatcher` ✓
-- Rate-based virtual-clock shaper (path β) via
+  conservative + aggressive variants- LLQ-on-EF mode via `HybridLlqDispatcher`- Tin-shaping (path α) via `cake::TinTokenBucket` gate in
+  `cake::TinShaperDispatcher`- Rate-based virtual-clock shaper (path β) via
   `cake::RateBasedShaperDispatcher` with per-tin and global virtual
-  clocks; per-packet `adj_len` from `cake_calc_overhead` ✓
-- Mainline `TbfQueueDisc` as per-tin inner (path γ) via the
+  clocks; per-packet `adj_len` from `cake_calc_overhead`- Mainline `TbfQueueDisc` as per-tin inner (path γ) via the
   `useInnerTbfShaping` opt-in (alias for
-  `ShaperMode::TbfInner`) ✓
-- LLQ × tin-shaping (Cisco MQC pattern) via the same gate inside
-  `HybridLlqDispatcher` ✓
-- Host isolation (Linux `tc-cake` `triple-isolate` plus the
+  `ShaperMode::TbfInner`)- LLQ × tin-shaping (Cisco MQC pattern) via the same gate inside
+  `HybridLlqDispatcher`- Host isolation (Linux `tc-cake` `triple-isolate` plus the
   named `srchost` / `dsthost` / `hosts` / `flowblind` / `flows`
   modes; `dual-srchost` / `dual-dsthost` alias their
   non-`dual` counterparts) via patched-mainline
   `FqCobaltQueueDisc` (`EnableHostIsolation=true`,
   `HostIsolationMode=Triple`, `EnableSetAssociativeHash=true`,
-  `SetWays=8`) ✓
-- **Egress DSCP wash** (Linux `tc-cake` `wash` mode) via the
-  `EdgeQueueDisc::Wash` boolean attribute ✓
-- **Per-tin `MemLimit` byte cap** (Linux `tc-cake` `memlimit
+  `SetWays=8`)- **Egress DSCP wash** (Linux `tc-cake` `wash` mode) via the
+  `EdgeQueueDisc::Wash` boolean attribute- **Per-tin `MemLimit` byte cap** (Linux `tc-cake` `memlimit
   BYTES` mode) — functional via the `MemLimit` attribute on
-  mainline `FqCobaltQueueDisc` ✓
-- **Per-packet `overhead` / `atm` / `mpu` framing** (Linux
+  mainline `FqCobaltQueueDisc`- **Per-packet `overhead` / `atm` / `mpu` framing** (Linux
   `tc-cake` link-layer framing options) via
   `cake::Helper::ConfigureLinkLayerOverhead` and the
-  `cake::RateBasedTinClock::ComputeAdjLen` helper ✓
-- **Named link-layer presets** (`cake::Helper::SetLinkLayer`) — 15
+  `cake::RateBasedTinClock::ComputeAdjLen` helper- **Named link-layer presets** (`cake::Helper::SetLinkLayer`) — 15
   Linux `tc-cake(8)` keyword presets resolved to their
-  `(overhead, framing, MPU)` tuples ✓
-- **Named RTT presets** (`cake::Helper::SetRttPreset`) — 8 Linux
+  `(overhead, framing, MPU)` tuples- **Named RTT presets** (`cake::Helper::SetRttPreset`) — 8 Linux
   `tc-cake(8)` RTT-regime keywords mapped to their `(target, interval)`
-  pairs ✓
-- **Live bulk-flow counter** (`cake::LiveBulkCounter`) — opt-in
+  pairs- **Live bulk-flow counter** (`cake::LiveBulkCounter`) — opt-in
   wrapper providing a live `bulk_flow_count` matching Linux `tc -s`
-  semantics ✓
-- **Integrated shaped composition** (Linux `tc-cake bandwidth N`
+  semantics- **Integrated shaped composition** (Linux `tc-cake bandwidth N`
   mode) via `cake::Helper::SetBandwidth` — the aggregate
   virtual-clock gate over per-tin demotion clocks, dispatched on the
   tin profile recorded at composition time
-  (`diffserv3` / `diffserv4` / `diffserv8`) ✓
-- **Autorate-ingress closed loop** (Linux `tc-cake`
+  (`diffserv3` / `diffserv4` / `diffserv8`)- **Autorate-ingress closed loop** (Linux `tc-cake`
   `autorate-ingress` mode) via `cake::Helper::SetAutorateImpl` plus
   the path-β `cake::LinuxAutorateHook` — a peak-bandwidth EWMA
   estimator, byte-exact to `sch_cake.c`'s `cake_enqueue`, that
   retargets the aggregate shaper to the inferred downstream
-  bottleneck ✓
-
+  bottleneck
 ### Named link-layer presets
 
 For common link technologies, `cake::Helper::SetLinkLayer(edge, preset)`
@@ -553,7 +533,7 @@ applies a Linux `tc-cake(8)` named regime:
 | `Interplanetary` |     50 s  |  1000 s   |
 
 `Internet` matches the RFC 8289 CoDel default and is the implicit
-substrate default — applying it is a no-op. For arbitrary RTT regimes,
+substrate default; applying it is a no-op. For arbitrary RTT regimes,
 set `Target` and `Interval` on the inner `FqCobaltQueueDisc` directly
 via `SetAttribute("Target", StringValue("..."))` (these are
 string-typed time attributes in mainline ns-3).
@@ -570,7 +550,7 @@ slot at composition time via `SetAttribute`.
 
 When the CAKE substrate sits at the edge of an administrative
 boundary, the operator may want classification to drive scheduling
-inside the qdisc but the egress packet to leave with a clean
+inside the queue disc but the egress packet to leave with a clean
 DSCP byte so downstream forwarders see CS0/Default (and their own
 classification policy applies, not ours).  Linux `tc-cake` exposes
 this as the `wash` mode.
@@ -589,9 +569,9 @@ zeros those six bits while preserving the low two ECN bits, so an
 ECT(0)/ECT(1)/CE marking from an inner AQM survives the wash and
 remains observable downstream.
 
-The attribute is orthogonal to every CAKE composition flag — it
+The attribute is orthogonal to every CAKE composition flag (it
 sits on the edge disc, not inside the dispatcher or the per-tin
-inners — and composes cleanly with any of the
+inners) and composes cleanly with any of the
 `cake::Helper::SetAsCake*` presets, with or without LLQ,
 tin-shaping, host-isolation, or ACK filtering.
 
@@ -662,7 +642,7 @@ Across-tin selection follows Linux's shaped mode: the global clock
 pair is the only hard gate, and per-tin clocks rank rather than
 block. Among backlogged tins, the highest-priority tin whose clock
 meets its schedule is served; when none meets it, the
-earliest-scheduled backlogged tin is served anyway — a lone
+earliest-scheduled backlogged tin is served anyway; a lone
 backlogged tin therefore receives the full configured bandwidth
 (work conservation), and tin rates act as priority-demotion
 thresholds, not ceilings. Tin priority is the layout's permutation
@@ -790,7 +770,7 @@ host-isolated setups) is follow-up work (see [Per-tin `memlimit`](#per-tin-memli
 
 The path-β rate-based shaper (`cake::RateBasedShaperDispatcher`) supports a
 `cake-ingress` flag. When enabled, per-tin and global clocks advance on dropped
-packets as well as forwarded ones — so the configured rate is the line
+packets as well as forwarded ones, so the configured rate is the line
 rate of incoming traffic, not the rate of forwarded traffic. Use this for
 "shape the arriving downlink" home-gateway setups.
 
@@ -819,8 +799,8 @@ bytes-per-second into a peak-bandwidth estimate. The reconfigure target is
 15/16 (≈ 93.75 %) of that estimate, throttled by a 250 ms deadband.
 
 The kernel filters the two directions asymmetrically. The peak estimate
-*attacks upward* quickly — a one-quarter weight — when a faster window
-appears, and *decays downward* slowly — a 1/256 weight — when traffic falls.
+*attacks upward* quickly (a one-quarter weight) when a faster window
+appears, and *decays downward* slowly (a 1/256 weight) when traffic falls.
 A link that suddenly offers more capacity is tracked within a second or two;
 a transient dip cannot collapse the shaped rate.
 
@@ -837,13 +817,13 @@ aggregate shaper climbs to **9.51 Mbit/s** within a fraction of a second and
 holds. When the bottleneck steps up to 20 Mbit/s, the shaper re-adapts upward
 to **19.02 Mbit/s**. Both sit a little above 15/16 of the nominal bottleneck
 (9.375 and 18.75 Mbit/s) because the measured wire length includes the 20-byte
-IPv4 header — the shaper tracks the *delivered* byte rate, header and all.
+IPv4 header: the shaper tracks the *delivered* byte rate, header and all.
 
 ![CAKE autorate-ingress convergence. The aggregate path-β shaper starts at a 2 Mbit/s bootstrap, tracks upward to 9.51 Mbit/s against a 10 Mbit/s bottleneck — just above the dashed 15/16 set-point, the small excess being the counted 20-byte IPv4 header — and re-adapts upward to 19.02 Mbit/s after the bottleneck steps to 20 Mbit/s at the two-second mark. Deterministic single-packet workload, σ = 0.](figures/cake-autorate-converge/cake-autorate-converge.svg)
 
 **Sticky downward.** The slow-decay direction is the counterpart. Seeded at
 20 Mbit/s and then offered only 5 Mbit/s, the estimate is still **11.3 Mbit/s**
-half a second later — more than twice the new offered rate — and reaches
+half a second later (more than twice the new offered rate) and reaches
 **4.69 Mbit/s** (15/16 of 5 Mbit/s) only after a full thirty seconds. The slow
 descent is what keeps a momentary lull from starving the shaper; upward
 re-adaptation completes in a second or two, downward decay takes tens of
@@ -857,7 +837,7 @@ bits-per-second conversion the dispatcher works in happens only at the seed
 input and the target output, so the estimate evolves byte-for-byte with the
 kernel on the same arrival stream.
 
-Default selector is `AutorateImpl::NoOp` — a zero-delta hook that produces
+Default selector is `AutorateImpl::NoOp`, a zero-delta hook that produces
 byte-identical wire output to the autorate-disabled state. The Linux
 implementation only attaches when both `SetAutorateImpl(Linux)` and
 `SetEnableAutorateIngress(true)` are set.

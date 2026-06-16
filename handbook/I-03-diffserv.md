@@ -53,9 +53,9 @@ edgeInner->SetScheduler(sched);
 
 **Expected range** (source: [Scenario 1 in the three-way validation chapter](III-02-three-way-validation.md) — Andreozzi 2001 Fig. 3.11 reproduction):
 
-- **EF OWD**: 0–5 ms ✓ "PQ-protected"; above 20 ms indicates PQ is not engaged
-- **EF tx%**: 100% ✓ (EF source sends at or below CIR 300 kbps)
-- **BE tx%**: 80–90% ✓ under 2 Mbps bottleneck with 20 × 100 kbps BE flows
+- **EF OWD**: 0–5 ms, "PQ-protected"; above 20 ms indicates PQ is not engaged
+- **EF tx%**: 100%, (EF source sends at or below CIR 300 kbps)
+- **BE tx%**: 80–90%, under 2 Mbps bottleneck with 20 × 100 kbps BE flows
 
 **How the numbers move when you swap `--scheduler=WFQ`**:
 
@@ -157,9 +157,9 @@ helper.ConfigQueue(edgeInner, 1, 2,  5.0,  10.0, 0.80); // AF13 aggressive
 
 **Expected range** (source: [Scenario 2 in the three-way validation chapter](III-02-three-way-validation.md) — Scenario 2 reference):
 
-- **EF (Premium) rate**: 250–330 kbps ✓ "at or below CIR 500 kbps"; above 500 kbps indicates policer misconfigured
-- **Gold (AF) rate**: 300–600 kbps ✓ TSW2CM at 500 kbps; varies with FTP burst patterns
-- **BE rate**: 400–900 kbps ✓ absorbs remaining bottleneck capacity after Premium and Gold
+- **EF (Premium) rate**: 250–330 kbps, "at or below CIR 500 kbps"; above 500 kbps indicates policer misconfigured
+- **Gold (AF) rate**: 300–600 kbps, TSW2CM at 500 kbps; varies with FTP burst patterns
+- **BE rate**: 400–900 kbps, absorbs remaining bottleneck capacity after Premium and Gold
 
 **How the numbers move when you swap `--scheduler=LLQ`**:
 
@@ -267,8 +267,8 @@ helper.AddTokenBucketPolicy(edgeDisc,  0, /*cir*/ 400000.0, /*cbs*/ 100000.0); /
 
 **Expected range** (source: rfc-2697 — sr-TCM token-bucket conformance):
 
-- **EF green fraction**: 90–100% ✓ "within CIR"; below 90% indicates CBS is too small or CIR is set too low
-- **EF red fraction**: 0–10% ✓ out-of-profile bursts; above 10% indicates persistent over-rate sending
+- **EF green fraction**: 90–100%, "within CIR"; below 90% indicates CBS is too small or CIR is set too low
+- **EF red fraction**: 0–10%, out-of-profile bursts; above 10% indicates persistent over-rate sending
 - **Yellow**: 0% (two-colour token bucket — sr-TCM produces only green/red)
 
 **How the numbers move when you raise `--cbs`** (committed burst size):
@@ -358,39 +358,37 @@ leOnOff.SetAttribute("Tos", UintegerValue(kDscpLE << 2)); // DSCP 1 -> ToS 0x04
 
 ### How to read the results
 
-**Expected range** (source: [Scenario 2 in the three-way validation chapter](III-02-three-way-validation.md) — tr-TCM / TSW2CM metering reference):
+The two-queue strict-priority edge serves BE (queue 0) ahead of LE (queue 1), so LE
+departs only with the capacity BE leaves unused. Both senders offer 800 kbps of UDP
+into the 1 Mbps bottleneck; `ServiceRate.tr` records the per-second departure rates.
+Steady-state:
 
-- **Premium (EF) departure rate**: 250–330 kbps ✓ at CIR 500 kbps; above 500 kbps indicates policer bypass
-- **Gold (AF) departure rate**: 300–600 kbps ✓ shaped by TSW2CM virtual queue; FTP bursts cause variation
-- **BE departure rate**: 400–900 kbps ✓ residual after Premium and Gold; drops under sustained Premium + Gold load
+- **BE departure rate**: ~845 kbps — BE's full 800 kbps offered load delivered (the
+  excess is the IP/UDP framing the scheduler counts). BE fits inside the 1 Mbps link,
+  so it is served in full.
+- **LE departure rate**: ~0 kbps — under continuous BE load strict priority starves
+  LE, so it yields entirely. This is the inversion that defines LE: it sits *below*
+  best-effort (RFC 8622).
 
-**How the numbers move when you raise BE rate to 1.2 Mbps**:
-
-- **Premium rate**: unchanged (TokenBucket still enforces its CIR)
-- **Gold rate**: unchanged (TSW2CM CIR unchanged)
-- **BE rate**: drops sharply as the bottleneck saturates — BE cannot compete with the policed classes
+The split is structural — strict priority over two fixed 800 kbps offered loads. The
+CLI exposes only `--simTime`, `--seed`, and `--outputDir`; to explore other operating
+points, change the offered rates in the example source.
 
 ### How to see the results
 
-After running the recipe, render the figure with:
+This recipe has no plot — the trace is the result. `diffserv-example-le` writes `output/ns3/example-le/ServiceRate.tr` with `(time, BE_kbps, LE_kbps)` columns and prints the expected split on completion. Read the trace directly: the BE column climbs to and holds ~845 kbps while the LE column decays to ~0 as strict priority takes hold.
 
 ```bash
-./scripts/plot-recipe diffserv-trtcm
+tail output/ns3/example-le/ServiceRate.tr   # columns: time  BE_kbps  LE_kbps
 ```
-
-This produces `figures/diffserv-trtcm/throughput-stacked.svg` (shown below).
-
-![Per-queue departure rates — tr-TCM metering](figures/diffserv-trtcm/throughput-stacked.svg)
-
-**Raw CSV data**: `output/ns3/example-2/PQ/ServiceRate.tr`
-
-**To compare schedulers**: run the recipe a second time with `--scheduler=LLQ`, then re-invoke `./scripts/plot-recipe diffserv-trtcm` — the stacked area chart shows how the scheduler rearranges residual bandwidth between Gold and BE.
 
 ### Try changing
 
-1. Swap `--scheduler=PQ` → `--scheduler=LLQ`, re-run the recipe, then re-invoke `./scripts/plot-recipe diffserv-trtcm`. The Premium band stays stable; the Gold and BE stacks rearrange as SFQ distributes residual bandwidth inside the LLQ.
-2. Raise BE alone to 1.2 Mbps, re-run, then re-invoke `plot-recipe`. BE's stack collapses under sustained Premium + Gold load; the total area narrows at the bottleneck.
-3. Swap the scheduler to WFQ with equal weights, re-run, then re-invoke `plot-recipe`. The LE and BE areas share the link in proportion to their weights — the strict-priority floor vanishes.
+The example exposes only `--simTime`, `--seed`, and `--outputDir`, so these are edits to `diffserv-example-le.cc`:
+
+1. Lower the BE sender below the 1 Mbps link rate. BE stops saturating the bottleneck, and LE rises to take the residual — LE is opportunistic, not blocked.
+2. Replace the strict-priority scheduler with a weighted one (WFQ at equal weights). The strict-priority floor vanishes and BE and LE share the link by weight, so LE is no longer starved.
+3. Mark a different DSCP on the LE sender (the `Tos` attribute). Only DSCP 1 maps to the LE queue, so any other mark falls back to BE.
 
 ### Deep-dive
 

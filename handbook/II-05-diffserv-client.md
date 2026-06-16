@@ -167,12 +167,12 @@ picks the first rule whose predicates all match. Match fields are:
 | Field | Semantics |
 |---|---|
 | `srcIP`, `dstIP` | IP address predicates (or `ANY_HOST`) |
-| `srcPort`, `dstPort` | L4 port predicates (added in S-13.4) |
+| `srcPort`, `dstPort` | L4 port predicates (added in the 2026 port) |
 | `srcNode`, `dstNode` | Node-address predicates (ns-2 legacy) |
 | `appType` | Application-type tag (FTP, HTTP, CBR, RealAudio, …) |
 | `protocol` | TCP/UDP discriminator |
 
-The matching rule is **first match wins**, and wildcards use the sentinel
+The matching rule is first match wins, and wildcards use the sentinel
 value `ANY_HOST` (or the port sentinel `PORT_ANY`). The 2026 ports
 clarify two points that the 2001 source left implicit:
 
@@ -205,11 +205,11 @@ indexed by drop precedence:
       shared physical buffer (tail-drop when full)
 ```
 
-A critical architectural point: **marking and dropping are separate
-stages**. The meter output DSCP decides which drop precedence the packet
+A critical architectural point: marking and dropping are separate
+stages. The meter output DSCP decides which drop precedence the packet
 carries into the queue; the WRED thresholds on that drop precedence decide
 whether the packet survives. A packet marked yellow by the meter is *not*
-dropped at the edge — it is admitted with a higher drop precedence, and
+dropped at the edge: it is admitted with a higher drop precedence, and
 drops only if congestion at a core queue's WRED instance fires. This
 decoupling is what makes the AF PHB express "reduced assurance" rather than
 "hard admission control". See `specs/02-structural.md` for the testable
@@ -219,11 +219,10 @@ assertions.
 
 <!-- added:2026 -->
 DiffServ4NS exposes four schedulers from the Generalised-Processor-Sharing
-(GPS) approximation family. In the 2026 ports the scheduler is a
-**strategy object** owned by the DS-RED queue disc, not an inheritance
-mix-in of the queue itself. This reverses the 2001 layout (where
-scheduling state lived on `dsREDQueue`) in favour of the ns-3 classful
-`QueueDisc` idiom.
+(GPS) approximation family. The scheduler is a pluggable component owned by
+the DS-RED queue disc and installed by a single call, in keeping with the
+ns-3 classful `QueueDisc` idiom; the queue disc holds no scheduling state
+of its own.
 
 The family forms a spectrum from stateless to virtual-time:
 
@@ -299,8 +298,8 @@ packet to the scheduler. The ns-3 port decomposes this across the native
 | Tcl `addPolicyEntry` | `diffserv::Helper::AddPolicy(...)` typed method |
 | `dsScheduler*` on the queue | `Ptr<Scheduler>` strategy object owned by the queue disc |
 
-This decomposition is what makes the ns-3 port testable at S-tier
-granularity — each concern lives in its own class, each with its own
+This decomposition is what makes the ns-3 port testable at fine
+granularity: each concern lives in its own class, each with its own
 isolated test suite. The price is a deeper call stack; the gain is a
 cleaner feature surface that tracks ns-3 mainline conventions. The [ns-3 module chapter](II-08-ns3-module.md) covers the ns-3 port in detail.
 <!-- /added:2026 -->

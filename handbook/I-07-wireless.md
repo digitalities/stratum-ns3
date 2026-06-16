@@ -98,7 +98,7 @@ This produces `figures/wireless-aqm-evaluation/per-flow-bar.svg` (shown below).
 3. Shrink the 802.11 framing assumption: `--l2OverheadBytes=12`. The meter's byte-accounting and the scheduler's link-rate accounting will under-count wire-time per packet — re-plot and observe how EF's policed rate shifts in the figure.
 
 > [!WARNING]
-> This recipe sets `QosSupported=true` on the AP/STA MACs because the demo expects ns-3's WMM mapper to route the stamped DSCPs to the right access category. If you set `QosSupported=false`, the four 802.11e ACs collapse to a single best-effort queue at L2 — the qdisc still works, but the AC differentiation that this recipe relies on disappears.
+> This recipe sets `QosSupported=true` on the AP/STA MACs because the demo expects ns-3's WMM mapper to route the stamped DSCPs to the right access category. If you set `QosSupported=false`, the four 802.11e ACs collapse to a single best-effort queue at L2 — the queue disc still works, but the AC differentiation that this recipe relies on disappears.
 
 ### Deep-dive
 
@@ -122,7 +122,7 @@ See also: [wireless chapter](III-05-wireless.md).
 **Prerequisites**: [Quickstart](I-02-quickstart.md) (built ns-3, ran example-1)
 
 > [!NOTE]
-> The default AP link is 802.11a at 6 Mb/s with ~25× over-saturation — the AP's qdisc is permanently backlogged, so the scheduler choice is the dominant signal. Pass `--lowLoad=true` for a ~1.2× over-saturation regime where L2 EDCA's short-timescale ordering also becomes visible in p99.
+> The default AP link is 802.11a at 6 Mb/s with ~25× over-saturation — the AP's queue disc is permanently backlogged, so the scheduler choice is the dominant signal. Pass `--lowLoad=true` for a ~1.2× over-saturation regime where L2 EDCA's short-timescale ordering also becomes visible in p99.
 
 ### Run it
 
@@ -203,8 +203,8 @@ This produces `figures/wireless-edca-vs-qdisc/per-flow-bar.svg` (shown below).
 ### Try changing
 
 1. Engage WMM at L2: `--wmmMode=hybrid`. Re-run and re-plot — compare EF p99 column against the `--wmmMode=off` default to see whether AC_VO's short-timescale ordering adds measurable benefit at ~25x overload.
-2. Run the WMM-only baseline: `--wmmMode=edca-only`. The inner qdisc collapses to a single queue — re-plot and verify that all throughput differentiation visible in the figure now comes from EDCA alone.
-3. Switch standards: `--standard=80211ax --heMcs=5 --phyRateMbps=60`. The 802.11ax PHY is fast enough that the qdisc isn't always backlogged — re-plot and compare which schedulers still produce visible per-class throughput differences in the bar chart.
+2. Run the WMM-only baseline: `--wmmMode=edca-only`. The inner queue disc collapses to a single queue — re-plot and verify that all throughput differentiation visible in the figure now comes from EDCA alone.
+3. Switch standards: `--standard=80211ax --heMcs=5 --phyRateMbps=60`. The 802.11ax PHY is fast enough that the queue disc isn't always backlogged — re-plot and compare which schedulers still produce visible per-class throughput differences in the bar chart.
 
 > [!TIP]
 > The `--singleAcSaturation` flag switches the example into a Bianchi-style aggregate-throughput sanity check (no QoS, N stations, bidirectional UDP). It's the calibration mode for the example's Wi-Fi link-layer behaviour — not a Stratum scenario, but worth running once to confirm your build matches expected PHY throughput before interpreting the per-class bars.

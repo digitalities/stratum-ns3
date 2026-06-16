@@ -3,6 +3,27 @@
 All notable changes to the Stratum ns-3 module are documented here.
 This project follows [Semantic Versioning](https://semver.org).
 
+## v1.2 — 2026-06-16
+
+This release adds a reproducible CAKE host-fairness example and regression test,
+and revises the handbook. The substrate model is unchanged from v1.1.
+
+### Reproducibility
+
+- **CAKE host-fairness, reproducible from the module.** A new example and a
+  gated regression test reproduce the CAKE host-fairness result directly from
+  the module: the per-host bandwidth share and backlog occupancy. Earlier this
+  needed external measurement scripts. The handbook's CAKE evidence chapter
+  covers the analysis in full.
+
+### Handbook
+
+- Tightened notation and terminology across all three parts.
+- Aligned the CAKE evidence chapter with the reproducible host-fairness result
+  and added a figure of the share-versus-throughput trade-off.
+- Filled deferred recipe walkthroughs and their estimated run times in the
+  introductory chapters.
+
 ## v1.1 — 2026-06-12
 
 Stratum is the standalone, actively developed home of the ns-3 QoS

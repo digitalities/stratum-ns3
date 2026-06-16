@@ -27,7 +27,7 @@ finer-grained ECN-based scheme:
 | **Classification** | DSCP field (RFC 2474) | ECN code point ECT(1) (RFC 9331) |
 | **Signalling** | WRED drops | CE-mark above a shallow target sojourn |
 | **Sender behaviour** | TCP NewReno, cwnd /= 2 per CE or drop | Scalable CC (DCTCP, TCP Prague): cwnd reacts to per-packet marks in proportion |
-| **Coupling** | n/a | DualPI2: one base probability $p'$ feeds both queues — classic drop $p_C = p'^2$, coupled L4S marking $p_{CL} = k \cdot p'$ (RFC 9332 §2.1 eq. (1)) |
+| **Coupling** | n/a | DualPI2: one base probability $p'$ feeds both queues — classic drop $p_C = p'^2$, coupled L4S marking $p_L = k \cdot p'$ (RFC 9332 §2.1 eq. (1)) |
 
 RFC 9330 motivates the mechanism, RFC 9331 defines the ECT(1) code
 point, and RFC 9332 specifies the DualPI2 coupled AQM with its P.I
@@ -41,7 +41,7 @@ unconditional preference, which a misbehaving flow can monopolise;
 L4S requires the fast-lane flow to back off on CE marks, giving the
 network a throttle that a DSCP-only scheme lacks. Second, the
 two-bit ECN field is preserved end-to-end through existing NATs and
-middleboxes that strip or rewrite DSCPs — reducing deployment
+middleboxes that strip or rewrite DSCPs, reducing deployment
 friction.
 
 ## Why L4S belongs in the substrate
@@ -93,11 +93,11 @@ Implemented from RFC 9332 §2.1 eq. (1) and Appendix A.1 Figure 6
 
 ```
 L4S mark:              p_L = min(k * p', 1)        [stepping to 1 at the target sojourn]
-Classic coupled drop:  p_C = p'^2                  [k-independent: eq. (1) is p_C = (p_CL/k)^2]
+Classic coupled drop:  p_C = p'^2                  [k-independent: eq. (1) is p_C = (p_L/k)^2]
 ```
 
 where $p'$ is the P.I base probability driven by the controller. The
-coupled draw runs **before** delegating to the inner classic AQM, so
+coupled draw runs before delegating to the inner classic AQM, so
 inner WRED early-drops remain available as a secondary signal under
 `ClassicAqm::Wred`, can be bypassed entirely under
 `ClassicAqm::CoupledOnly`, or can be replaced with FqCoDel's per-flow
@@ -146,7 +146,7 @@ tune without recompilation:
 |---|---|---|
 | `L4sQueueIdx` | 1 | Scheduler-slot index for the L4S lane (must match the scheduler's `L4sQueueIdx`) |
 | `L4sTargetSojournMs` | 1.0 | L4S step-marking threshold (Linux/GPRT default; RFC 9332 App. A.1 ramp example: 800 µs + 400 µs) |
-| `CouplingFactor` ($k$) | 2.0 | $p_{CL} = k \cdot p'$ on the L4S lane; $p_C = p'^2$ is $k$-independent (eq. (1)) |
+| `CouplingFactor` ($k$) | 2.0 | $p_L = k \cdot p'$ on the L4S lane; $p_C = p'^2$ is $k$-independent (eq. (1)) |
 | `ClassicAqm` | `Wred` | `Wred` keeps parent WRED pipeline; `CoupledOnly` bypasses WRED early-drops |
 | `L4sBandwidthBps` | 1 Gbps | Fallback bandwidth for sojourn proxy |
 | `ControllerInterval` | 16 ms | RFC 9332 $T_{update}$ (App. A.1) |
@@ -242,7 +242,7 @@ selectable modes:
 | `--disc=` | Inner classic AQM |
 |---|---|
 | `l4s-wred`           | `stratum::RedQueueDisc` (WRED + coupled drop) |
-| `l4s-coupled-only`   | `stratum::RedQueueDisc` munged to pass-through (coupled drop is sole AQM) |
+| `l4s-coupled-only`   | `stratum::RedQueueDisc` reduced to pass-through (coupled drop is sole AQM) |
 | `l4s-fqcodel-inner`  | `FqCoDelQueueDisc` (per-flow fair queueing + CoDel target) |
 | `fqcodel`            | pure mainline FqCoDel as the bottleneck disc (no DiffServ4NS) |
 
@@ -253,8 +253,8 @@ change to `l4s::QueueDisc`.
 ### Edge/core composition and meter injection
 
 Both `EdgeQueueDisc` and
-`CoreQueueDisc` now descend directly from `QueueDisc` — the
-same parent as `l4s::QueueDisc` — rather than from `stratum::RedQueueDisc`.
+`CoreQueueDisc` descend directly from `QueueDisc`, the
+same parent as `l4s::QueueDisc`.
 The existing PHB / mark-rule / policy-classifier APIs are preserved as
 forwarders on the edge disc. See the
 [Stratum architecture chapter](II-02-stratum-architecture.md) for the four-slot
@@ -283,7 +283,7 @@ organised by research priority:
 
 | Priority | Purpose | Examples |
 |---|---|---|
-| **P1 — Validation replications** | Replicate published DualPI2 results | De Schepper et al. 2022 (DualPI2 paper Figs. 5–7), Linux `sch_dualpi2` head-to-head, Veras et al. 2026 numerical comparison. (The RFC 9332 Appendix A.1 golden controller vector landed in-tree as S-L4S.13 together with ECN codepoint vectors S-L4S.14/.15.) |
+| **P1 — Validation replications** | Replicate published DualPI2 results | De Schepper et al. 2022 (DualPI2 paper Figs. 5–7), Linux `sch_dualpi2` head-to-head, Veras et al. 2026 numerical comparison. (The RFC 9332 Appendix A.1 golden controller vector landed in-tree together with ECN codepoint vectors; see `specs/02-structural.md`.) |
 | **P2 — Open research gaps** | Briscoe's five open L4S–DiffServ gaps | DualQ + AF, **DualQ + guaranteed-latency policer** (highest value; requires a latency-target meter injected via the meter-as-strategy slot), DualQ + LE scavenger, weighted L-lane, DSCP↔ECT(1) classifier-order empirics |
 | **P3 — Coexistence studies** | L4S–DiffServ coexistence | Baseline coexistence, ECN bleaching (~12% of paths, per Catchpoint 2024), local-DSCP-for-ECT(1) remap, DiffServ coexistence under load |
 | **P4 — Handbook demonstrations** | Illustrative multi-class scenarios | Heterogeneous-meter side-by-side, FqCoDel-vs-RED at scale, DOCSIS-flavour topology, three-class hierarchy |

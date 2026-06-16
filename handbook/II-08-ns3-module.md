@@ -13,7 +13,7 @@ Evaluation-Driven Development (EDD) against a three-tier spec suite
 The port ships as Stratum, the QoS substrate whose composer and three
 clients this part documents; this chapter covers how that module is
 laid out, built, and configured. Source at the repository root.
-Validated with 8 test suites covering RFC conformance vectors,
+Validated with 17 test suites covering RFC conformance vectors,
 structural assertions, and end-to-end scenario reproductions.
 
 ## Module composition
@@ -73,13 +73,13 @@ Every component was specified before being implemented:
 1. **I-tier (intent)** — `specs/01-intent.md` declares what the module *shall do*,
    derived from thesis §3.3.3 and the `dsCore.h` author header.
 2. **S-tier (structural)** — `specs/02-structural.md` derives testable per-component
-   assertions, each linked to one or more I-specs.
+   assertions, each linked to one or more intent specs.
 3. **Q-tier (quality)** — `specs/03-quality.md` defines end-to-end scenario
    acceptance gates.
 
 Each test case carries a descriptive class name (e.g.
 `SrTcmIdleAccumulationTest`) and a Doxygen `@see` line that points to its
-S-spec. Tests are written before implementation; implementation targets the
+structural spec. Tests are written before implementation; implementation targets the
 spec, not the reference code.
 
 ## Validation summary
@@ -89,7 +89,7 @@ spec, not the reference code.
 - **Scenario reproduction**: 5 schedulers × 7 packet sizes within 6 % rate
   agreement vs the ns-2.35 cross-port.
 - **TF-TANT real-network heritage**: PQ 512B EF mean OWD ~17 ms (real) vs
-  ~12.4 ms (ns-2.35) vs 14.0 ms (ns-3); ns-3 closes ~30 % of the
+  ~12.4 ms (ns-2.35) vs 14.0 ms (ns-3); ns-3 closes about a third of the
   simulation-to-hardware gap.
 - **Full-scale Scenario 2 (n=469, simTime=5000 s, numHttp=400)**: 29/36 cells
   within tolerance (caPL ≤ 2 pp, boPL ≤ 0.5 pp), mean cross-sim |ΔcaPL| 0.70 pp.
@@ -135,10 +135,10 @@ packet on a PPP link, that's `2 Mbps × 540/542 ≈ 1.99 Mbps`.
 If the scheduler reasons in IP bytes, it allocates a queue's share as
 `weight × LinkBandwidth` against the *nominal* 2 Mbps and over-promises
 by ~0.4 %. At unsaturated load this is invisible — the over-promise is
-absorbed by the slack between offered and link rate. **But at marginal
+absorbed by the slack between offered and link rate. But at marginal
 load, where the constrained flow is offered exactly its nominal share,
 0.4 % is exactly the difference between an empty queue and a saturated
-one.** The queue grows monotonically until it hits the queue-limit and
+one. The queue grows monotonically until it hits the queue-limit and
 drops every excess packet; cumulative-mean OWD trajectories rise into
 hundreds of milliseconds even though the steady-state queue depth
 should be one or two packets.
@@ -158,8 +158,8 @@ attribute on each qdisc that adds per-packet L2 overhead before
 charging tokens or quantum. Cisco MQC's `bandwidth` policy is L2 line
 rate by default (you have to opt in to L3 reasoning via
 `bandwidth percent`). BSD ALTQ and Juniper class-of-service follow the
-same pattern. **The convention in production routers is: schedulers
-charge wire bytes, not IP bytes.** RFCs (2474, 2475, 2597, 2598/3246,
+same pattern. The convention in production routers is that schedulers
+charge wire bytes, not IP bytes. RFCs (2474, 2475, 2597, 2598/3246,
 2697, 2698, 2859, 7141) are deliberately layer-agnostic, leaving the
 byte basis to implementations; every real implementation lands on
 wire bytes.
@@ -182,7 +182,7 @@ method auto-detects from the bottleneck netdev (`PointToPointNetDevice`
 have to set the attribute manually. `examples/diffserv-example-1.cc`
 defaults to auto-detect and exposes `--l2OverheadBytes` as an explicit
 override for what-if scenarios (LLC/SNAP/VLAN/FCS) or for forcing
-pure IP-byte accounting (`=0`) to reproduce pre-fix behaviour.
+pure IP-byte accounting (`=0`).
 
 ns-2.35's `SimpleLink` has zero L2 framing, so its scheduler
 implementation reasons in IP bytes and reaches the right answer
@@ -212,7 +212,7 @@ in the project's design records.
 
 ## Ns-3 mainline patches carried locally
 
-Several ns-3 mainline gaps were surfaced and patched during the reconstruction.
+Several ns-3 mainline gaps are patched locally.
 The patch stack lives under `patches/ns3/` and is auto-applied by
 `scripts/fetch-ns3.sh` against the pinned release (`--print-pin`). Patches cover TCP edge-case
 fixes, TBF inner-mode, FQ-Cobalt ACK filter and host isolation, traffic-control

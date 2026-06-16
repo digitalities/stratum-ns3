@@ -56,7 +56,7 @@ classification mechanism changes.
 
 **Diagnostic pitfall worth knowing.** ns-3's default
 `PointToPointNetDevice::TxQueue` is a 100-packet `DropTailQueue` that
-sits **below** the traffic-control layer. Under AF saturation this
+sits below the traffic-control layer. Under AF saturation this
 FIFO admits packets in order and silently defeats the TC-level
 priority scheduler, inflating EF OWD from ~8 ms (expected) to ~89 ms
 (observed before the fix). The scenarios install a 1-packet device
@@ -69,7 +69,7 @@ bottleneckP2p.SetQueue("ns3::DropTailQueue<Packet>",
 ```
 
 Remember this any time a traffic-control priority scheduler looks
-like it isn't working — the suspect is almost always the device
+like it isn't working: the suspect is almost always the device
 queue below.
 
 **Results** (10 s each mode, per-packet OWD tag-based logging):
@@ -97,12 +97,12 @@ queue below.
 places in both modes. The CDF overlay is a single curve. The
 boxplot shows identical EF medians and whiskers. Both modes give the
 EF probe high-priority access to the bottleneck; the closely-overlapping
-ECDFs are the **expected correct outcome** and confirm that the priority
+ECDFs are the expected correct outcome and confirm that the priority
 wiring is correct in both configurations. The slight AF improvement
 under L4S-on (Δ −1 ms at the median) comes from the burst-cap scheduler
 distributing classic service more evenly than strict priority.
 
-**Interpretation.** The near-identical curves are not a null result —
+**Interpretation.** The near-identical curves are not a null result:
 they confirm that ECN-based (ECT(1)) and DSCP-based classification
 achieve the same latency objective for the lightly-loaded EF probe.
 The probe (500 kbps on a 10 Mbps bottleneck) does not build a queue
@@ -136,11 +136,11 @@ bottleneck:
 
 ![S2 sub-queue occupancy](figures/N-l4s/scenario-2-queue-occupancy.png)
 
-**Framing.** S2 is a **coupling-formula verification**, not a
+**Framing.** S2 is a coupling-formula verification, not a
 throughput-equivalence claim. With non-responsive UDP CBR offering 1.5× the
 bottleneck, the classic queue's sojourn sits persistently above the 15 ms target,
 so the P.I.² controller integrates to a sustained high operating point (mean
-$p' \approx 0.75$, with clamp episodes at 1.0) — the senders cannot respond to
+$p' \approx 0.75$, with clamp episodes at 1.0): the senders cannot respond to
 marks or drops, so the controller correctly escalates. The cascade is therefore
 verified across its *entire* range, including the clamp boundaries.
 
@@ -158,7 +158,7 @@ point across the full operating range: $|p_C - p'^2| = 0$ to numerical precision
 on the controller's live region.
 *(Audit note, 2026-06-10: two earlier defects shaped this section's history. An
 earlier revision asserted the formula $p_C = (k p')^2$ under an "RFC 9332 §4.1"
-citation — an implementation misreading of eq. (1), corrected together with the
+citation: an implementation misreading of eq. (1), corrected together with the
 implementation. Separately, the original "weak-engagement regime
 ($p' \in [10^{-5}, 10^{-2}]$)" characterisation was measured while the classic
 lane sat in its constructor trap state (92 % of classic arrivals force-dropped,
@@ -250,13 +250,13 @@ by the bulk side.
 | `--mode=fifo` | `FifoQueueDisc` | 238 ms |
 
 **Verdict: PASS.** Both AQM-managed modes protect the probe to the
-same ~9 ms floor; the no-AQM FIFO inflates probe delay to 238 ms —
+same ~9 ms floor; the no-AQM FIFO inflates probe delay to 238 ms,
 a 26× gap between AQM-managed and unmanaged operation.
 
 **Narrative note.** The L4S/FqCoDel comparison shows parity at the
 AQM floor at this load: both AQMs achieve equivalent low-latency
 protection of ECT(1)-marked traffic. The 26× gap is the substantive
-demonstration — the benefit of deploying any AQM over none. The
+demonstration: the benefit of deploying any AQM over none. The
 DualPI2-specific advantage over FqCoDel would appear in a load regime
 where DualPI2's instant-marking response visibly outpaces FqCoDel's
 interval-based marking; characterizing that regime is queued for a
@@ -305,7 +305,7 @@ python3 test.py -s stratum -v -f EXTENSIVE   # full gate
 ## Higher-load characterization across five AQM compositions
 
 The [Responsive-flow coexistence](#responsive-flow-coexistence) and [Latency advantage](#latency-advantage-aqm-vs-no-aqm) scenarios each operate at a fixed, modest load
-point — two responsive bulk senders on a 10 Mbps bottleneck. At that load,
+point: two responsive bulk senders on a 10 Mbps bottleneck. At that load,
 any well-implemented AQM achieves similar probe latency. To expose the
 regime where the DualPI2 coupled-marking architecture offers a distinct
 advantage, a dedicated flow-count sweep extends the characterization to
@@ -314,7 +314,7 @@ advantage, a dedicated flow-count sweep extends the characterization to
 The bottleneck is the same 10 Mbps / 5 ms one-way propagation used in the
 earlier scenarios; the bottleneck queue disc is replaced in turn by each
 of the five AQM compositions described below. Each bulk sender is a
-`TcpDctcp` application configured to emit ECT(1) packets — the ECT(1)
+`TcpDctcp` application configured to emit ECT(1) packets: the ECT(1)
 marking routes the flow to the L4S sub-queue in DualPI2 modes and is
 accepted by mainline FqCoDel's ECN handling. A single UDP CBR probe, also
 ECT(1)-marked, carries per-packet `SendTimeTag` timestamps for
@@ -352,7 +352,7 @@ exercises the classic sub-queue non-trivially.
 ### Probe latency findings
 
 As the bulk count grows from N=2 to N=40, the three DualPI2 compositions
-converge on a probe P95 one-way delay of approximately 7.8 ms — within
+converge on a probe P95 one-way delay of approximately 7.8 ms, within
 0.01 ms of each other across all three modes at every load point. Mainline
 FqCoDel, by contrast, exhibits dramatically worse probe latency at N=40:
 
@@ -375,7 +375,7 @@ applies marking on the sojourn-driven error integral, tracks the queue
 load far more tightly and keeps the probe OWD at its target floor.
 
 The headline observation is therefore not that DualPI2 is slightly faster
-than FqCoDel — at N=2 they are within 0.01 ms of each other. It is that
+than FqCoDel: at N=2 they are within 0.01 ms of each other. It is that
 DualPI2 is the only AQM family in this comparison that maintains low probe
 latency as the number of ECT(1)-capable bulk senders scales. Mainline
 FqCoDel and the unmanaged FIFO each fail differently, but neither protects
@@ -420,7 +420,7 @@ lane.
 In every sample of that run, the DualPI2 PI controller's base probability
 (`pPrime`) stays at zero and no coupled drops fire. FqCoDel absorbs the
 classic-side load entirely through its own per-sub-flow CoDel marks before
-DualPI2 ever needs to engage. The composition is therefore **benign**: when
+DualPI2 ever needs to engage. The composition is therefore benign: when
 FqCoDel is installed as the classic inner, DualPI2 does not double-mark or
 otherwise disrupt traffic that FqCoDel is already managing. A regression
 test (`DsL4sScenarioFqCoDelClassicCompositionalSafetyTest`) encodes this
@@ -460,7 +460,7 @@ CAKE + DualPI2 composition is indistinguishable from a bare DualPI2
 inner and the GPRT reference on goodput and fairness: the CAKE
 composition achieves JFI 0.987 ± 0.010 versus stratum JFI 0.9998
 and GPRT 1.0000 at the same operating point. The per-cell mean JFI
-difference between the three paths falls within 0.01 — well inside
+difference between the three paths falls within 0.01, well inside
 this evaluation's 1.0 ± 25 % fair-throughput band. (RFC 9332 itself
 prescribes no numeric equivalence band; the 25 % figure in its
 App. A.2 is the `p_Cmax` overload threshold, a different quantity.)

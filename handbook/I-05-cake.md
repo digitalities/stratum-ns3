@@ -1,6 +1,6 @@
 # CAKE recipes
 
-CAKE (Common Applications Kept Enhanced) is the modern Linux qdisc developed by the Bufferbloat project and shipped in mainline since kernel 4.19. It composes per-tin token-bucket shaping, FQ-CoDel-derived per-flow fair queueing, ACK filtering, host-pair isolation, and DSCP-aware tin assignment — a single, integrated qdisc that does what classic stacks like HTB+SFQ+ECN-mark approximate in pieces.
+CAKE (Common Applications Kept Enhanced) is the modern Linux qdisc developed by the Bufferbloat project and shipped in mainline since kernel 4.19. It composes per-tin token-bucket shaping, FQ-CoDel-derived per-flow fair queueing, ACK filtering, host-pair isolation, and DSCP-aware tin assignment — a single, integrated queue disc that does what classic stacks like HTB+SFQ+ECN-mark approximate in pieces.
 
 The Stratum CAKE client recomposes these mechanisms into the substrate's four-slot pipeline using mainline `FqCobaltQueueDisc` as the per-tin slot inner queue, with an across-tin DRR dispatcher as the service policy. These four recipes walk through the headline use cases: substrate demo, RRUL benchmark, host-pair isolation, and TCP fairness under load.
 
@@ -66,12 +66,12 @@ onOff.SetAttribute("Tos", UintegerValue(static_cast<uint8_t>(kTins[i].dscp << 2)
 **How the numbers move when you change `--totalRateBps`**:
 
 - All four per-tin received rates scale linearly with the link rate (the TBF cap is a fraction of `totalRateBps`)
-- Jain fairness index stays stable — the DRR enforces the share ratios regardless of absolute rate
+- Jain fairness index stays stable: the DRR enforces the share ratios regardless of absolute rate
 
 **How the numbers move when you change `--flowRateBps`**:
 
 - Lowering below the tin's cap unsaturates that tin; the received rate equals the offered rate and the DRR distributes the freed capacity to other tins
-- Raising above the cap (default = 5 Mbps, all tins saturated) has no further effect — the TBF hard-caps each tin
+- Raising above the cap (default = 5 Mbps, all tins saturated) has no further effect: the TBF hard-caps each tin
 
 ### How to see the results
 
@@ -227,9 +227,9 @@ cake::Helper::SetAsCakeBestEffort(edgeDs,
 This sets `EnableHostIsolation=true` and `HostIsolationMode=Triple` on the patched-mainline `FqCobaltQueueDisc` (the `EnableHostIsolation` / `HostIsolationMode` attributes and the mode enum come from `patches/ns3/0006`; `patches/ns3/0016` adds the per-host hashing the modes consume). The same `enableHostIsolation` parameter is available on `SetAsCakeDiffserv4`, `SetAsCakeDiffserv3`, `SetAsCakeDiffserv8`, `SetAsCakePrecedence`, and `SetAsCakeAlphaTinShaped`.
 
 > [!NOTE]
-> Triple-isolate equalises by source host **or** destination host — whichever side has more active flows (`max(srcCount, dstCount)`). For the asymmetry to show, host A and host B must use **different destination hosts**: then host A's source-host count drives the divisor and its flows are scaled down against host B's single flow. If instead **all flows share one destination sink**, the destination-host count saturates uniformly across every flow, the divisor cancels, and the result reduces to plain per-flow fairness — the many-flow host keeps its per-flow share. (This is the reverse of the retired per-`{src,dst}`-pair wrapper, where a shared sink was what collapsed a host's flows into one bucket.)
+> Triple-isolate equalises by source host **or** destination host — whichever side has more active flows (`max(srcCount, dstCount)`). For the asymmetry to show, host A and host B must use **different destination hosts**: then host A's source-host count drives the divisor and its flows are scaled down against host B's single flow. If instead **all flows share one destination sink**, the destination-host count saturates uniformly across every flow, the divisor cancels, and the result reduces to plain per-flow fairness: the many-flow host keeps its per-flow share. (This is the reverse of the retired per-`{src,dst}`-pair wrapper, where a shared sink was what collapsed a host's flows into one bucket.)
 
-**Measured results**: for the measured host-fairness results — the ≤4.3 pp ns-3/Linux agreement at the shared-sink anchor, and the fidelity boundary (substantially a measurement-configuration effect, not a scheduler divergence) that appears in the asymmetric split-destination regime where isolation actually discriminates — see the [CAKE implementation chapter](III-04-cake.md#host-fairness-empirical-anchor).
+**Measured results**: see the [CAKE implementation chapter](III-04-cake.md#host-fairness-empirical-anchor) for the measured host-fairness results: the ≤4.3 pp ns-3/Linux agreement at the shared-sink anchor, and the fidelity boundary (substantially a measurement-configuration effect, not a scheduler divergence) in the asymmetric split-destination regime where isolation actually discriminates.
 
 > [!NOTE]
 > A dedicated runnable host-isolation example scenario is planned as future work.
@@ -314,7 +314,7 @@ sink.SetOutputDir(outDir);
 **How the numbers move when you change `--rtt`**:
 
 - Higher RTT lengthens the slow-start ramp at each new flow's entry
-- The 4-flow steady-state rates (~25 Mbps each) are unaffected — RTT does not change the shaper's capacity allocation
+- The 4-flow steady-state rates (~25 Mbps each) are unaffected: RTT does not change the shaper's capacity allocation
 
 ### How to see the results
 

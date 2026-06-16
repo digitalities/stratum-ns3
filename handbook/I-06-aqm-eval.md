@@ -4,11 +4,11 @@ The Stratum substrate ships with an AQM characterisation harness that sweeps the
 
 > See also: [`diffserv.md`](I-03-diffserv.md), [`cake.md`](I-05-cake.md), [`l4s.md`](I-04-l4s.md) — the AQM choice is one of the four-slot pipeline's most consequential knobs.
 
-## Recipe: Characterise the in-tree AQM catalogue in 30 seconds (ellipse diagram)
+## Recipe: Run one cell of the AQM catalogue (ellipse diagram)
 
 **You'll**: run one cell of `aqm-eval-runner` — pick any AQM in the catalogue, run a single RFC 7928 scenario against it, and read the per-flow CSV and the aggregate summary that feed the ellipse plot.
 
-**Time**: 5 minutes
+**Time**: ~1 minute
 
 **You'll learn**:
 - How the substrate's AQM evaluation runner is organised — one binary plus a registry of queue discs

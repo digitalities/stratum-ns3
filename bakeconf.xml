@@ -8,7 +8,7 @@
   the Stratum module so Bake can resolve them. Add it to Bake's contrib/
   folder, then:
 
-      ./bake.py configure -e ns-3.48 -e stratum-1.1
+      ./bake.py configure -e ns-3.48 -e stratum-1.0
       ./bake.py download
 
   Stratum depends on a small set of ns-3 mainline patches that apply against
@@ -54,11 +54,11 @@
       </build>
     </module>
 
-    <module name="stratum-1.1" type="ns-contrib" min_version="ns-3.48" max_version="ns-3.48">
+    <module name="stratum-1.0" type="ns-contrib" min_version="ns-3.48" max_version="ns-3.48">
       <source type="git">
         <attribute name="url" value="https://github.com/digitalities/stratum-ns3.git"/>
         <attribute name="module_directory" value="stratum"/>
-        <attribute name="revision" value="v1.1"/>
+        <attribute name="revision" value="v1.0"/>
       </source>
       <depends_on name="ns-3.48" optional="False"/>
       <!--

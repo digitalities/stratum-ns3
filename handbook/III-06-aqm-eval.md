@@ -417,7 +417,7 @@ ns-3 framework `--RngRun`:
 |---|---|---|
 | `--scenario` | `steady` | One of the nine catalogued names. Pass `--scenario=list` to print the catalogue and exit. Unknown values produce a one-line error with the valid choices. |
 | `--aqm` | `ns3::FqCoDelQueueDisc` | Any name registered in `AqmRegistry`: a TypeId (e.g. `ns3::FqPieQueueDisc`) or one of the substrate-client shorthands (`StratumRed`, `StratumL4sWred`, `StratumL4sCoupledOnly`, `StratumCake`). RED-variant flag dispatches (ARED, etc.) ride the registry as separate entries. Pass `--aqm=list` to print the full registry catalogue (name, family, ECN-support flag, display name) and exit. Unknown values produce a one-line error with the valid choices. |
-| `--ecn` | `default` | Optional override of the constructed qdisc's `UseEcn` attribute: `on`, `off`, or `default` (no override). Applied via `SetAttributeFailSafe` after construction; AQMs whose registry entry says `supportsEcn=false` (PfifoFast, StratumRed) emit a stderr note and fall back to default. Stratum-aware composites (StratumL4s, StratumCake) keep their built-in ECN policy and emit a composite-specific note. The summary records both `ecn_requested=` and `ecn_applied=` for traceability. |
+| `--ecn` | `default` | Optional override of the constructed queue disc's `UseEcn` attribute: `on`, `off`, or `default` (no override). Applied via `SetAttributeFailSafe` after construction; AQMs whose registry entry says `supportsEcn=false` (PfifoFast, StratumRed) emit a stderr note and fall back to default. Stratum-aware composites (StratumL4s, StratumCake) keep their built-in ECN policy and emit a composite-specific note. The summary records both `ecn_requested=` and `ecn_applied=` for traceability. |
 | `--manifest` | unset | Path to write the registry as JSON (AQM cells + scenario list) and exit immediately, without simulating. The committed copy at `scripts/aqm-eval/aqm-manifest.json` is regenerated this way; the Python plotters consume it for family / display-name / ECN-support metadata. |
 | `--simTime` | `4.0` | Seconds; the three TCP scenarios need at least 10. |
 | `--totalRateBps` | `10000000` | Bottleneck capacity (sweepable for ellipse-base sample collection on otherwise-deterministic scenarios). |
@@ -426,7 +426,7 @@ ns-3 framework `--RngRun`:
 | `--RngRun=N` | `1` | ns-3 framework flag (not in the runner's own `AddValue` set). Matters for stochastic AQMs (PIE-class); UDP-CBR cells are byte-identical across RngRuns. |
 
 Default-value caveats: `--ecn=default` is a no-op (the constructed
-qdisc's intrinsic default stands), so existing matrices reproduce
+queue disc's intrinsic default stands), so existing matrices reproduce
 byte-for-byte. `--manifest` is exit-only and never runs the
 simulation; combining it with other flags is harmless because the
 runner returns immediately after writing the file.
@@ -532,12 +532,7 @@ What it adds beyond the cluster summaries:
   coupled drop (`p_C = p'²` with `p'` riding high under
   sustained unresponsive overload) sheds classic load
   probabilistically across flows, breaking the incumbency-driven
-  late-flow disadvantage that a bare FIFO exhibits. (An earlier
-  revision of this passage reported `StratumL4sCoupledOnly` at
-  0.53 ≈ PfifoFast — a measurement from the era when the classic
-  lane sat in its constructor trap state and the coupling map
-  predated the eq. (1) correction; both defects are fixed and
-  the cell re-measured.)
+  late-flow disadvantage that a bare FIFO exhibits.
 - **StratumL4s appears as two adjacent rows** that delineate the
   trade-off between DualPI2's two classic-AQM modes. Under
   sustained UDP overload the two modes now nearly coincide
@@ -605,7 +600,7 @@ configure all four explicitly.
 | 1 | Empty PHB table | `LookupPhb` fails for every DSCP | `AddPhbEntry` per DSCP |
 | 2 | RIO_C with `thMin=thMax=0` | Force-drops every packet after the first | `SetMredMode(WRED)` |
 | 3 | `MredMode::DROP_TAIL` is a misnomer | Hard threshold check, not FIFO tail-drop | Use `WRED` for vanilla-RED equivalence |
-| 4 | Configurators silently NO-OP on uninitialised qdisc | `SetMredMode` / `SetQueueLimit` / `ConfigQueue` warn-and-return | Call `Initialize()` before configurators |
+| 4 | Configurators silently NO-OP on uninitialised queue disc | `SetMredMode` / `SetQueueLimit` / `ConfigQueue` warn-and-return | Call `Initialize()` before configurators |
 
 Severity: **user-facing-API regression**. Status: codified as the
 canonical factory pattern in `aqm-eval-runner.cc` and gated by the
@@ -616,9 +611,7 @@ spec-tier suite (S-aqm-stratumred-factory-four-step in
 
 Under `tcp-friendly` (RFC 7928 §5.1.1) FqPie locks into a bistable
 bandwidth split between two simultaneously-started TCP NewReno flows.
-The original morning-of-2026-04-28 framing ("RFC 8033 §5.1
-violation; upstream MR candidate") was wrong on three counts and
-withdrawn the same evening. The corrected verdict:
+It is an RNG-seed artefact, not an RFC 8033 §5.1 violation:
 
 **RFC 8033 §5.1 is "ECN Support", not FQ-PIE.** The "shared
 drop-prob calculator + per-queue scaling" passage lives in §6
@@ -669,8 +662,8 @@ finding, not a bug.
 ### A3-StratumCake — `StratumCake` tcp-friendly low-flow-count hash-FQ artefact
 
 Under `tcp-friendly` StratumCake yields Jain 0.87 vs FqCoDel/FqCobalt
-1.00. Subagent investigation 2026-04-28 found five converging
-evidence pieces: StratumCake matches mainline FqCobalt to four decimal
+1.00. Five converging signals confirm a hash-collision artefact:
+StratumCake matches mainline FqCobalt to four decimal
 places on every UDP scenario; divergence appears only at N=2-3
 reactive TCP and shrinks monotonically with flow count
 (N=4: gap 0; N=32 Q-15.3: Jain ≥ 0.95).
@@ -830,20 +823,17 @@ Raw per-cell artefacts live under `output/aqm-eval/rtt-sweep/`
 | **Refresh the JSON manifest** | After adding a cell, regenerate the committed manifest so the Python plotters see it: `./ns3 run "aqm-eval-runner --manifest=$(git rev-parse --show-toplevel)/scripts/aqm-eval/aqm-manifest.json"`. |
 | **Add Python visualisation metadata** | The plotters keep editorial choices (palette, sort order, short labels) in `scripts/aqm-eval/{ellipse-plot,heatmap}.py`; family map and marker shape come from the manifest via `aqm_manifest.py`. Append a colour entry to `AQM_COLORS`, an order entry to `AQM_ORDER` / `AQM_ROWS`, and (optionally) a short label to `AQM_SHORT_LABELS`. |
 | **Sweep a deployment parameter** | UDP-CBR + ConstantRandomVariable on/off times produces byte-identical output across `--RngRun`. Use `--totalRateBps` (or other deployment knobs) to generate ellipse-base samples; only TCP and PIE-class AQMs respond to RngRun changes. |
-| **Toggle ECN for an A/B comparison** | `--ecn=on` / `--ecn=off` overrides the qdisc's `UseEcn` attribute when present; the summary records `ecn_requested=` and `ecn_applied=` so post-hoc analysis can filter. The 117-cell main matrix is run with `--ecn=default` (no override); A/B sweeps belong in a side directory like `output/aqm-eval/ecn-pair/`. |
+| **Toggle ECN for an A/B comparison** | `--ecn=on` / `--ecn=off` overrides the queue disc's `UseEcn` attribute when present; the summary records `ecn_requested=` and `ecn_applied=` so post-hoc analysis can filter. The 117-cell main matrix is run with `--ecn=default` (no override); A/B sweeps belong in a side directory like `output/aqm-eval/ecn-pair/`. |
 | **Switch measurement plane** | The runner emits both FlowMonitor + tag-aware bytes and `PacketSink::Rx` side-channel; `cross_plane_delta_ratio` in the summary should stay within ~3 % (IP+TCP header overhead). Larger deltas indicate a measurement bug. |
 
 ### Registry pattern and the GSoC 2025 alignment
 
-The harness's AQM dispatch went through one consolidation pass on
-2026-05-02. The earlier shape — four hard-coded sites in
-`aqm-eval-runner.cc` (a string list `KnownAqms()`, a validator
-`IsKnownAqm()`, a file-tag sanitiser `AqmFileTag()`, and a big
-factory `MakeAqm()` switch) plus parallel string maps in two Python
-plotters — collapses into a single `AqmRegistry` table living in
-`model/stratum-aqm-registry.{h,cc}`. Each entry carries dispatch
-name, file tag, display name, family, ECN-support flag, and the
-factory closure. Adding a cell is one entry; the catalogue listing
+The harness's AQM dispatch is a single `AqmRegistry` table in
+`model/stratum-aqm-registry.{h,cc}`, rather than the hard-coded name
+list, validator, file-tag sanitiser, and factory switch a hand-rolled
+dispatch would scatter across the runner and the Python plotters. Each
+entry carries dispatch name, file tag, display name, family,
+ECN-support flag, and the factory closure. Adding a cell is one entry; the catalogue listing
 (`--aqm=list`), the friendly unknown-AQM error, the file-tag derived
 from `fileTag` rather than reparsed from the dispatch string, and the
 JSON manifest export all read from the same table.
@@ -867,7 +857,7 @@ AQMs). Both run the same RFC 7928 scenarios on the same dumbbell;
 swapping registry entries between the two would be a small day's
 work if the shapes converge further.
 
-## What stays out of this version
+## What stays out of v1.0
 
 Deferred to future work:
 
@@ -877,8 +867,8 @@ Deferred to future work:
   the RNG-bistable claim — argument is structural, no Linux testbed
   result in the artefact.
 
-Four earlier deferrals closed in June 2026: the runner-correctness
-regression gates now live in the spec-tier suite
+Four capabilities once deferred are now in place: the runner-correctness
+regression gates live in the spec-tier suite
 (S-aqm-runner-goodput-window-full-simtime, S-aqm-runner-udp-cbr-rate-band,
 S-aqm-stratumred-factory-four-step in `specs/02-structural.md`); the
 `EvalApp` source/sink lifecycle wrapper landed in `aqm-eval-runner.cc`
@@ -890,7 +880,7 @@ from `examples/` (its composites live on as matrix cells); and the
 
 ## Cross-references
 
-- Source files for the registry pattern (added 2026-05-02):
+- Source files for the registry pattern:
   `model/stratum-aqm-registry.{h,cc}` — the singleton table
   and factory closures; `scripts/aqm-eval/aqm_manifest.py` — the
   Python loader; `scripts/aqm-eval/aqm-manifest.json` — the
@@ -898,7 +888,7 @@ from `examples/` (its composites live on as matrix cells); and the
 - Paper: `paper/diffserv4ns-substrate.tex` §5.4 with figure
   `aqm-envelope.pdf`; §10 records the upstream-MR list. The §5.4
   TCP-default footnote (NewReno-only baseline, no CUBIC/pacing)
-  was added 2026-05-02 to forestall reviewer drift against
+  forestalls reviewer drift against
   CUBIC-default ns-3 ≥ 3.41 evaluations.
 - Underlying paper: Deepak, Shravya & Tahiliani 2017
   (DOI 10.1145/3067665.3067674).

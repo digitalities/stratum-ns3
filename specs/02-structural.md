@@ -335,6 +335,14 @@ Aggregated across all `f` in `[0, inner->GetNQueueDiscClasses())`, the totals sh
 
 **S-17.67** [↪ I-16] An EXTENSIVE-tier fixture (`TestCake_AutorateDownwardAdaptation`) shall seed the peak estimate above the offered rate (20 Mbit/s) and feed a lower single-packet stream (5 Mbit/s) with the natural-burstiness jitter, driven directly through `OnEnqueue(bytes, time)`. Because observed windows fall below the running average, the peak EWMA decays with shift 8 (α = 1/256, `sch_cake.c:1906`) — the deliberate slow direction that keeps a transient dip from collapsing the shaped rate. The reconfigure target shall therefore remain above 8 Mbit/s after a 0.5 s horizon (decay barely begun) and settle into a loose band of 4–6 Mbit/s (around 5 Mbit/s · 15/16 = 4.6875 Mbit/s) only over a 30 s horizon. This is a characterization with a loose band, not a tight gate; the fast upward direction is gated by S-17.63 / S-17.64.
 
+### S-17.68: Bottleneck rate-jitter drives the host-isolation share to a host-fair floor
+
+**S-17.68** [↪ I-7.2] An EXTENSIVE-tier ns-3 fixture in `src/ns-3/test/diffserv-cake-host-iso-jitter-floor-test.cc`, paired with the version-controlled `cake-host-iso-jitter-floor` example, shall drive the (4, 1) split-destination CUBIC host-isolation scenario of S-17.55 (100 Mbit/s bottleneck, 20 ms one-way delay, 4 MB socket buffers above the path bandwidth-delay product, MSS 536, `cake::Helper::SetAsCakeDiffserv4` with `enableTinShaping=true` and `enableHostIsolation=true`) under a shared bottleneck rate-jitter applied to **both** bottleneck directions — the forward (data) and reverse (acknowledgement) devices — redrawing the link rate as `nominal · (1 + U[−pct, +pct])` every `jitterPeriodMs`, floored at `0.05 · nominal` so the link never stalls, mean rate preserved. With `jitterPct = 0` the many-flow-host share shall fall in `[0.625, 0.665]` (the S-17.55 baseline, 0.6466). With `jitterPct = 0.5` at a 0.5 ms period over a single `RngRun=1` replica, `share_A` shall fall in `[0.502, 0.542]` (measured 0.5218), below the deterministic baseline and bracketing the matched-Linux offload-off value (0.533), at ≈ 98 % of the deterministic throughput. Over a seed ensemble the jitter share is ≈ 0.55 ± 0.02; 0.522 is the `RngRun=1` value, the distribution floor. The jitter is a measurement device, not a CAKE behaviour: it stands in for the hardware interrupt and softirq dispatch timing a deterministic event schedule lacks, and the `jitterPct = 0` oracle is byte-identical to S-17.55.
+
+### S-17.69: Per-host backlog occupancy is far less asymmetric than the byte-share
+
+**S-17.69** [↪ I-7.2] Under the same fixture's deterministic run, per-host backlog occupancy — the fraction of time each host has at least one packet queued at the bottleneck, sampled at 1 kHz from the root queue disc's `Enqueue` and `Dequeue` trace sources (segmentation offload off, so enqueue and dequeue are one-to-one) — shall show both hosts backlogged a substantial fraction (each > 0.30) with an occupancy ratio (host A / host B) below 1.30 (measured 1.18). The occupancy ratio is far below the byte-share ratio (0.647 / 0.353 ≈ 1.83), so the deterministic share excess is a within-contention allocation effect rather than a per-host occupancy asymmetry. This is the simulator-side cross-check of the matched-Linux measurement, whose per-host occupancy ratio is ≈ 1.00 (97.5 % / 97.5 %). The conclusion is robust to the occupancy definition: a packets-present metric (this fixture) reads mildly asymmetric (1.18) and an active-set metric reads near-symmetric (1.02), both far below the share ratio.
+
 ### Retired host-isolation assertions
 
 The following §S-17 slots asserted behaviour of the `DsHostIsolatedFqCobalt` host-isolation wrapper, since removed. The wrapper's nested per-host outer-DRR over inner FQ buckets is superseded by native host isolation on mainline `FqCobaltQueueDisc` (per-flow DRR + reciprocal-divide host-load quantum modulation; `patches/ns3/0006` + `patches/ns3/0016`). The numbers are reserved, not reassigned.
@@ -346,7 +354,7 @@ The following §S-17 slots asserted behaviour of the `DsHostIsolatedFqCobalt` ho
 - **S-17.48** — `GetPerHostStats` → `DsPerHostStats` accessor. Wrapper-only; retired with the class.
 - **S-17.50** — `Flowblind` inner-is-`CobaltQueueDisc` single-bucket contract. Wrapper-specific; mainline `Flowblind` disables host tracking on the single `FqCobaltQueueDisc` (no nested inner).
 
-Mainline mode behaviour and the five-value `HostIsolationMode` round-trip are exercised by the `fq-cobalt-queue-disc` test suite; end-to-end host-fairness is guarded by `diffserv-cake-host-fairness-smoke-test.cc` (S-17.55) and `diffserv-cake-host-iso-phase-1-test-suite.cc`.
+Mainline mode behaviour and the five-value `HostIsolationMode` round-trip are exercised by the `fq-cobalt-queue-disc` test suite; end-to-end host-fairness is guarded by `diffserv-cake-host-fairness-smoke-test.cc` (S-17.55), `diffserv-cake-host-iso-jitter-floor-test.cc` (S-17.68 / S-17.69), and `diffserv-cake-host-iso-phase-1-test-suite.cc`.
 
 ## S-flent-sink-host-column-emitted
 
@@ -686,10 +694,14 @@ Under asymmetric TCP offered load where one host runs N_A flows and another
 runs N_B < N_A flows to a separate destination (identical RTT and TCP variant)
 through one besteffort tin on mainline `FqCobaltQueueDisc` with
 `EnableHostIsolation=true` and `HostIsolationMode=Triple`, the higher-flow
-host's byte-share over the steady-state window converges in pure ns-3 to
-`[0.70, 0.80]` — partial host equalization, between the per-flow share
-`N_A/(N_A+N_B)` (0.80 at 4-vs-1) and full per-host fairness (0.50). The
-measured 4-vs-1 CUBIC value is 0.76; S-17.55 gates `[0.74, 0.78]`.
+host's byte-share over the steady-state window converges in pure ns-3 to a
+config-dependent value between the per-flow share `N_A/(N_A+N_B)` (0.80 at
+4-vs-1) and full per-host fairness (0.50) — partial host equalization. With
+socket buffers sized above the path bandwidth-delay product, the measured
+4-vs-1 CUBIC value is 0.6466 (MSS 536); S-17.55 gates `[0.625, 0.665]`. At the
+ns-3 default 128 KB buffers the lone host's flow is receive-window-limited and
+the share inflates to ~0.76 — a socket-buffer measurement artefact, not a
+host-isolation property.
 
 The host-isolation **mechanism** is Linux-faithful. Each flow's DRR quantum is
 divided by `host_load = max(srchost_bulk_flow_count, dsthost_bulk_flow_count)`

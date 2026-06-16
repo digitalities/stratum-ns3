@@ -10,8 +10,8 @@ authors:
     email: sergio.andreozzi@gmail.com
     orcid: "https://orcid.org/0000-0001-5567-4000"
     affiliation: "Independent Researcher"
-version: "v1.1"
-date-released: "2026-06-12"
+version: "v1.2"
+date-released: "2026-06-16"
 license: GPL-2.0-only
 repository-code: "https://github.com/digitalities/stratum-ns3"
 url: "https://github.com/digitalities/stratum-ns3"
@@ -55,6 +55,26 @@ keywords:
   - "research software"
   - reproducibility
 references:
+  - type: conference-paper
+    title: "Differentiated Services: An Experimental vs. Simulated Case Study"
+    authors:
+      - family-names: Andreozzi
+        given-names: Sergio
+        orcid: "https://orcid.org/0000-0001-5567-4000"
+    year: 2002
+    collection-title: "Proceedings of the Seventh IEEE Symposium on Computers and Communications (ISCC 2002)"
+    location:
+      name: "Taormina, Italy"
+    start: 383
+    end: 390
+    publisher:
+      name: "IEEE"
+    doi: "10.1109/ISCC.2002.1021705"
+    identifiers:
+      - type: doi
+        value: "10.5281/zenodo.19665017"
+        description: "Open-access author copy (also at arXiv:2604.20049)"
+    notes: "Peer-reviewed publication of the original DiffServ4NS results, validated against the Ferrari measurements."
   - type: thesis
     title: "DiffServ simulations using the Network Simulator: requirements, issues and solutions"
     authors:
@@ -66,4 +86,4 @@ references:
       name: "Lappeenranta University of Technology / Universita degli Studi di Pisa"
     thesis-type: "Master's thesis"
     doi: "10.5281/zenodo.19662899"
-    notes: "Authoritative design specification of the original DiffServ4NS module (Chapter 3.3.3, Figure 3.11)."
+    notes: "Full design specification of the original DiffServ4NS module (Chapter 3.3.3, Figure 3.11) that the DiffServ client reconstructs."

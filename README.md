@@ -125,7 +125,7 @@ above. (Bake itself must run under Python 3.11–3.13 with the `distro` and
 then:
 
 ```bash
-./bake.py configure -e ns-3.48 -e stratum-1.1
+./bake.py configure -e ns-3.48 -e stratum-1.0
 ./bake.py download
 ```
 

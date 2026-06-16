@@ -10,13 +10,13 @@ last-updated: 2026-06-07
 Part I is a task-oriented guide to Stratum. Each chapter is a short,
 self-contained set of recipes for one client or capability. The goal is a
 working simulation, not a complete explanation of how the substrate works
-internally — Part II covers the design.
+internally; Part II covers the design.
 
 ## Where to start
 
 Read [the quickstart](I-02-quickstart.md) first. It builds the module,
 runs a DiffServ scenario, previews CAKE and L4S, and modifies
-an example — all in about 15 minutes. Every other chapter in Part I
+an example, all in about 15 minutes. Every other chapter in Part I
 assumes a built and tested tree.
 
 ## Chapter map
@@ -36,7 +36,7 @@ assumes a built and tested tree.
 
 ## Conventions
 
-All commands in Part I run from the **ns-3 root directory** (`ns3/ns-3-dev/`),
+All commands in Part I run from the ns-3 root directory (`ns3/ns-3-dev/`),
 not from inside `src/ns-3/`. Build with:
 
 ```
@@ -46,5 +46,5 @@ python3 test.py -s stratum -v
 
 CLI flags shown in the examples catalogue (I-08) are the canonical reference
 for each example's command-line options. When a recipe quotes an expected
-output range, the source of that range is noted inline — either a cited
+output range, the source of that range is noted inline: either a cited
 reference or the chapter that documents the validation.

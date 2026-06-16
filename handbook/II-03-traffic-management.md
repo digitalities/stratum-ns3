@@ -23,7 +23,7 @@ plus TCP was sufficient while every flow had the same service expectation.
 
 That assumption broke in the early 1990s. Packet voice (RTP, RFC 1889, 1996)
 and later packet video introduced flows whose value collapses under even
-modest loss, delay, or jitter — and which, being UDP-based, do not react to
+modest loss, delay, or jitter, and which, being UDP-based, do not react to
 congestion signals at all. A voice call and a bulk FTP transfer sharing the
 same FIFO queue at a congested link receive the same treatment, but their
 service requirements are incompatible: TCP tolerates seconds of queueing
@@ -103,7 +103,7 @@ damping the global synchronisation that tail-drop induces.
 
 RED is a *single*-class algorithm. Weighted RED (WRED) extends it to
 multiple drop-precedence levels by maintaining per-precedence (min,
-max, p_max) triples against a shared average queue length — so
+max, p_max) triples against a shared average queue length, so
 higher-precedence packets are dropped less aggressively than
 lower-precedence ones from the same physical queue. WRED is the AQM
 algorithm DiffServ4NS uses: the `dsred` queue in the 2001 module
@@ -147,7 +147,7 @@ written by Sergio Andreozzi in 2001 against the then-current
 ns-2.1b8 / ns-2.29 releases and the IETF DiffServ RFCs of 1997–2001. The
 module implements the full DiffServ edge/core split: edge routers
 classify on source, destination, transport protocol, and application
-type (see `specs/01-intent.md` §I-1), assign a DSCP, and meter flows
+type (see `specs/01-intent.md`), assign a DSCP, and meter flows
 through one of six metering algorithms (srTCM RFC 2697, trTCM RFC 2698,
 TSW2CM/TSW3CM RFC 2859, Token Bucket, and the FW per-flow policer).
 Core routers forward on DSCP alone, feeding nine configurable per-hop
@@ -159,7 +159,7 @@ the moment the DiffServ architecture had crystallised but before the
 operational community had accumulated the decade of field experience
 that would refine it. It took the RFCs at face value, implemented them
 faithfully, and instrumented the result with per-DSCP monitoring
-(`specs/01-intent.md` §I-5) rich enough to answer the kinds of
+(`specs/01-intent.md`) rich enough to answer the kinds of
 research questions that motivated the thesis: how do the different
 schedulers behave under mixed-class load; how does PHB-level
 differentiation translate into flow-level quality; how do the metering
@@ -206,11 +206,11 @@ latency, and catalysed the shift from RED to CoDel/PIE and from flat
 queues to FQ-CoDel in edge hardware. Modern cloud and data-centre
 workloads — microservice RPC, container orchestration heartbeats,
 storage replication — are also driving renewed interest in
-low-latency AQM, but the pivot has been toward sojourn-time-based
+low-latency AQM, but the shift has been toward sojourn-time-based
 algorithms rather than back to WRED. DiffServ4NS's use of RIO/WRED is
 historically faithful; it is also, by 2026 standards, dated. The
 module is therefore best understood as a snapshot of how IP QoS was
-conceived in 2001 — the moment DiffServ had won the architectural
+conceived in 2001: the moment DiffServ had won the architectural
 argument but before the AQM layer caught up with what traffic was
 actually going to look like on the other side of the broadband
 revolution.

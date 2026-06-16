@@ -165,6 +165,17 @@ build_lib_example(
 )
 
 build_lib_example(
+  NAME cake-host-iso-jitter-floor
+  SOURCE_FILES cake-host-iso-jitter-floor.cc
+  LIBRARIES_TO_LINK
+    ${libpoint-to-point}
+    ${libinternet}
+    ${libapplications}
+    ${libtraffic-control}
+    ${libstratum}
+)
+
+build_lib_example(
   NAME cake-rrul
   SOURCE_FILES cake-rrul.cc
   LIBRARIES_TO_LINK

@@ -5,9 +5,9 @@ status: filled
 last-updated: 2026-06-07
 ---
 
-# Part II: Architecture & design — introduction
+# Part II: Architecture and design — introduction
 
-Part II explains the substrate from the top down. The chapters cover the
+Part II explains the substrate. The chapters cover the
 traffic-management concepts the design rests on, the four-slot composer
 that ties the three clients together, and the layout of the ns-3 module.
 

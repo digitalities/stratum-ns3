@@ -36,7 +36,7 @@ The substrate ships runnable examples under [`examples/`](../examples/). Each on
 
 ### `gold-policer-replay.cc`
 
-**Purpose**: Policer equivalence calibration harness. Replays a byte-identical 1.06M-packet ingress trace through both the ns-3 DiffServ4NS TSW2CM policer and the ns-2.35 reference implementation; a match within a narrow tolerance demonstrates the two implementations are equivalent for byte-identical input, so any cross-simulator throughput residual is attributable to the traffic generator, not to the metering logic.
+**Purpose**: Policer equivalence calibration harness. Replays a byte-identical 1.06M-packet ingress trace through both the Stratum TSW2CM policer and the ns-2.35 reference implementation; a match within a narrow tolerance demonstrates the two implementations are equivalent for byte-identical input, so any cross-simulator throughput residual is attributable to the traffic generator, not to the metering logic.
 
 **Client**: DiffServ (diagnostic / calibration). **Recipe**: not v1; specialist tool.
 
@@ -56,19 +56,19 @@ The substrate ships runnable examples under [`examples/`](../examples/). Each on
 
 ### `diffserv-l4s-fqcodel-comparison.cc`
 
-**Purpose**: Compare DiffServ4NS L4S behaviour against a pure ns-3 mainline `FqCoDelQueueDisc` baseline on the same bottleneck scenario. Disc choice selectable via `--disc={l4s-wred, l4s-coupled-only, l4s-fqcodel-inner, fqcodel}`.
+**Purpose**: Compare Stratum L4S behaviour against a pure ns-3 mainline `FqCoDelQueueDisc` baseline on the same bottleneck scenario. Disc choice selectable via `--disc={l4s-wred, l4s-coupled-only, l4s-fqcodel-inner, fqcodel}`.
 
 **Client**: L4S. **Recipe**: [l4s.md → "L4S DualPI2 vs FqCoDel head-to-head"](I-04-l4s.md).
 
 ### `diffserv-l4s-s1-advantage.cc`
 
-**Purpose**: L4S latency-advantage demonstration. A UDP CBR probe (ECT(1), ~500 kbps) competes with a TcpCubic bulk flow on a 10 Mbps bottleneck under three qdisc modes — `l4s` (DualPI2), `fqcodel` (FqCoDel, no L4S coupling), and `fifo` (drop-tail floor) — selected via `--mode`. The probe one-way delay across modes quantifies the ECT(1) latency advantage. Companion to `diffserv-l4s-s1-latency.cc` (which uses a DSCP-marked probe rather than ECT(1)).
+**Purpose**: L4S latency-advantage demonstration. A UDP CBR probe (ECT(1), ~500 kbps) competes with a TcpCubic bulk flow on a 10 Mbps bottleneck under three queue-disc modes — `l4s` (DualPI2), `fqcodel` (FqCoDel, no L4S coupling), and `fifo` (drop-tail floor) — selected via `--mode`. The probe one-way delay across modes quantifies the ECT(1) latency advantage. Companion to `diffserv-l4s-s1-latency.cc` (which uses a DSCP-marked probe rather than ECT(1)).
 
 **Client**: L4S. **Recipe**: [l4s.md → "ECT(1) vs DSCP — same latency, different mechanism"](I-04-l4s.md).
 
 ### `diffserv-l4s-s2-coexistence.cc`
 
-**Purpose**: L4S / classic coexistence check — demonstrates that responsive L4S and classic flows under the RFC 9332 coupling formula converge to throughput equivalence within ~25 %. Complements `diffserv-l4s-s2-equivalence.cc` (coupling-formula sanity check); this scenario runs a longer steady-state window and surfaces the coexistence regime rather than just the peak coupling response.
+**Purpose**: L4S / classic coexistence check — demonstrates that responsive L4S and classic flows coexist under the RFC 9332 coupling formula, with the coupling driving both lanes rather than starving either. Because ns-3 mainline lacks an ECT(1)-sending Scalable-CC TCP stack, this is a coexistence check, not a throughput-equivalence claim. Complements `diffserv-l4s-s2-equivalence.cc` (coupling-formula sanity check); this scenario runs a longer steady-state window and surfaces the coexistence regime rather than just the peak coupling response.
 
 **Client**: L4S. **Recipe**: [l4s.md → "DualPI2 coupling-formula sanity check"](I-04-l4s.md).
 
@@ -80,7 +80,7 @@ The substrate ships runnable examples under [`examples/`](../examples/). Each on
 
 ### `diffserv-l4s-dualpi2-gprt-parity.cc`
 
-**Purpose**: Cross-validation of two RFC 9332 DualPI2 implementations under identical conditions: the in-tree `l4s::QueueDisc` and the upstream-shaped `ns3::DualPi2QueueDisc` from the Veras et al. reference port. Pass `--rootQdisc=l4s`, `--rootQdisc=cake`, or `--rootQdisc=gprt` to select the bottleneck qdisc; all other parameters (topology, TCP variants, access links) are held constant to permit a parity comparison of per-flow goodput and Jain's Fairness Index.
+**Purpose**: Cross-validation of two RFC 9332 DualPI2 implementations under identical conditions: the in-tree `l4s::QueueDisc` and the upstream-shaped `ns3::DualPi2QueueDisc` from the Veras et al. reference port. Pass `--rootQdisc=l4s`, `--rootQdisc=cake`, or `--rootQdisc=gprt` to select the bottleneck queue disc; all other parameters (topology, TCP variants, access links) are held constant to permit a parity comparison of per-flow goodput and Jain's Fairness Index.
 
 **Client**: L4S (cross-validation). **Recipe**: not v1; specialist tool.
 
@@ -126,19 +126,19 @@ The substrate ships runnable examples under [`examples/`](../examples/). Each on
 
 ### `diffserv-wifi-demo.cc`
 
-**Purpose**: Wireless demo — DiffServ4NS edge disc attached to a Wi-Fi 802.11ax AP's downlink NetDevice. Demonstrates the substrate is wireless-agnostic (the queue disc plugs into any `TrafficControlLayer`) and exercises the DSCP → 802.11e UP mapping that ns-3 mainline provides via `qos-utils.cc::QosUtilsMapTidToAc` (RFC 8325-shaped).
+**Purpose**: Wireless demo — Stratum edge queue disc attached to a Wi-Fi 802.11ax AP's downlink NetDevice. Demonstrates the substrate is wireless-agnostic (the queue disc plugs into any `TrafficControlLayer`) and exercises the DSCP → 802.11e UP mapping that ns-3 mainline provides via `qos-utils.cc::QosUtilsMapTidToAc` (RFC 8325-shaped).
 
 **Client**: Wireless. **Recipe**: [wireless.md → "Stratum edge on an 802.11ax AP downlink"](I-07-wireless.md).
 
 ### `diffserv-wifi-scheduler-comparison.cc`
 
-**Purpose**: Eight DiffServ4NS schedulers (PQ, RR, WRR, WIRR, SCFQ, WFQ, WF2Q+, LLQ) on the AP downlink over 802.11a 6 Mb/s, plus a single-AC saturation mode for Bianchi 2000 / Magrin et al. WNS3 2021 Figure 3 calibration. Demonstrates that scheduler choice composes with `WifiNetDevice` the same way it composes with `PointToPointNetDevice`.
+**Purpose**: Eight Stratum schedulers (PQ, RR, WRR, WIRR, SCFQ, WFQ, WF2Q+, LLQ) on the AP downlink over 802.11a 6 Mb/s, plus a single-AC saturation mode for Bianchi 2000 / Magrin et al. WNS3 2021 Figure 3 calibration. Demonstrates that scheduler choice composes with `WifiNetDevice` the same way it composes with `PointToPointNetDevice`.
 
 **Client**: Wireless. **Recipe**: [wireless.md → "Eight schedulers compared on a Wi-Fi AP"](I-07-wireless.md).
 
 ### `diffserv-hybrid-wired-wireless.cc`
 
-**Purpose**: Hybrid wired/wireless example — a wired backbone feeds an 802.11ax AP that acts as the DS edge router. The AP classifies traffic by destination STA on its downlink, marks DSCP, and runs an LLQ scheduler (PQ + WFQ hybrid) on the qdisc. Classification and marking happen at the AP, NOT at the wired servers — the realistic deployment shape for residential / SOHO QoS-on-Wi-Fi.
+**Purpose**: Hybrid wired/wireless example — a wired backbone feeds an 802.11ax AP that acts as the DS edge router. The AP classifies traffic by destination STA on its downlink, marks DSCP, and runs an LLQ scheduler (PQ + WFQ hybrid) on the queue disc. Classification and marking happen at the AP, NOT at the wired servers — the realistic deployment shape for residential / SOHO QoS-on-Wi-Fi.
 
 **Client**: Wireless (advanced / realistic deployment). **Recipe**: not v1; the simpler `diffserv-wifi-demo.cc` covers the substrate-agnostic principle.
 

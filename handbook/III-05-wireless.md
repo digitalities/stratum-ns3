@@ -26,7 +26,7 @@ device families.
 ## Why a demo, not a scenario
 
 The 2001 DiffServ4NS architecture and all three Q-tier validation
-scenarios (Q-1, Q-2, Q-3) target a wired bottleneck. Reproducing the
+scenarios (Q-1, Q-2, Q-3; defined in `specs/03-quality.md`) target a wired bottleneck. Reproducing the
 2001 results on a wireless link would mean **changing the experiment**,
 not validating the port. So the wireless extension is reported as a
 *capability* (the substrate composes above any `NetDevice`) rather
@@ -159,13 +159,13 @@ Two design choices distinguish this example from the [What the demo shows](#what
   With QoS enabled, ns-3's `WifiMac` splits packets into per-AC queues
   based on the DSCP→AC mapping and EDCA differentiates classes at L2,
   which makes the qdisc-level scheduler choice nearly invisible. To
-  isolate the qdisc scheduler as the only differentiating mechanism,
+  isolate the queue-disc scheduler as the only differentiating mechanism,
   this example turns QoS off. The [What the demo shows](#what-the-demo-shows) demo (which exercises the
   full Stratum + WMM stack) remains the canonical example for the
   WMM-aware case.
 - **A constant-rate Wi-Fi link** at `OfdmRate6Mbps` ensures the link
   capacity is well below the offered load. With `IdealWifiManager`
-  the rate adapts upward and the AP qdisc never builds up, so per-class outcomes are identical across schedulers.
+  the rate adapts upward and the AP queue disc never builds up, so per-class outcomes are identical across schedulers.
 
 A representative single run (8 s, default CLI):
 
@@ -180,8 +180,8 @@ A representative single run (8 s, default CLI):
 | wf2qp | 308 | 503 | 2383 | 847 | 1867 |  992 |  850 | 1482 |
 | llq   | 304 | 503 | 2533 | 841 | 1673 | 1885 |  899 | 1658 |
 
-![DiffServ4NS scheduler comparison over 802.11a 6 Mb/s with the AP
-qdisc backed up. Top panel: per-class throughput. Bottom panel: per-
+![Stratum scheduler comparison over 802.11a 6 Mb/s with the AP
+queue disc backed up. Top panel: per-class throughput. Bottom panel: per-
 class p99 OWD.](figures/12-wireless/scheduler-comparison.png)
 
 Three observations match textbook expectations:
@@ -199,7 +199,7 @@ Three observations match textbook expectations:
   uneven share.
 
 The latencies (~500 ms p99 across all classes) are an artefact of
-the deeply over-saturated qdisc; the comparison is about *relative*
+the deeply over-saturated queue disc; the comparison is about *relative*
 share allocation under saturation, not absolute latency targets. As
 with [What the demo shows](#what-the-demo-shows) this is a demo, not a Q-tier scenario.
 
@@ -209,13 +209,13 @@ The example exposes a `--wmmMode` flag with four values that exhaust
 the meaningful combinations of qdisc-level and L2 differentiation:
 
 - **`off`** (default) — `QosSupported=false` on AP and STAs. All four
-  classes share the AC_BE_NQOS L2 queue; only the DiffServ qdisc
-  differentiates. This is the canonical "qdisc is the sole
+  classes share the AC_BE_NQOS L2 queue; only the DiffServ queue disc
+  differentiates. This is the canonical "queue disc is the sole
   differentiator" demo (the table above).
 - **`hybrid`** — `QosSupported=true`. ns-3's mainline DSCP-to-AC
   mapping (`QosUtilsMapTidToAc`, `src/wifi/model/qos-utils.cc`)
   routes EF (DSCP 46) to AC_VO, AF41 (DSCP 34) to AC_VI, BE (DSCP 0)
-  to AC_BE, CS1 (DSCP 8) to AC_BK at L2; the DiffServ qdisc above
+  to AC_BE, CS1 (DSCP 8) to AC_BK at L2; the DiffServ queue disc above
   continues to gate which class dequeues next. This is the realistic
   WMM-router shape — the same composition Linux qdiscs (cake,
   fq_codel, htb) ride above the WMM-aware Wi-Fi driver in
@@ -224,23 +224,23 @@ the meaningful combinations of qdisc-level and L2 differentiation:
   (Block-Ack, A-MPDU when applicable), but a custom
   `WifiHelper::SetSelectQueueCallback` returns `AC_BE` for every
   packet so EDCA at L2 sees a single AC and does not differentiate.
-  The qdisc above is the only differentiator; QoS infrastructure is
+  The queue disc above is the only differentiator; QoS infrastructure is
   available without QoS routing.
-- **`edca-only`** — `QosSupported=true`, but the inner DiffServ qdisc
+- **`edca-only`** — `QosSupported=true`, but the inner DiffServ queue disc
   collapses to a single shared queue (`NumQueues=1`, every DSCP
   maps to queue 0). Packets are still classified and stamped with
-  the right DSCP for L2 routing, but the qdisc cannot reorder them.
+  the right DSCP for L2 routing, but the queue disc cannot reorder them.
   Only EDCA at L2 differentiates. Useful as a pure-WMM baseline
   column.
 
 A `--lowLoad` flag scales the offered load from the default
 ~128 Mb/s aggregate (~25× over-saturation) down to ~7 Mb/s
-(~1.2× link cap), so the qdisc only briefly queues and L2 effects
+(~1.2× link cap), so the queue disc only briefly queues and L2 effects
 have a chance to surface.
 
 #### Mode × load matrix: per-class throughput
 
-![DiffServ4NS schedulers over 802.11a 6 Mb/s — qdisc-only (off) vs WMM-on
+![Stratum schedulers over 802.11a 6 Mb/s — qdisc-only (off) vs WMM-on
 (hybrid) at high (~25×) and low (~1.2×) load. 8 schedulers × 4 classes
 per panel; bars are per-class delivered rate. The visual near-equality
 between off and hybrid (at both loads) is the headline finding of this
@@ -255,26 +255,26 @@ because its single-row output does not fit the per-scheduler matrix.
 Two findings from the high-load row of the matrix:
 
 - **`hybrid` and `qdisc-only` are bit-for-bit identical at high
-  load.** Both run the full 8-scheduler sweep; in both, the AP qdisc
+  load.** Both run the full 8-scheduler sweep; in both, the AP queue-disc
   backlog is so deep (~25× saturation, p99 ~500-2000 ms) that EDCA's
   short-timescale ordering at L2 is dwarfed by qdisc-induced
   latency. Whether L2 distinguishes ACs or treats everything as
   AC_BE is invisible at this metric.
 - **`edca-only` at high load is degenerate** (plotted separately
-  below). With one shared qdisc queue, tail-drop happens uniformly
+  below). With one shared queue, tail-drop happens uniformly
   in arrival order: BE (60 Mb/s offered) and BK (60 Mb/s offered)
   crowd the FIFO and crush EF (300 kb/s offered → 27 kb/s
   delivered, ~9 % survival). EDCA at L2 cannot recover packets that
-  were already dropped at the qdisc. The lesson is that pure WMM
-  without per-class queueing somewhere upstream — qdisc,
+  were already dropped at the queue disc. The lesson is that pure WMM
+  without per-class queueing somewhere upstream — queue disc,
   application-layer admission control, or a separate VoIP path —
   provides no protection against bulk-traffic starvation at
   saturation.
 
-![WMM mode = edca-only: single-queue qdisc + EDCA at L2. At high load
+![WMM mode = edca-only: single-queue queue disc + EDCA at L2. At high load
 the FIFO crushes EF; at low load EDCA in a single-AP DL-only scenario
 behaves the same as hybrid. The plot reflects single-row CSV output
-(scheduler choice does not apply when the inner qdisc has only one
+(scheduler choice does not apply when the inner queue disc has only one
 queue).](figures/12-wireless/scheduler-comparison-edca-only.png)
 
 #### Low load (~1.2× link cap)
@@ -308,10 +308,10 @@ exercises.
 For the qdisc-comparison demo as it stands:
 
 - **Default `off` is the right setting** for the [Scheduler comparison demo](#scheduler-comparison-demo) table. It
-  isolates the qdisc as the sole differentiator and produces the
+  isolates the queue disc as the sole differentiator and produces the
   cleanest cross-scheduler comparison.
 - **`hybrid` is the right setting for a realistic WMM-router shape**
-  but produces near-identical results to `off` here, because qdisc
+  but produces near-identical results to `off` here, because queue-disc
   backlog dominates p99 at high load and there is no inter-contender
   EDCA action at low load. The mode is documented for users who
   want to verify the composition works (and it does).
@@ -331,13 +331,13 @@ flags. Run from the ns-3 build directory as
 
 | Flag | Default | What it does |
 |---|---|---|
-| `--scheduler` | `pq` | Stratum qdisc scheduler. One of `pq`, `rr`, `wrr`, `wirr`, `scfq`, `wfq`, `wf2qp`, `llq`. Ignored when `--wmmMode=edca-only`. |
-| `--wmmMode` | `off` | L2 differentiation mode. `off`: QoS off, qdisc only. `hybrid`: QoS on, qdisc + EDCA. `qdisc-only`: QoS on, EDCA forced to AC_BE only. `edca-only`: QoS on, qdisc collapsed to single queue. See [Engaging WMM at L2](#engaging-wmm-at-l2-a-four-mode-matrix). |
-| `--lowLoad` | `false` | If true, scale offered load down from ~128 Mb/s aggregate (~25× link cap) to ~7 Mb/s (~1.2× link cap). Surfaces L2-side dynamics when the qdisc is not permanently backlogged. |
+| `--scheduler` | `pq` | Stratum queue-disc scheduler. One of `pq`, `rr`, `wrr`, `wirr`, `scfq`, `wfq`, `wf2qp`, `llq`. Ignored when `--wmmMode=edca-only`. |
+| `--wmmMode` | `off` | L2 differentiation mode. `off`: QoS off, queue disc only. `hybrid`: QoS on, queue disc + EDCA. `qdisc-only`: QoS on, EDCA forced to AC_BE only. `edca-only`: QoS on, queue disc collapsed to single queue. See [Engaging WMM at L2](#engaging-wmm-at-l2-a-four-mode-matrix). |
+| `--lowLoad` | `false` | If true, scale offered load down from ~128 Mb/s aggregate (~25× link cap) to ~7 Mb/s (~1.2× link cap). Surfaces L2-side dynamics when the queue disc is not permanently backlogged. |
 | `--singleAcSaturation` | `false` | Switch to single-AC saturation mode (no Stratum, single STA pair, bidirectional UDP). Used for Bianchi 802.11a sanity and Magrin 802.11ax Figure 3 calibration. See [Saturation-throughput sanity checks](#saturation-throughput-sanity-checks). |
-| `--standard` | `80211a` | Wi-Fi standard. `80211a` (6 Mb/s OFDM) for the qdisc demos, `80211ax` for Magrin calibration. |
+| `--standard` | `80211a` | Wi-Fi standard. `80211a` (6 Mb/s OFDM) for the queue-disc demos, `80211ax` for Magrin calibration. |
 | `--heMcs` | `5` | HE MCS index 0-11 when `--standard=80211ax`. |
-| `--numStas` | `1` | Number of STAs in `--singleAcSaturation` mode. The qdisc demo always uses 4 STAs (one per class). |
+| `--numStas` | `1` | Number of STAs in `--singleAcSaturation` mode. The queue-disc demo always uses 4 STAs (one per class). |
 | `--simTime` | `10.0` | Simulation duration in seconds (1 s warm-up, rest measured). |
 | `--airtimeFraction` | `0.65` | Fraction of PHY rate the scheduler treats as the link bandwidth attribute. Wi-Fi airtime budget approximation. |
 | `--phyRateMbps` | `6.0` | PHY rate fed to the scheduler's `LinkBandwidth` attribute. |
@@ -346,7 +346,7 @@ flags. Run from the ns-3 build directory as
 #### Recipes
 
 **1. Headline scheduler comparison (default).** Compares 8 Stratum
-schedulers over 802.11a 6 Mb/s with QoS off; the qdisc is the only
+schedulers over 802.11a 6 Mb/s with QoS off; the queue disc is the only
 differentiator. Produces the row in `scheduler-comparison.csv`.
 
 ```
@@ -357,7 +357,7 @@ Replace `pq` with `rr`, `wrr`, `wirr`, `scfq`, `wfq`, `wf2qp`, `llq`
 to sweep all eight. Each invocation prints one CSV-formatted row.
 
 **2. Realistic WMM-router shape.** Same comparison, with WMM enabled
-at L2. The Stratum qdisc continues to gate per-class share; ns-3 routes
+at L2. The Stratum queue disc continues to gate per-class share; ns-3 routes
 DSCP→AC at L2 and EDCA contends per AC. Use this when comparing
 against Linux `tc-cake`-over-Wi-Fi behaviour.
 
@@ -365,8 +365,8 @@ against Linux `tc-cake`-over-Wi-Fi behaviour.
 ./ns3 run "diffserv-wifi-scheduler-comparison --scheduler=pq --wmmMode=hybrid"
 ```
 
-**3. Low-load regime (briefly congested qdisc).** Drops offered load
-to ~1.2× link cap so the qdisc is only briefly backlogged. In a
+**3. Low-load regime (briefly congested queue disc).** Drops offered load
+to ~1.2× link cap so the queue disc is only briefly backlogged. In a
 multi-contender topology this regime would surface EDCA's
 short-timescale ordering; in this single-AP DL-only demo it
 produces near-identical results across modes (see [Engaging WMM at L2](#engaging-wmm-at-l2-a-four-mode-matrix)).
@@ -525,7 +525,7 @@ stamps the DSCP based on destination STA. This is the residential /
 SOHO QoS-on-Wi-Fi pattern: the bottleneck is on the wireless air,
 so that is where the edge sits.
 
-`--diffserv={true,false}` toggles the LLQ qdisc on or off. A
+`--diffserv={true,false}` toggles the LLQ queue disc on or off. A
 representative 8 s run:
 
 | Class | rx kb/s (Stratum on) | p99 ms (Stratum on) | rx kb/s (Stratum off) | p99 ms (Stratum off) |
@@ -543,12 +543,12 @@ Two observations:
   WFQ-residual portion of LLQ is doing what it should.
 - **EF is similarly low-rate in both modes** because at 300 kb/s it
   is far below any reasonable congestion threshold. The deep
-  qdisc backlog dominates its p99 in both modes; what changes is
+  queue-disc backlog dominates its p99 in both modes; what changes is
   the *aggregate* shape of the residual classes around it.
 
 The DSCP marking is observed indirectly through the per-class
 differentiation: if the EF/AF41 marks were not surviving the wired
-ingress → AP qdisc → Wi-Fi egress path, the LLQ scheduler at the AP
+ingress → AP queue disc → Wi-Fi egress path, the LLQ scheduler at the AP
 would see four indistinguishable flows and the table above would
 show all four classes converging.
 

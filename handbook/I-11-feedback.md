@@ -25,7 +25,7 @@ If you use Stratum in your work, please cite it. Three options of increasing fid
     author    = {Andreozzi, Sergio},
     title     = {{Stratum: A QoS Substrate Composing DiffServ, L4S, and CAKE in ns-3}},
     year      = {2026},
-    version   = {v1.1},
+    version   = {v1.0},
     url       = {https://github.com/digitalities/stratum-ns3}
   }
   ```

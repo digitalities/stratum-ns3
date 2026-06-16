@@ -1,0 +1,42 @@
+{
+  "upload_type": "software",
+  "title": "Stratum: A QoS Substrate Composing DiffServ, L4S, and CAKE in ns-3",
+  "creators": [
+    {
+      "name": "Andreozzi, Sergio",
+      "orcid": "0000-0001-5567-4000",
+      "affiliation": "Independent Researcher"
+    }
+  ],
+  "license": "GPL-2.0-only",
+  "description": "Stratum is a composable QoS substrate for ns-3 hosting Differentiated Services, Low Latency Low Loss Scalable-throughput (L4S), and Common Applications Kept Enhanced (CAKE) as three first-class clients. Four pluggable primitives (Classify-and-Meter, Mark-and-Route, a per-class slot array, and an across-slot service policy) let any client compose a queueing discipline by picking one strategy per stage. The substrate inherits the 2001 DiffServ4NS ns-2 module as its classical-DiffServ client.",
+  "keywords": [
+    "ns-3",
+    "QoS",
+    "DiffServ",
+    "L4S",
+    "DualPI2",
+    "CAKE",
+    "COBALT",
+    "fair queueing",
+    "active queue management",
+    "quality of service",
+    "network simulation",
+    "research software",
+    "reproducibility"
+  ],
+  "related_identifiers": [
+    {
+      "relation": "isDerivedFrom",
+      "identifier": "10.5281/zenodo.19662899",
+      "scheme": "doi",
+      "resource_type": "publication-thesis"
+    },
+    {
+      "relation": "references",
+      "identifier": "10.1109/ISCC.2002.1021705",
+      "scheme": "doi",
+      "resource_type": "publication-conferencepaper"
+    }
+  ]
+}

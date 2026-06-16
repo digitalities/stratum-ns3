@@ -81,7 +81,7 @@ anchor (dashed line in the figure).
 | ns-2.35 |    12.379 | 0.041 | 12.393 | 12.408 |
 | ns-3    |    13.819 | 0.062 | 13.838 | 13.850 |
 
-ns-3 closes ~30 % of the simulation-to-hardware gap; the remainder is
+ns-3 closes about a third of the simulation-to-hardware gap; the remainder is
 ns-2's network-layer abstraction (its packet size carries payload only).
 The ns-2.35 UDP-header fix shifts ns-2.35 +0.13 ms over ns-2.29, a
 visible step toward ns-3's wire-byte semantics. Service rate tracks CIR
@@ -164,12 +164,12 @@ All three simulators honour the 3 Mbps shaper; aggregate throughput
 matches within 0.8 % (ns-2.35 3004.6 vs ns-3 2979.1 kbps) and Premium
 within 0.1 %. Silver, Bronze, and BE slip −2.5 to −2.9 %, inside their
 ±3 % tolerance. One-way delay means agree within 1 % across all three
-(24.24–24.48 ms) and IPDV means within 25 %, both inside the Q-3.x band.
+(24.24–24.48 ms) and IPDV means within 25 %, both inside the Q-3.x band (see `specs/03-quality.md`).
 
 #### Gold residual — a generator approximation, not a policer divergence
 
 The one class outside the ±3 % band is Gold (ns-3 356.0 vs ns-2.35
-323.1 kbps, +9.9 %), carried by a RealAudio-like on/off source that
+323.1 kbps, +10.2 %), carried by a RealAudio-like on/off source that
 ns-3 — shipping no RealAudio generator — approximates with an OnOff
 source. The residual is a **traffic-generator approximation**, not a
 divergence between the two policers, and this is established by direct

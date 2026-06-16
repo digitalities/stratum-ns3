@@ -10,8 +10,8 @@ last-updated: 2026-06-06
 ## A.1 Why test vectors
 
 RFC 2697 (srTCM), RFC 2698 (trTCM) and RFC 2859 (TSW) describe their
-meters in pseudocode-level detail — bucket update rules, comparison
-orderings, boundary conditions — but none of them ships an executable
+meters in pseudocode-level detail (bucket update rules, comparison
+orderings, boundary conditions) but none of them ships an executable
 conformance suite. An implementer has the algorithm, not a reference
 it can be diffed against. Historically that gap has been filled by
 ad-hoc tests per implementation, and two implementations that both
@@ -91,7 +91,7 @@ Each vector is exercised inside ns-3 by a single test case
 
 Ten vectors cover the trTCM algorithm. The critical structural
 difference from srTCM: trTCM has **two independent rates**
-(`CIR`/`CBS` and `PIR`/`PBS`). The buckets refill independently —
+(`CIR`/`CBS` and `PIR`/`PBS`). The buckets refill independently:
 there is no overflow channel between them. The policer ordering is
 also inverted relative to srTCM: pBucket is checked *first*, so
 `pBucket < size` forces RED even if cBucket has tokens.
@@ -135,7 +135,7 @@ Four deterministic structural test cases cover TSW:
 | `S-4.1 TSW EWMA converges to actual rate within 5%` | CBR at 2 Mbps for 10 s, `winLen=1 s`, starting `avgRate=0`. | After 10 × winLen, `avgRate` is within 5 % of the actual 2 Mbps. | S-4.1 |
 | `S-4.2 TSW2CM under CIR: all GREEN` | CIR=1 Mbps, feed 500 kbps, 1 000 packets. | Zero packets marked RED. Under-CIR must be deterministically GREEN. | S-4.2 |
 | `S-4.3 TSW2CM over CIR: GREEN ratio approx 0.5` | CIR=1 Mbps, feed 2 Mbps, 10 000 packets, `avgRate` pre-seeded to feedRate so the ratio is stable from start. | GREEN ratio = CIR/avgRate = 0.5 ± 0.05. | S-4.3 |
-| `S-4 TSW3CM colour ratios above PIR` | CIR=100 000 B/s, PIR=200 000 B/s, feed 400 000 B/s, 20 000 packets. | GREEN ratio 0.25 ± 0.05, YELLOW 0.25 ± 0.05, RED 0.50 ± 0.05 — i.e. CIR/rate, (PIR−CIR)/rate, (rate−PIR)/rate. | S-4 (TSW3CM) |
+| `S-4 TSW3CM colour ratios above PIR` | CIR=100 000 B/s, PIR=200 000 B/s, feed 400 000 B/s, 20 000 packets. | GREEN ratio 0.25 ± 0.05, YELLOW 0.25 ± 0.05, RED 0.50 ± 0.05, i.e. CIR/rate, (PIR−CIR)/rate, (rate−PIR)/rate. | S-4 (TSW3CM) |
 
 The distinction between TSW2CM (green/red — RFC 2859 §4) and TSW3CM
 (green/yellow/red — RFC 2859 §5) shows up as the shape of the

@@ -140,6 +140,7 @@ build_lib(
     test/diffserv-flent-sink-test-suite.cc
     test/diffserv-cake-host-fairness-smoke-test.cc
     test/diffserv-cake-host-fairness-udp-smoke-test.cc
+    test/diffserv-cake-host-iso-jitter-floor-test.cc
     test/diffserv-cake-host-bulk-state-test.cc
     test/tcp-count-ack-jitter-test-suite.cc
 )

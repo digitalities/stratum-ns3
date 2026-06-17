@@ -147,7 +147,22 @@ WfqScheduler::SelectNextQueue()
             const double now = Simulator::Now().GetSeconds();
             SnapshotBusyEpoch(now);
             m_sumPhiBusy -= m_fs[qStar].weight;
-            if (m_sumPhiBusy < 0.0)
+            // When the busy set empties, the backlogged-weight sum is exactly
+            // zero by definition. Pin it to zero: the running +=/-= sequence
+            // accumulates a tiny IEEE-754 residue with non-dyadic weights, and
+            // a positive residue would otherwise survive the `< 0` clamp and
+            // the `<= 0` freeze in ComputeVirtualTime, driving V(t) to ~1e16 on
+            // the next post-idle arrival and collapsing service to lowest index.
+            bool anyBacklogged = false;
+            for (uint32_t i = 0; i < m_numQueues; ++i)
+            {
+                if (!m_fs[i].finishTags.empty())
+                {
+                    anyBacklogged = true;
+                    break;
+                }
+            }
+            if (!anyBacklogged || m_sumPhiBusy < 0.0)
             {
                 m_sumPhiBusy = 0.0;
             }

@@ -45,7 +45,10 @@ namespace ns3::stratum::l4s
  * **DualPI2 state** (RFC 9332 §2.1 eq. (1); App. A.1 Fig. 6):
  *   * `p'`  — P.I base probability, updated on a periodic 16 ms tick
  *   * `p_L` — L4S mark prob: `min(k * p', 1)` coupled branch, stepping
- *     to 1.0 when the L4S head sojourn reaches the L4S target
+ *     to 1.0 when a packet's own sojourn reaches the L4S target. Both the
+ *     step and coupled marks are applied at dequeue, per packet
+ *     (RFC 9332 App. A.1 step AQM); the coupled mark/drop is suppressed
+ *     while the total queue is below two MTUs.
  *   * `p_C` — classic coupled drop prob: `p'^2` (k does not appear;
  *     the RFC couples via `p_C = (p_CL / k)^2` with `p_CL = k * p'`)
  *
@@ -422,10 +425,23 @@ class QueueDisc : public ns3::QueueDisc, public QueueStatsProvider
     void UpdateBaseProb();
 
     /**
-     * @brief Compute the current L4S sojourn time.
-     * @return sojourn time in milliseconds (or 0 if unavailable)
+     * @brief Compute a packet's own sojourn time from its enqueue timestamp.
+     *
+     * Reads the `TimestampTag` stamped on @p item at enqueue and returns
+     * `Now() - tag` in milliseconds. Used by the dequeue-time step mark so
+     * each packet is judged against its own age (RFC 9332 App. A.1 step
+     * AQM), not the head's.
+     *
+     * @param item the dequeued queue disc item
+     * @return the item's sojourn time in milliseconds (or 0 if untagged)
      */
-    double ComputeL4sSojournMs() const;
+    double ComputeItemSojournMs(Ptr<const QueueDiscItem> item) const;
+
+    /**
+     * @brief Total bytes currently buffered across both sub-queues.
+     * @return the combined L4S + classic occupancy in bytes
+     */
+    uint32_t TotalQueueBytes() const;
 
     /**
      * @brief Compute the current classic-queue sojourn time. Drives the
@@ -488,13 +504,14 @@ class QueueDisc : public ns3::QueueDisc, public QueueStatsProvider
     double m_couplingFactor;         //!< Coupling factor k
     ClassicAqm m_classicAqmMode;     //!< Selected classic AQM strategy
     double m_l4sBandwidthBps;        //!< Bandwidth proxy (bits/second)
+    uint32_t m_mtu;                  //!< MTU (bytes); the coupled signal is suppressed
+                                     //!< while the total queue sits below 2 * m_mtu
 
     // P.I controller state
     double m_baseProb;             //!< Base probability p'
     Time m_controllerInterval;     //!< Controller tick interval
     EventId m_controllerEvent;     //!< Pending controller tick event
-    double m_lastSojournMs;        //!< Last sojourn sample (ms)
-    bool m_lastSojournInitialized; //!< True once m_lastSojournMs has been sampled
+    double m_lastSojournMs; //!< Previous classic sojourn sample (ms); starts at 0 (RFC prevq=0)
 
     // Test hook
     bool m_forceBaseProbForTest; //!< True while a test override is active on m_baseProb

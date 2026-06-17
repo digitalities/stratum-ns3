@@ -94,6 +94,10 @@ LlqScheduler::NotifyConstructionCompleted()
                                                          UintegerValue(1),
                                                          "WinLen",
                                                          DoubleValue(1.0));
+    // As the inner EF lane, the PQ must decline (not fall back to serving its
+    // lone queue) once it is over its rate cap, so this LLQ can serve the fair
+    // lanes — RFC 3246 policing of the EF aggregate.
+    m_pq->SetYieldWhenRateCapped(true);
 
     // FQ sub-scheduler for queues 1..N-1.
     const uint32_t fqQueues = m_numQueues - 1;
@@ -214,6 +218,36 @@ LlqScheduler::SetPqRateCap(double rateBps)
 {
     NS_LOG_FUNCTION(this << rateBps);
     m_pq->SetParam(0, rateBps);
+}
+
+void
+LlqScheduler::UpdateDepartureRate(uint32_t queueIndex,
+                                  uint32_t prec,
+                                  uint32_t packetSizeBytes,
+                                  double nowSeconds)
+{
+    // Keep this object's aggregate estimator current (used for stats), then
+    // forward the departure to the sub-scheduler that actually served the
+    // packet so its own rate estimator stays live. This feeds the inner PQ's
+    // rate cap (RFC 3246 EF policing); without it the cap never engages because
+    // the inner estimator never sees a departure.
+    Scheduler::UpdateDepartureRate(queueIndex, prec, packetSizeBytes, nowSeconds);
+    if (queueIndex == 0)
+    {
+        m_pq->UpdateDepartureRate(0, prec, packetSizeBytes, nowSeconds);
+    }
+    else
+    {
+        // The EF lane did not depart this round, but its rate estimator must
+        // still decay (departure of size 0) so the cap self-releases once the
+        // EF aggregate backs off. The time-sliding-window estimate only decays
+        // on each call, so without this the EF lane, once over its cap, would
+        // be starved permanently. This mirrors the reference scheduler, which
+        // advances every queue's estimator on every dequeue. RFC 3246 bounds the
+        // EF aggregate to its rate; it does not extinguish it.
+        m_pq->UpdateDepartureRate(0, prec, 0, nowSeconds);
+        m_pfq->UpdateDepartureRate(queueIndex - 1, prec, packetSizeBytes, nowSeconds);
+    }
 }
 
 } // namespace ns3::stratum

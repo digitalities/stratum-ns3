@@ -307,17 +307,30 @@ class DsL4sSquaredRatioTest : public TestCase
         }
         double observedPC = static_cast<double>(classicDrops) / kN;
 
-        // Enqueue L4S packets and count CE marks. ECT(1) packets are
-        // markable; the parent's m_stats.nTotalMarkedPackets counts
-        // every successful Mark() call.
-        uint64_t marksBefore = disc->GetStats().nTotalMarkedPackets;
-        for (uint32_t i = 0; i < kN; ++i)
+        // The L4S coupled CE mark is applied at dequeue (RFC 9332 App. A.1
+        // step AQM), so drive the L4S rate on a fresh L4S-only disc: enqueue
+        // a backlog above the two-MTU floor, then dequeue and count marks. A
+        // spare backlog keeps the floor cleared across every measured dequeue
+        // so only the coupled p_L = k * p' branch is exercised.
+        auto l4sDisc = MakeL4sDisc();
+        l4sDisc->AssignStreams(100);
+        l4sDisc->SetL4sTargetSojournMs(1e6);
+        l4sDisc->SetCouplingFactor(2.0);
+        l4sDisc->ForceBaseProbForTest(kPrime);
+
+        constexpr uint32_t kBacklog = 50;
+        for (uint32_t i = 0; i < kN + kBacklog; ++i)
         {
-            auto pkt = MakeItem(Ipv4Header::DscpDefault, Ipv4Header::ECN_ECT1);
-            bool ok = disc->Enqueue(pkt);
+            bool ok = l4sDisc->Enqueue(MakeItem(Ipv4Header::DscpDefault, Ipv4Header::ECN_ECT1));
             NS_TEST_ASSERT_MSG_EQ(ok, true, "L4S packet enqueue should not drop in this test");
         }
-        uint64_t marksAfter = disc->GetStats().nTotalMarkedPackets;
+        uint64_t marksBefore = l4sDisc->GetStats().nTotalMarkedPackets;
+        for (uint32_t i = 0; i < kN; ++i)
+        {
+            Ptr<QueueDiscItem> out = l4sDisc->Dequeue();
+            NS_TEST_ASSERT_MSG_NE(out, nullptr, "L4S packet should dequeue");
+        }
+        uint64_t marksAfter = l4sDisc->GetStats().nTotalMarkedPackets;
         double observedPL = static_cast<double>(marksAfter - marksBefore) / kN;
 
         // 4000 samples: 95 % CI half-width is 1.96*sqrt(p(1-p)/4000) =
@@ -334,12 +347,14 @@ class DsL4sSquaredRatioTest : public TestCase
                                   kTol,
                                   "Observed p_L must approach k * p' within statistical tolerance");
 
-        // Snapshot accessors expose the last computed values.
+        // Snapshot accessors expose the last computed values: p_C from the
+        // classic disc's last enqueue, p_L from the L4S disc's last dequeue
+        // (both above the two-MTU floor).
         NS_TEST_ASSERT_MSG_EQ_TOL(disc->GetLastClassicCoupledProb(),
                                   kExpectedPC,
                                   1e-9,
                                   "GetLastClassicCoupledProb must equal p'^2");
-        NS_TEST_ASSERT_MSG_EQ_TOL(disc->GetLastL4sMarkProb(),
+        NS_TEST_ASSERT_MSG_EQ_TOL(l4sDisc->GetLastL4sMarkProb(),
                                   kExpectedPL,
                                   1e-9,
                                   "GetLastL4sMarkProb must equal k * p' (coupled branch)");
@@ -366,7 +381,9 @@ class DsL4sCeIdempotenceTest : public TestCase
         disc->AssignStreams(11);
         disc->SetL4sTargetSojournMs(1e6);
         // Force p_L = 1.0 effectively by pinning p' = 0.5 (linear
-        // branch saturates: 2 * 0.5 = 1.0). Every packet draws "mark".
+        // branch saturates: 2 * 0.5 = 1.0). Every above-floor dequeue draws
+        // "mark". Marks are applied at dequeue (App. A.1 step AQM), so the
+        // packets are dequeued to drive the mark path.
         disc->ForceBaseProbForTest(0.5);
 
         uint64_t marksBefore = disc->GetStats().nTotalMarkedPackets;
@@ -379,6 +396,22 @@ class DsL4sCeIdempotenceTest : public TestCase
             bool ok = disc->Enqueue(pkt);
             NS_TEST_ASSERT_MSG_EQ(ok, true, "CE-marked packet must still enqueue");
         }
+
+        // Confirm the L4S queue (composer child 0) received all the packets.
+        // Accessor-based lookup is refactor-robust.
+        Ptr<QueueDisc> l4sQ = disc->GetL4sQueueDisc();
+        NS_TEST_ASSERT_MSG_EQ(l4sQ->GetNPackets(),
+                              kN,
+                              "All CE packets should be enqueued on the L4S sub-queue");
+
+        // Dequeue them: the mark path runs (p_L = 1.0 above the floor) but an
+        // already-CE packet must not be re-marked (RFC 9331 §5), so the mark
+        // counter stays put.
+        for (uint32_t i = 0; i < kN; ++i)
+        {
+            Ptr<QueueDiscItem> out = disc->Dequeue();
+            NS_TEST_ASSERT_MSG_NE(out, nullptr, "CE packet should dequeue");
+        }
         uint64_t marksAfter = disc->GetStats().nTotalMarkedPackets;
 
         NS_TEST_ASSERT_MSG_EQ(marksAfter - marksBefore,
@@ -386,22 +419,22 @@ class DsL4sCeIdempotenceTest : public TestCase
                               "Mark counter must not increment for already-CE "
                               "packets (RFC 9331 §5 idempotence)");
 
-        // Confirm the L4S queue (composer child 0) still received all
-        // the packets. Accessor-based lookup is refactor-robust.
-        Ptr<QueueDisc> l4sQ = disc->GetL4sQueueDisc();
-        NS_TEST_ASSERT_MSG_EQ(l4sQ->GetNPackets(),
-                              kN,
-                              "All CE packets should be enqueued on the L4S sub-queue");
-
-        // Now compare with ECT(1): the same enqueue rate should produce
-        // marks, since the linear coupling saturates.
-        uint64_t marksB = disc->GetStats().nTotalMarkedPackets;
+        // Now compare with ECT(1): the same dequeue rate should produce
+        // marks, since the linear coupling saturates. A spare backlog keeps
+        // every measured dequeue above the two-MTU floor.
         constexpr uint32_t kM = 100;
-        for (uint32_t i = 0; i < kM; ++i)
+        constexpr uint32_t kBacklog = 50;
+        for (uint32_t i = 0; i < kM + kBacklog; ++i)
         {
             auto pkt = MakeItem(Ipv4Header::DscpDefault, Ipv4Header::ECN_ECT1);
             bool ok = disc->Enqueue(pkt);
             NS_TEST_ASSERT_MSG_EQ(ok, true, "ECT(1) packet must enqueue");
+        }
+        uint64_t marksB = disc->GetStats().nTotalMarkedPackets;
+        for (uint32_t i = 0; i < kM; ++i)
+        {
+            Ptr<QueueDiscItem> out = disc->Dequeue();
+            NS_TEST_ASSERT_MSG_NE(out, nullptr, "ECT(1) packet should dequeue");
         }
         uint64_t marksAft = disc->GetStats().nTotalMarkedPackets;
         NS_TEST_ASSERT_MSG_EQ(marksAft - marksB,
@@ -409,14 +442,6 @@ class DsL4sCeIdempotenceTest : public TestCase
                               "Mark counter must increment by kM for ECT(1) inputs at p_L = 1");
     }
 };
-
-/// Helper for scheduling enqueues at specific simulation times.
-void
-EnqueueEct1(Ptr<l4s::QueueDisc> disc)
-{
-    auto pkt = MakeItem(Ipv4Header::DscpDefault, Ipv4Header::ECN_ECT1);
-    disc->Enqueue(pkt);
-}
 
 /// S-L4S.6: immediate-mark threshold. When the L4S sub-queue head
 /// packet has been queued longer than the target, every newly arriving
@@ -437,34 +462,40 @@ class DsL4sImmediateMarkThresholdTest : public TestCase
         auto disc = MakeL4sDisc();
         disc->AssignStreams(13);
 
-        // Pin p' = 0 so the linear branch contributes nothing; only the
+        // Pin p' = 0 so the coupled branch contributes nothing; only the
         // immediate-mark step can produce marks.
         disc->ForceBaseProbForTest(0.0);
         disc->SetL4sTargetSojournMs(1.0);
 
-        // Warmup at t = 0 so the head packet's timestamp is t = 0.
-        auto warmup = MakeItem(Ipv4Header::DscpDefault, Ipv4Header::ECN_ECT1);
-        bool okWarm = disc->Enqueue(warmup);
-        NS_TEST_ASSERT_MSG_EQ(okWarm, true, "Warm-up packet must enqueue");
-
-        // Schedule kN further enqueues starting at t = 10 ms (well above
-        // the 1 ms target sojourn). Each enqueue spaced by 1 us so the
-        // head sojourn keeps growing across iterations.
+        // Enqueue kN packets at t = 0 so each carries the same enqueue stamp.
         constexpr uint32_t kN = 50;
         for (uint32_t i = 0; i < kN; ++i)
         {
-            Simulator::Schedule(MilliSeconds(10) + MicroSeconds(i), &EnqueueEct1, disc);
+            bool ok = disc->Enqueue(MakeItem(Ipv4Header::DscpDefault, Ipv4Header::ECN_ECT1));
+            NS_TEST_ASSERT_MSG_EQ(ok, true, "ECT(1) packet must enqueue");
         }
-        Simulator::Stop(MilliSeconds(20));
 
+        // Dequeue them all at t = 10 ms. Each packet's own sojourn (10 ms)
+        // exceeds the 1 ms target, so the step branch CE-marks every one
+        // on the way out (the step mark is not gated by the two-MTU floor).
+        uint32_t dequeued = 0;
+        Simulator::Schedule(MilliSeconds(10), [&disc, &dequeued]() {
+            while (Ptr<QueueDiscItem> out = disc->Dequeue())
+            {
+                ++dequeued;
+            }
+        });
         uint64_t marksBefore = disc->GetStats().nTotalMarkedPackets;
+        Simulator::Stop(MilliSeconds(20));
         Simulator::Run();
         uint64_t marksAfter = disc->GetStats().nTotalMarkedPackets;
         Simulator::Destroy();
 
+        NS_TEST_ASSERT_MSG_EQ(dequeued, kN, "All packets must dequeue");
         NS_TEST_ASSERT_MSG_EQ(marksAfter - marksBefore,
                               kN,
-                              "Every packet enqueued above target sojourn must be CE-marked");
+                              "Every packet dequeued above its own target sojourn must be "
+                              "CE-marked");
     }
 };
 
@@ -1030,27 +1061,47 @@ class TestSL4s13GoldenControllerVector : public TestCase
             {0.6, 2.0, 0.36, 1.0},
         };
 
+        // The p_C snapshot is set at a classic enqueue and the p_L snapshot
+        // at an L4S dequeue (App. A.1 step AQM applies the L4S mark on the
+        // way out). Both coupled snapshots are gated by the two-MTU floor, so
+        // each lane is pre-filled above the floor with the coupled signal off
+        // before the probe forces p'. Separate discs per lane keep the
+        // priority scheduler from serving the classic backlog when the L4S
+        // dequeue probe runs.
+        constexpr uint32_t kFill = 20;
         for (const auto& mp : kMapProbes)
         {
-            auto d = MakeL4sDisc();
-            d->AssignStreams(29);
-            // Keep the step-AQM branch inert so only the coupled branch
-            // sets the p_L snapshot.
-            d->SetL4sTargetSojournMs(1e6);
-            d->SetCouplingFactor(mp.k);
-            d->ForceBaseProbForTest(mp.pPrime);
-
-            // One probe per lane refreshes the snapshots (set before the
-            // RNG draw, so the assertion is draw-independent).
-            d->Enqueue(MakeItem(Ipv4Header::DscpDefault, Ipv4Header::ECN_NotECT));
-            d->Enqueue(MakeItem(Ipv4Header::DscpDefault, Ipv4Header::ECN_ECT1));
-
-            NS_TEST_ASSERT_MSG_EQ_TOL(d->GetLastClassicCoupledProb(),
+            // p_C snapshot: classic lane above the floor.
+            auto dc = MakeL4sDisc();
+            dc->AssignStreams(29);
+            dc->SetCouplingFactor(mp.k);
+            dc->ForceBaseProbForTest(0.0);
+            for (uint32_t i = 0; i < kFill; ++i)
+            {
+                dc->Enqueue(MakeItem(Ipv4Header::DscpDefault, Ipv4Header::ECN_NotECT));
+            }
+            dc->ForceBaseProbForTest(mp.pPrime);
+            dc->Enqueue(MakeItem(Ipv4Header::DscpDefault, Ipv4Header::ECN_NotECT));
+            NS_TEST_ASSERT_MSG_EQ_TOL(dc->GetLastClassicCoupledProb(),
                                       mp.expPc,
                                       kTol,
                                       "p_C must equal p'^2 (RFC 9332 Fig. 6 line 5) at p' = "
                                           << mp.pPrime << ", k = " << mp.k);
-            NS_TEST_ASSERT_MSG_EQ_TOL(d->GetLastL4sMarkProb(),
+
+            // p_L snapshot: L4S lane above the floor, mark applied at dequeue.
+            auto dl = MakeL4sDisc();
+            dl->AssignStreams(53);
+            dl->SetL4sTargetSojournMs(1e6); // keep the step branch inert
+            dl->SetCouplingFactor(mp.k);
+            dl->ForceBaseProbForTest(0.0);
+            for (uint32_t i = 0; i < kFill; ++i)
+            {
+                dl->Enqueue(MakeItem(Ipv4Header::DscpDefault, Ipv4Header::ECN_ECT1));
+            }
+            dl->ForceBaseProbForTest(mp.pPrime);
+            Ptr<QueueDiscItem> out = dl->Dequeue();
+            NS_TEST_ASSERT_MSG_NE(out, nullptr, "an L4S packet must dequeue to refresh p_L");
+            NS_TEST_ASSERT_MSG_EQ_TOL(dl->GetLastL4sMarkProb(),
                                       mp.expPl,
                                       kTol,
                                       "p_L must equal min(k * p', 1) (RFC 9332 Fig. 6 line 4) "
@@ -1072,10 +1123,12 @@ class TestSL4s13GoldenControllerVector : public TestCase
 /// ECT(1), re-mark a CE packet, or CE-mark the classic coupled path
 /// (which drops instead — drop-not-mark). Each row uses a fresh disc
 /// and a forced controller state chosen so the outcome is
-/// deterministic (p_L or p_C pinned to 0 or 1). Dequeue goes through
-/// the named child accessors: the composer's DoDequeue only routes
-/// between children and never touches headers, so child dequeue is
-/// header-equivalent and independent of outer-scheduler state.
+/// deterministic (p_L or p_C pinned to 0 or 1). The L4S CE mark is
+/// applied at dequeue (App. A.1 step AQM), so the L4S rows dequeue
+/// through the composer; the coupled mark/drop is gated by the two-MTU
+/// floor, so those rows pre-fill the lane above the floor with the
+/// coupled signal off. Classic rows read the classic child directly —
+/// the classic lane is never marked.
 class TestSL4s14EcnCodepointTransitions : public TestCase
 {
   public:
@@ -1089,18 +1142,25 @@ class TestSL4s14EcnCodepointTransitions : public TestCase
     {
         Simulator::Destroy();
 
+        constexpr uint32_t kFill = 20; // packets to clear the two-MTU floor
+
         // Row 1: ECT(1) at p_L = 1 (p' = 0.6, k = 2 -> min(1.2, 1) = 1):
-        // forwarded with CE set. The mark draw is deterministic because
+        // forwarded with CE set. Pre-fill the L4S lane above the floor so the
+        // coupled mark fires; the dequeued image (any above-floor ECT(1)
+        // packet) must carry CE. The mark draw is deterministic because
         // UniformRandomVariable::GetValue(0, 1) < 1.0 always holds.
         {
             auto d = MakeL4sDisc();
             d->AssignStreams(31);
             d->SetL4sTargetSojournMs(1e6);
+            d->ForceBaseProbForTest(0.0);
+            for (uint32_t i = 0; i < kFill; ++i)
+            {
+                d->Enqueue(MakeItem(Ipv4Header::DscpDefault, Ipv4Header::ECN_ECT1));
+            }
             d->ForceBaseProbForTest(0.6);
-            bool ok = d->Enqueue(MakeItem(Ipv4Header::DscpDefault, Ipv4Header::ECN_ECT1));
-            NS_TEST_ASSERT_MSG_EQ(ok, true, "ECT(1) must enqueue at p_L = 1 (mark, not drop)");
-            Ptr<QueueDiscItem> out = d->GetL4sQueueDisc()->Dequeue();
-            NS_TEST_ASSERT_MSG_NE(out, nullptr, "L4S lane must hold the marked packet");
+            Ptr<QueueDiscItem> out = d->Dequeue();
+            NS_TEST_ASSERT_MSG_NE(out, nullptr, "L4S lane must hold a markable packet");
             auto ip = DynamicCast<const Ipv4QueueDiscItem>(Ptr<const QueueDiscItem>(out));
             NS_TEST_ASSERT_MSG_EQ(ip->GetHeader().GetEcn(),
                                   Ipv4Header::ECN_CE,
@@ -1116,7 +1176,7 @@ class TestSL4s14EcnCodepointTransitions : public TestCase
             d->SetL4sTargetSojournMs(1e6);
             bool ok = d->Enqueue(MakeItem(Ipv4Header::DscpDefault, Ipv4Header::ECN_ECT1));
             NS_TEST_ASSERT_MSG_EQ(ok, true, "ECT(1) must enqueue at p_L = 0");
-            Ptr<QueueDiscItem> out = d->GetL4sQueueDisc()->Dequeue();
+            Ptr<QueueDiscItem> out = d->Dequeue();
             NS_TEST_ASSERT_MSG_NE(out, nullptr, "L4S lane must hold the packet");
             auto ip = DynamicCast<const Ipv4QueueDiscItem>(Ptr<const QueueDiscItem>(out));
             NS_TEST_ASSERT_MSG_EQ(ip->GetHeader().GetEcn(),
@@ -1126,15 +1186,19 @@ class TestSL4s14EcnCodepointTransitions : public TestCase
         }
 
         // Row 3: CE in -> CE out at p_L = 1 (idempotence on the dequeue
-        // image; the counter half of this property is S-L4S.5).
+        // image; the counter half of this property is S-L4S.5). Above the
+        // floor at p_L = 1 the mark path runs but must not re-mark CE.
         {
             auto d = MakeL4sDisc();
             d->AssignStreams(31);
             d->SetL4sTargetSojournMs(1e6);
+            d->ForceBaseProbForTest(0.0);
+            for (uint32_t i = 0; i < kFill; ++i)
+            {
+                d->Enqueue(MakeItem(Ipv4Header::DscpDefault, Ipv4Header::ECN_CE));
+            }
             d->ForceBaseProbForTest(0.6);
-            bool ok = d->Enqueue(MakeItem(Ipv4Header::DscpDefault, Ipv4Header::ECN_CE));
-            NS_TEST_ASSERT_MSG_EQ(ok, true, "CE packet must enqueue");
-            Ptr<QueueDiscItem> out = d->GetL4sQueueDisc()->Dequeue();
+            Ptr<QueueDiscItem> out = d->Dequeue();
             NS_TEST_ASSERT_MSG_NE(out, nullptr, "L4S lane must hold the CE packet");
             auto ip = DynamicCast<const Ipv4QueueDiscItem>(Ptr<const QueueDiscItem>(out));
             NS_TEST_ASSERT_MSG_EQ(ip->GetHeader().GetEcn(),
@@ -1143,11 +1207,19 @@ class TestSL4s14EcnCodepointTransitions : public TestCase
         }
 
         // Rows 4 + 5: classic NotECT / ECT(0) at p_C = 1 (p' = 1):
-        // coupled-dropped before the child enqueue — never CE-flipped.
+        // coupled-dropped before the child enqueue — never CE-flipped. The
+        // classic lane is pre-filled above the floor (coupled signal off) so
+        // the coupled drop fires; the probe packet must not survive into the
+        // classic child.
         for (auto ecn : {Ipv4Header::ECN_NotECT, Ipv4Header::ECN_ECT0})
         {
             auto d = MakeL4sDisc();
             d->AssignStreams(31);
+            d->ForceBaseProbForTest(0.0);
+            for (uint32_t i = 0; i < kFill; ++i)
+            {
+                d->Enqueue(MakeItem(Ipv4Header::DscpDefault, ecn));
+            }
             d->ForceBaseProbForTest(1.0);
             uint32_t dropsBefore = d->GetStats().nTotalDroppedPacketsBeforeEnqueue;
             bool ok = d->Enqueue(MakeItem(Ipv4Header::DscpDefault, ecn));
@@ -1159,9 +1231,9 @@ class TestSL4s14EcnCodepointTransitions : public TestCase
                                   1U,
                                   "coupled drop must be accounted before enqueue");
             NS_TEST_ASSERT_MSG_EQ(d->GetClassicAqmDisc()->GetNPackets(),
-                                  0U,
-                                  "no classic packet may survive (and none may be CE-flipped) "
-                                  "at p_C = 1");
+                                  kFill,
+                                  "the coupled-dropped packet must not survive into the "
+                                  "classic child (drop-not-mark)");
         }
 
         // Row 6: classic ECT(0) at p_C = 0 (p' = 0): forwarded untouched.
@@ -1255,10 +1327,12 @@ class TestSL4s15DscpPreservation : public TestCase
         {
             auto d = MakeL4sDisc();
             d->AssignStreams(37);
-            d->SetL4sTargetSojournMs(1e6);
-            // p' = 0.5, k = 2 -> p_L = min(1.0, 1) = 1: every ECT(1)
-            // packet is deterministically CE-marked at enqueue.
-            d->ForceBaseProbForTest(0.5);
+            // p' = 0; drive the deterministic step mark, which is independent
+            // of the two-MTU floor: enqueue at t = 0 and dequeue past the 1 ms
+            // target so p_L = 1 on every packet (App. A.1 step AQM, applied at
+            // dequeue through the composer).
+            d->ForceBaseProbForTest(0.0);
+            d->SetL4sTargetSojournMs(1.0);
 
             std::multiset<int> sentDscp;
             for (auto dscp : kDscps)
@@ -1270,15 +1344,19 @@ class TestSL4s15DscpPreservation : public TestCase
 
             std::multiset<int> gotDscp;
             uint32_t ceCount = 0;
-            while (Ptr<QueueDiscItem> out = d->GetL4sQueueDisc()->Dequeue())
-            {
-                auto ip = DynamicCast<const Ipv4QueueDiscItem>(Ptr<const QueueDiscItem>(out));
-                gotDscp.insert(static_cast<int>(ip->GetHeader().GetDscp()));
-                if (ip->GetHeader().GetEcn() == Ipv4Header::ECN_CE)
+            Simulator::Schedule(MilliSeconds(10), [&d, &gotDscp, &ceCount]() {
+                while (Ptr<QueueDiscItem> out = d->Dequeue())
                 {
-                    ++ceCount;
+                    auto ip = DynamicCast<const Ipv4QueueDiscItem>(Ptr<const QueueDiscItem>(out));
+                    gotDscp.insert(static_cast<int>(ip->GetHeader().GetDscp()));
+                    if (ip->GetHeader().GetEcn() == Ipv4Header::ECN_CE)
+                    {
+                        ++ceCount;
+                    }
                 }
-            }
+            });
+            Simulator::Stop(MilliSeconds(20));
+            Simulator::Run();
             NS_TEST_ASSERT_MSG_EQ(gotDscp.size(),
                                   sentDscp.size(),
                                   "part B must dequeue all 4 packets");
@@ -1294,6 +1372,161 @@ class TestSL4s15DscpPreservation : public TestCase
         Simulator::Destroy();
         // S-L4S.15SUM,partA=12,partB=4 — audit harvest
         std::cout << "S-L4S.15SUM,partA=12,partB=4" << std::endl;
+    }
+};
+
+/**
+ * @brief On the first PI2 controller tick with a backlogged classic queue, the
+ * proportional (beta) term is applied against an initial previous-sojourn of
+ * zero, per GPRT and the RFC 9332 App. A.1 pseudocode (prevq = 0).
+ *
+ * The S-L4S.13 golden vector is built so tick 1 sees an empty queue, so it does
+ * not exercise this path. Here a classic packet is enqueued before the first
+ * tick: with prevq = 0 the first tick applies beta*(curq - 0), so
+ * p' = 0.16*(0.008 - 0.015) + 3.2*(0.008 - 0) = 0.02448. Suppressing the
+ * derivative on the first tick would instead leave p' = max(0, -0.00112) = 0.
+ */
+class TestL4sPi2FirstTickBetaWithBacklog : public TestCase
+{
+  public:
+    TestL4sPi2FirstTickBetaWithBacklog()
+        : TestCase("L4S PI2 first tick applies the full beta kick with a backlogged classic queue "
+                   "(GPRT / RFC 9332 App. A.1 prevq=0)")
+    {
+    }
+
+    void DoRun() override
+    {
+        Simulator::Destroy();
+        auto disc = MakeL4sDisc();
+        disc->AssignStreams(23);
+        disc->SetControllerInterval(MilliSeconds(16));
+
+        // One classic NotECT packet at t = 8 ms (before tick 1 at t = 16 ms),
+        // never dequeued: tick 1 sees a non-empty classic queue, sojourn 8 ms.
+        Simulator::Schedule(MilliSeconds(8), [&disc]() {
+            auto pkt = MakeItem(Ipv4Header::DscpDefault, Ipv4Header::ECN_NotECT);
+            disc->Enqueue(pkt);
+        });
+
+        double pTick1 = -1.0;
+        Simulator::Schedule(MilliSeconds(16) + MicroSeconds(500),
+                            [&pTick1, &disc]() { pTick1 = disc->GetBaseProb(); });
+        Simulator::Stop(MilliSeconds(20));
+        Simulator::Run();
+        Simulator::Destroy();
+
+        NS_TEST_ASSERT_MSG_EQ_TOL(pTick1,
+                                  0.02448,
+                                  1e-9,
+                                  "PI2 first tick with a backlogged classic queue must apply "
+                                  "beta*(curq - 0) per GPRT / RFC 9332 App. A.1");
+    }
+};
+
+/// S-L4S.16: step-mark timing. The L4S CE mark is applied when the packet
+/// is dequeued, keyed off that packet's own sojourn (RFC 9332 App. A.1
+/// StepAqm: qDelay = now - item enqueue time; mark if qDelay > target).
+/// A single ECT(1) packet enqueued into an empty queue and held past the
+/// target sojourn before dequeue must leave the queue CE-marked. Marking
+/// at enqueue (against the head's age) would leave this lone packet
+/// unmarked, because at enqueue its own sojourn is zero.
+class TestSL4s16DequeueTimeStepMark : public TestCase
+{
+  public:
+    TestSL4s16DequeueTimeStepMark()
+        : TestCase("S-L4S.16 L4S step mark applied at dequeue from the packet's own sojourn")
+    {
+    }
+
+    void DoRun() override
+    {
+        Simulator::Destroy(); // start clean
+        auto disc = MakeL4sDisc();
+        disc->AssignStreams(31);
+
+        // Pin p' = 0 so the coupled branch contributes nothing; only the
+        // immediate-mark step can mark, and only from the packet's own age.
+        disc->ForceBaseProbForTest(0.0);
+        disc->SetL4sTargetSojournMs(1.0);
+
+        // One ECT(1) packet enqueued at t = 0; its enqueue timestamp is 0.
+        bool ok = disc->Enqueue(MakeItem(Ipv4Header::DscpDefault, Ipv4Header::ECN_ECT1));
+        NS_TEST_ASSERT_MSG_EQ(ok, true, "ECT(1) packet must enqueue");
+
+        // Dequeue at t = 2 ms: the packet's own sojourn (2 ms) exceeds the
+        // 1 ms target, so the step branch must CE-mark it on the way out.
+        Ptr<QueueDiscItem> deq;
+        Simulator::Schedule(MilliSeconds(2), [&deq, &disc]() { deq = disc->Dequeue(); });
+        Simulator::Stop(MilliSeconds(3));
+        Simulator::Run();
+
+        Ptr<Ipv4QueueDiscItem> ip = DynamicCast<Ipv4QueueDiscItem>(deq);
+        NS_TEST_ASSERT_MSG_NE(ip, nullptr, "Packet must dequeue");
+        if (ip)
+        {
+            NS_TEST_ASSERT_MSG_EQ(static_cast<int>(ip->GetHeader().GetEcn()),
+                                  static_cast<int>(Ipv4Header::ECN_CE),
+                                  "L4S packet aged past target must be CE-marked at dequeue "
+                                  "from its own sojourn (App. A.1 StepAqm)");
+        }
+        Simulator::Destroy();
+    }
+};
+
+/// S-L4S.17: coupled-signal suppression floor. RFC 9332 App. A.1 MustDrop
+/// takes no action while the total queue sits below two MTUs
+/// (GPRT: m_thLen = 2 * m_mtu). With p' pinned to 1.0 (p_C = 1.0), a
+/// classic packet arriving at a near-empty queue must NOT be
+/// coupled-dropped; once the backlog crosses two MTUs, the coupled drop
+/// fires. The native step branch is disabled here (huge target sojourn)
+/// so only the coupled p_C path is exercised.
+class TestSL4s17CoupledFloorTwoMtu : public TestCase
+{
+  public:
+    TestSL4s17CoupledFloorTwoMtu()
+        : TestCase("S-L4S.17 coupled drop suppressed while total queue below two MTUs")
+    {
+    }
+
+    void DoRun() override
+    {
+        auto disc = MakeL4sDisc();
+        disc->AssignStreams(37);
+        disc->SetL4sTargetSojournMs(1e6); // disable the step branch
+
+        // Below floor: at p' = 1 (p_C = 1.0) a packet arriving at an empty
+        // queue must escape the coupled drop, because the backlog is below
+        // two MTUs.
+        disc->ForceBaseProbForTest(1.0);
+        bool okBelow = disc->Enqueue(MakeItem(Ipv4Header::DscpDefault, Ipv4Header::ECN_NotECT));
+        NS_TEST_ASSERT_MSG_EQ(okBelow,
+                              true,
+                              "Coupled drop must be suppressed below the two-MTU floor (p'=1)");
+
+        // Fill the classic backlog past two MTUs with the coupled signal
+        // off (p' = 0, p_C = 0) so no drops occur during the fill.
+        disc->ForceBaseProbForTest(0.0);
+        for (uint32_t i = 0; i < 20; ++i)
+        {
+            bool ok = disc->Enqueue(MakeItem(Ipv4Header::DscpDefault, Ipv4Header::ECN_NotECT));
+            NS_TEST_ASSERT_MSG_EQ(ok, true, "Fill packet must enqueue with coupled signal off");
+        }
+
+        // Above floor: re-arm p' = 1 and enqueue one more. The backlog now
+        // exceeds two MTUs, so the coupled drop must fire.
+        disc->ForceBaseProbForTest(1.0);
+        bool okAbove = disc->Enqueue(MakeItem(Ipv4Header::DscpDefault, Ipv4Header::ECN_NotECT));
+        NS_TEST_ASSERT_MSG_EQ(okAbove,
+                              false,
+                              "Coupled drop must fire above the two-MTU floor (p'=1)");
+
+        const auto& nDrops = disc->GetStats().nDroppedPacketsBeforeEnqueue;
+        auto it = nDrops.find("L4S_COUPLED_DROP");
+        NS_TEST_ASSERT_MSG_EQ(it != nDrops.end() && it->second >= 1,
+                              true,
+                              "An above-floor coupled drop must be recorded in stats");
+        Simulator::Destroy();
     }
 };
 
@@ -1316,8 +1549,11 @@ class DsL4sQueueDiscSuite : public TestSuite
         AddTestCase(new DsL4sCoupledSchedulerL4sOnlyTest, Duration::QUICK);
         AddTestCase(new DsL4sFqCoDelInnerAqmTest, Duration::QUICK);
         AddTestCase(new TestSL4s13GoldenControllerVector, Duration::QUICK);
+        AddTestCase(new TestL4sPi2FirstTickBetaWithBacklog, Duration::QUICK);
         AddTestCase(new TestSL4s14EcnCodepointTransitions, Duration::QUICK);
         AddTestCase(new TestSL4s15DscpPreservation, Duration::QUICK);
+        AddTestCase(new TestSL4s16DequeueTimeStepMark, Duration::QUICK);
+        AddTestCase(new TestSL4s17CoupledFloorTwoMtu, Duration::QUICK);
         AddTestCase(new DsL4sScenarioPiControlFiresTest, Duration::EXTENSIVE);
         AddTestCase(new DsL4sScenarioS1LatencyDifferentiationTest, Duration::EXTENSIVE);
         AddTestCase(new DsL4sScenarioS2CoexistenceThroughputEquivalenceTest, Duration::EXTENSIVE);

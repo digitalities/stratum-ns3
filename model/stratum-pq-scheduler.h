@@ -56,9 +56,25 @@ class PriorityScheduler : public Scheduler
     int SelectNextQueue() override;
     void SetParam(uint32_t queueIndex, double maxRateBps) override;
 
+    /**
+     * @brief Decline (return -1) instead of serving an over-cap queue when no
+     * queue is under its cap.
+     *
+     * The standalone scheduler is work-conserving: if every non-empty queue is
+     * over its cap it still serves the highest-priority one. When this priority
+     * scheduler is the inner EF lane of an LLQ, that fallback would defeat the
+     * cap — the composing LLQ needs the inner lane to decline so it can serve
+     * the fair lanes instead (RFC 3246 EF policing). Enable this mode only in
+     * that composition.
+     *
+     * @param yield true to decline when all queues are empty-or-over-cap
+     */
+    void SetYieldWhenRateCapped(bool yield);
+
   private:
     double m_queueMaxRate[kMaxQueues]; //!< Rate cap in bytes/s (0 = no cap)
     int m_queueLen[kMaxQueues];        //!< Per-queue occupancy tracked via OnEnqueue
+    bool m_yieldWhenRateCapped{false}; //!< Inner-LLQ mode: decline when over cap
 };
 
 } // namespace ns3::stratum

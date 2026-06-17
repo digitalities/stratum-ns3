@@ -28,7 +28,10 @@ namespace ns3::stratum::cake
  * closed: its bytes-per-second is folded into `avg_peak_bandwidth` with
  * the same asymmetric shift rule (fast attack up, slow decay down), and a
  * new window opens. The reconfigure target is `avg_peak_bandwidth x 15/16`
- * (`sch_cake.c:1913`), throttled by a 250 ms deadband.
+ * (`sch_cake.c:1913`), evaluated on each window close once more than 250 ms of
+ * uptime has elapsed. (The kernel gates the reconfigure on
+ * `now > last_reconfig_time + 250 ms`, but `last_reconfig_time` is never written
+ * in the frozen revision, so the gate reduces to that uptime threshold.)
  *
  * The internal `avg_peak_bandwidth` is held in the kernel's native units of
  * bytes per second; it is seeded from the configured aggregate rate
@@ -61,12 +64,24 @@ class LinuxAutorateHook : public AutorateIngressHook
     /**
      * @brief Observe a packet arrival and update EWMA state.
      *
-     * @param adjLenBytes packet wire-length after overhead/MPU/framing
+     * @param rawLenBytes raw packet wire-length, with no overhead/MPU/framing
+     *                    adjustment, matching the kernel's avg_window_bytes
      * @param now         current simulation time
      */
-    void OnEnqueue(uint32_t adjLenBytes, Time now);
+    void OnEnqueue(uint32_t rawLenBytes, Time now);
 
     int64_t ComputeRateDelta(uint64_t currentRateBps) const override;
+
+    /**
+     * @brief The byte-exact target rate (`avg_peak_bandwidth x 15/16`) in
+     * bits/sec, independent of the reconfigure-cadence gate.
+     *
+     * Exposed so the estimator's byte-exactness can be checked separately from
+     * `ComputeRateDelta`'s window-close / uptime gating.
+     *
+     * @return target rate in bits per second
+     */
+    uint64_t ComputeTargetBps() const;
 
   private:
     /**
@@ -88,8 +103,7 @@ class LinuxAutorateHook : public AutorateIngressHook
     Time m_windowStart{Time(0)};            //!< Start of the current measurement window
     uint64_t m_windowBytes{0};              //!< Bytes accumulated in the current window
     uint64_t m_avgPeakBandwidth{0};         //!< EWMA of per-window peak bandwidth in bytes/sec
-    mutable bool m_haveReconfigured{false}; //!< True once ComputeRateDelta has run at least once
-    mutable Time m_lastReconfig{Time(0)};   //!< Time of the last ComputeRateDelta update
+    mutable bool m_windowJustClosed{false}; //!< Set when OnEnqueue closes a window; consumed by ComputeRateDelta
 };
 
 } // namespace ns3::stratum::cake

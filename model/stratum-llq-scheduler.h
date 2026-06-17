@@ -64,6 +64,10 @@ class LlqScheduler : public Scheduler
                            double nowSeconds) override;
     int SelectNextQueue() override;
     void SetParam(uint32_t queueIndex, double weight) override;
+    void UpdateDepartureRate(uint32_t queueIndex,
+                             uint32_t prec,
+                             uint32_t packetSizeBytes,
+                             double nowSeconds) override;
 
     /**
      * @brief Set the rate cap on the priority queue (queue 0).

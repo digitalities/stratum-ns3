@@ -14,6 +14,7 @@
 #include "ns3/simulator.h"
 #include "ns3/uinteger.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace ns3
@@ -86,6 +87,7 @@ RedSubQueue::AssignStreams(int64_t stream)
 void
 RedSubQueue::ConfigureVirtualQueue(uint32_t prec, double thMin, double thMax, double maxP)
 {
+    prec = std::min(prec, static_cast<uint32_t>(kMaxPrec) - 1);
     m_qParam[prec].thMin = thMin;
     m_qParam[prec].thMax = thMax;
     m_qParam[prec].maxP = maxP;
@@ -94,7 +96,9 @@ RedSubQueue::ConfigureVirtualQueue(uint32_t prec, double thMin, double thMax, do
 void
 RedSubQueue::SetNumPrec(uint32_t numPrec)
 {
-    m_numPrec = numPrec;
+    // Clamp to the fixed per-precedence array bound so m_qParam[] is never
+    // iterated out of range by a misconfigured precedence count.
+    m_numPrec = std::min(numPrec, static_cast<uint32_t>(kMaxPrec));
 }
 
 uint32_t
@@ -148,7 +152,7 @@ RedSubQueue::SetMeanPacketSize(int mps)
 PktResult
 RedSubQueue::EnqueueWithPrec(Ptr<QueueDiscItem> item, uint32_t prec, bool ecn)
 {
-    m_currentPrec = prec;
+    m_currentPrec = std::min(prec, static_cast<uint32_t>(kMaxPrec) - 1);
     m_currentEcn = ecn;
     m_lastResult = PktResult::PKT_ENQUEUED;
 
@@ -170,6 +174,7 @@ RedSubQueue::InitRedStateVars(double nowSeconds)
 void
 RedSubQueue::UpdateRedStateVar(uint32_t prec, double nowSeconds)
 {
+    prec = std::min(prec, static_cast<uint32_t>(kMaxPrec) - 1);
     // Port of redQueue::updateREDStateVar from dsredq.cc
     m_qParam[prec].qlen--;
 
@@ -238,7 +243,7 @@ RedSubQueue::GetRealLength() const
 int
 RedSubQueue::GetVirtualQueueLen(uint32_t prec) const
 {
-    return m_qParam[prec].qlen;
+    return m_qParam[std::min(prec, static_cast<uint32_t>(kMaxPrec) - 1)].qlen;
 }
 
 void

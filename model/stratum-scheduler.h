@@ -139,10 +139,10 @@ class Scheduler : public Object
      * @param packetSizeBytes packet size in bytes
      * @param nowSeconds current simulation time in seconds
      */
-    void UpdateDepartureRate(uint32_t queueIndex,
-                             uint32_t prec,
-                             uint32_t packetSizeBytes,
-                             double nowSeconds);
+    virtual void UpdateDepartureRate(uint32_t queueIndex,
+                                     uint32_t prec,
+                                     uint32_t packetSizeBytes,
+                                     double nowSeconds);
 
     /**
      * @brief Get the estimated departure rate for (queue, prec).

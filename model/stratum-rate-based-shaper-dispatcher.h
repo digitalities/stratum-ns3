@@ -117,6 +117,13 @@ class RateBasedShaperDispatcher : public QueueDisc
     void SetDscpToSlot(uint8_t dscp, uint32_t slot);
 
     /**
+     * @brief Read the configured tin slot for a DSCP code point.
+     * @param dscp 6-bit DSCP code point (0..63)
+     * @return zero-based tin index the code point maps to
+     */
+    uint32_t GetDscpToSlot(uint8_t dscp) const;
+
+    /**
      * @brief Toggle Linux `tc-cake(8)` `ingress` mode.
      *
      * When enabled, the per-tin and global clocks advance on packet drops

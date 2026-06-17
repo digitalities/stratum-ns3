@@ -10,6 +10,7 @@
 #include "stratum-policy-classifier.h"
 
 #include "stratum-edge-meter-provider.h"
+#include "stratum-fw-meter.h"
 #include "stratum-meter.h"
 
 #include "ns3/log.h"
@@ -110,6 +111,16 @@ PolicyClassifier::ApplyPolicy(uint8_t codePt, uint32_t packetSize, double nowSec
 
     // Step 4: update bucket state
     meter->ApplyMeter(*policy, nowSeconds, packetSize);
+
+    // FWMeter encodes its remark decision — including the deterministic /
+    // probabilistic / periodic penalty modes selected by
+    // PolicerEntry::downgrade2 — as a DSCP code point directly. The colour
+    // interface cannot carry the mode, so route it through the faithful
+    // per-flow path (ns-2 FWPolicy::applyPolicer) instead of the colour map.
+    if (Ptr<FWMeter> fw = DynamicCast<FWMeter>(meter))
+    {
+        return static_cast<uint8_t>(fw->ApplyPolicerFw(*policy, *policer, packetSize, 0));
+    }
 
     // Step 5: decide colour
     Colour colour = meter->ApplyPolicer(*policy, packetSize);

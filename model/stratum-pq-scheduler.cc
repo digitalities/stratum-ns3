@@ -91,8 +91,11 @@ PriorityScheduler::SelectNextQueue()
         qToDq = static_cast<int>(i);
     }
 
-    // Second pass: if all rate-capped, fall back to any non-empty queue
-    if (i == m_numQueues)
+    // Second pass: if every non-empty queue is over its cap, a standalone
+    // scheduler stays work-conserving by serving the highest-priority one.
+    // The inner EF lane of an LLQ instead declines (skips this fallback and
+    // returns -1) so the LLQ can serve its fair lanes — RFC 3246 EF policing.
+    if (i == m_numQueues && !m_yieldWhenRateCapped)
     {
         i = 0;
         qToDq = 0;
@@ -109,6 +112,12 @@ PriorityScheduler::SelectNextQueue()
         return qToDq;
     }
     return -1;
+}
+
+void
+PriorityScheduler::SetYieldWhenRateCapped(bool yield)
+{
+    m_yieldWhenRateCapped = yield;
 }
 
 } // namespace ns3::stratum

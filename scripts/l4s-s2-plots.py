@@ -128,24 +128,32 @@ def main():
                     f"mean {pc.mean():.4f}\n")
             f.write(f"- p_L range: [{pl.min():.4f}, {pl.max():.4f}], "
                     f"mean {pl.mean():.4f}\n")
-            # RFC 9332 §2.1 eq. (1) / App. A.1 Fig. 6: p_L = min(k * p', 1)
-            # with default k = 2, p_C = p'^2 (k-independent). Verify
-            # numerically at sample points where p_L is not saturated to 1
-            # and p' > 0.
-            mask = (pl > 1e-6) & (pl < 0.999) & (pp > 1e-6)
-            n_live = int(mask.sum())
+            # RFC 9332 §2.1 eq. (1): p_C = p'^2 (k-independent). Verify the
+            # squared coupling over every active sample (p' > 0). This holds
+            # whether or not the per-packet step mark has saturated p_L to 1,
+            # so it is the durable coupling-formula check.
+            active = pp > 1e-6
+            n_active = int(active.sum())
+            if n_active > 0:
+                predicted_pc = np.clip(pp[active] ** 2, 0.0, 1.0)
+                residual = np.abs(pc[active] - predicted_pc)
+                viol = int((residual > 0.1 * np.maximum(predicted_pc, 1e-9)).sum())
+                f.write(f"- Active samples (p' > 0): {n_active}\n")
+                f.write(f"- |p_C − p'²| mean: {residual.mean():.5f}, "
+                        f"max: {residual.max():.5f}; "
+                        f"violations (>10% rel): {viol}/{n_active}\n")
+            # The per-packet step mark holds p_L = 1 while the L4S queue stays
+            # past target, so p_L rarely dwells in (0, 1) under sustained
+            # non-responsive load.
+            opreg = (pl > 1e-6) & (pl < 0.999) & (pp > 1e-6)
+            n_live = int(opreg.sum())
             if n_live > 0:
-                predicted_pc = np.clip(pp[mask] ** 2, 0.0, 1.0)
-                residual = np.abs(pc[mask] - predicted_pc)
                 f.write(f"- Controller operating region samples (p_L ∈ (0, 1)): "
                         f"{n_live}\n")
-                f.write(f"- |p_C − p'²| mean: {residual.mean():.5f}, "
-                        f"max: {residual.max():.5f}\n")
             else:
-                f.write("- Controller saturated p_L = 1 throughout sampled "
-                        "window (L4S queue exceeded target sojourn "
-                        "continuously; expected when L4S flow is not "
-                        "Scalable-CC-responsive).\n")
+                f.write("- Step mark held p_L = 1 throughout sampled window "
+                        "(L4S queue continuously past target; expected when "
+                        "the L4S flow is not Scalable-CC-responsive).\n")
             f.write("\n## Throughput notes\n\n")
             # Full-run means (guards against empty 2nd-half window).
             if thr.size:

@@ -224,7 +224,10 @@ Helper::AddTrTcmPolicy(Ptr<EdgeQueueDisc> edge,
 }
 
 void
-Helper::AddTsw2cmPolicy(Ptr<EdgeQueueDisc> edge, uint8_t codePt, double cirBps)
+Helper::AddTsw2cmPolicy(Ptr<EdgeQueueDisc> edge,
+                        uint8_t codePt,
+                        double cirBps,
+                        double winLenSeconds)
 {
     PolicyEntry pe;
     pe.codePoint = codePt;
@@ -232,11 +235,16 @@ Helper::AddTsw2cmPolicy(Ptr<EdgeQueueDisc> edge, uint8_t codePt, double cirBps)
     pe.policer = PolicerType::TSW2CM;
     pe.policyIndex = static_cast<uint32_t>(MeterType::TSW2CM);
     pe.cir = cirBps / 8.0;
+    pe.winLen = winLenSeconds;
     edge->GetPolicyClassifier()->AddPolicyEntry(pe);
 }
 
 void
-Helper::AddTsw3cmPolicy(Ptr<EdgeQueueDisc> edge, uint8_t codePt, double cirBps, double pirBps)
+Helper::AddTsw3cmPolicy(Ptr<EdgeQueueDisc> edge,
+                        uint8_t codePt,
+                        double cirBps,
+                        double pirBps,
+                        double winLenSeconds)
 {
     PolicyEntry pe;
     pe.codePoint = codePt;
@@ -245,6 +253,7 @@ Helper::AddTsw3cmPolicy(Ptr<EdgeQueueDisc> edge, uint8_t codePt, double cirBps, 
     pe.policyIndex = static_cast<uint32_t>(MeterType::TSW3CM);
     pe.cir = cirBps / 8.0;
     pe.pir = pirBps / 8.0;
+    pe.winLen = winLenSeconds;
     edge->GetPolicyClassifier()->AddPolicyEntry(pe);
 }
 

@@ -5462,7 +5462,9 @@ class TestCake_AutorateEwmaMatchesKernel : public TestCase
             hook.SeedRate(2'000'000); // 250 000 B/s
             hook.OnEnqueue(1500, NanoSeconds(0));
             hook.OnEnqueue(1500, NanoSeconds(1'000'000)); // 1 ms
-            const int64_t target = hook.ComputeRateDelta(0);
+            // Check the byte-exact estimator output directly (ComputeTargetBps),
+            // independent of the reconfigure cadence that gates ComputeRateDelta.
+            const int64_t target = static_cast<int64_t>(hook.ComputeTargetBps());
             std::cout << "AUTORATE_EXACT_SUM anchor1_target=" << target << " (expect 7031248)"
                       << std::endl;
             NS_TEST_ASSERT_MSG_EQ(target,
@@ -5483,7 +5485,7 @@ class TestCake_AutorateEwmaMatchesKernel : public TestCase
                 hook.OnEnqueue(1500, NanoSeconds(t));
                 ref.Enqueue(1500, t);
             }
-            const int64_t target = hook.ComputeRateDelta(0);
+            const int64_t target = static_cast<int64_t>(hook.ComputeTargetBps());
             const int64_t refTarget = ref.TargetBits();
             std::cout << "AUTORATE_EXACT_SUM multi_target=" << target << " ref=" << refTarget
                       << " (expect 10953040)" << std::endl;
@@ -5552,9 +5554,9 @@ class TestCake_AutorateTracksStepArrivalRate : public TestCase
         now += Seconds(1);
         hook->OnEnqueue(kPktBytes, now);
 
-        // ComputeRateDelta: Simulator::Now() == 0 (no simulation running) and
-        // m_lastReconfig is zero-constructed, so the 250 ms deadband does not
-        // block this first call.
+        // ComputeRateDelta gates on the last arrival time (~1.808 s here) and
+        // the window the gap packet above closed, so the uptime>250 ms
+        // reconfigure gate is open and this returns the byte-exact target.
         const int64_t delta = hook->ComputeRateDelta(0);
 
         std::cout << "AUTORATE_STEP_SUM target=" << delta << " (expect 934848)" << std::endl;

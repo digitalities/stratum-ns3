@@ -90,17 +90,25 @@ queue below.
 | EF P95 OWD (ms) | 8.594 | 8.594 | +0.000 |
 | EF P99 OWD (ms) | 8.626 | 8.626 | +0.000 |
 | EF P95 IPDV (ms) | 0.480 | 0.480 | 0 |
-| AF P50 OWD (ms) | 46.728 | 47.757 | −1.029 |
-| AF P95 OWD (ms) | 54.256 | 56.266 | −2.010 |
+| AF P50 OWD (ms) | 23.673 | 47.757 | −24.084 |
+| AF P95 OWD (ms) | 39.173 | 56.266 | −17.093 |
 
 **Verdict: PASS.** EF OWD percentiles are identical to three decimal
 places in both modes. The CDF overlay is a single curve. The
 boxplot shows identical EF medians and whiskers. Both modes give the
 EF probe high-priority access to the bottleneck; the closely-overlapping
 ECDFs are the expected correct outcome and confirm that the priority
-wiring is correct in both configurations. The slight AF improvement
-under L4S-on (Δ −1 ms at the median) comes from the burst-cap scheduler
-distributing classic service more evenly than strict priority.
+wiring is correct in both configurations. The AF background, by
+contrast, is markedly lower under L4S-on (Δ −24 ms at the median,
+−17 ms at P95): the DualPI2 coupled classic AQM — the squared-coupling
+drop `p_C = p'²` together with the inner WRED — holds the classic queue
+far shorter (mean occupancy ~19 packets) than the plain-RED `l4s-off`
+baseline (~44 packets), roughly halving AF one-way delay. The coupled
+mark and drop are applied at dequeue, per packet, against each packet's
+own queueing time, and are suppressed while the total queue sits below
+two MTUs; that suppression lets the classic queue run a little deeper in
+transient bursts, so the AF P95 tail is heavier than the median gain
+while the prioritised EF probe stays byte-identical.
 
 **Interpretation.** The near-identical curves are not a null result:
 they confirm that ECN-based (ECT(1)) and DSCP-based classification
@@ -140,22 +148,25 @@ bottleneck:
 throughput-equivalence claim. With non-responsive UDP CBR offering 1.5× the
 bottleneck, the classic queue's sojourn sits persistently above the 15 ms target,
 so the P.I.² controller integrates to a sustained high operating point (mean
-$p' \approx 0.75$, with clamp episodes at 1.0): the senders cannot respond to
-marks or drops, so the controller correctly escalates. The cascade is therefore
-verified across its *entire* range, including the clamp boundaries.
+$p' \approx 0.89$, with clamp episodes at 1.0): the senders cannot respond to
+marks or drops, so the controller correctly escalates. Because the L4S
+sub-queue likewise stays continuously above its target, the per-packet
+dequeue step mark holds the L4S mark probability $p_L$ saturated at 1; the
+squared coupling $p_C = p'^2$ is verified independently of $p_L$, across the
+full $p' \in [0, 1]$ span the controller traverses.
 
 **Numeric summary (coupling-formula verification, simTime = 10 s run):**
 
 | Quantity | Regime | Verifiable from `coupling.csv` |
 |---|---|---|
-| $p'$ (base probability) | Sustained high engagement: mean ≈ 0.75, range [0, 1] | Column `pPrime` |
-| $p_L = \min(k p', 1)$, $k=2$ | Saturates to 1 for $p' \ge 0.5$ | Column `pL`; check vs `min(2 × pPrime, 1)` |
+| $p'$ (base probability) | Sustained high engagement: mean ≈ 0.89, range [0, 1] | Column `pPrime` |
+| $p_L$ (L4S mark) | Per-packet dequeue step mark holds $p_L = 1$ throughout (L4S queue continuously past target) | Column `pL` |
 | $p_C = p'^2$ | Spans [0, 1] with $p'$ | Column `pC`; check vs `pPrime²` |
-| $|p_C - p'^2|$ at all active samples | — | **0 violations** at 10 % relative (487/487) |
+| $|p_C - p'^2|$ at all active samples | — | **0 violations** at 10 % relative (493/493) |
 
 **Verdict: PASS.** The RFC 9332 §2.1 eq. (1) coupling cascade holds at every sampled
 point across the full operating range: $|p_C - p'^2| = 0$ to numerical precision
-on the controller's live region.
+across all active samples (the controller engaged for 493 of 499 sampled points).
 *(Audit note, 2026-06-10: two earlier defects shaped this section's history. An
 earlier revision asserted the formula $p_C = (k p')^2$ under an "RFC 9332 §4.1"
 citation: an implementation misreading of eq. (1), corrected together with the
@@ -195,21 +206,21 @@ sending rate.
 
 **Bottleneck:** 10 Mbps, 5 ms one-way propagation, DualPI2 queue disc.
 
-**Results (60 s run, 10 s warmup; default seed — cross-seed mean 1.032, range [0.719, 1.245] over 10 seeds):**
+**Results (60 s run, 10 s warmup; default seed — cross-seed mean 0.977, range [0.733, 1.304] over 10 seeds):**
 
 | Metric | Observed | Pass criterion |
 |---|---|---|
-| L:C throughput ratio | 1.245 | `[0.60, 1.35]` (10-seed sweep bracket) |
-| TcpDctcp cwnd reductions ≥ 30% | > 100 | ≥ 5 (responsive contract) |
-| TcpCubic cwnd reductions ≥ 30% | > 100 | ≥ 5 (responsive contract) |
+| L:C throughput ratio | 1.015 | `[0.60, 1.35]` (10-seed sweep bracket) |
+| TcpDctcp cwnd reductions ≥ 30% | 74 | ≥ 5 (responsive contract) |
+| TcpCubic cwnd reductions ≥ 30% | 91 | ≥ 5 (responsive contract) |
 
 **Verdict: PASS.** The coupled marker (`p_C = p'²`,
 `p_L = min(k·p', 1)`, RFC 9332 §2.1 eq. (1)) drives both congestion
 controllers toward the same congestion signal magnitude. Both senders
-actively respond — visible in the cwnd traces as 100+ reduction
+actively respond — visible in the cwnd traces as 70–90 reduction
 events per sender — confirming the responsive-flow contract. The
-pass criterion is the fixture's 10-seed sweep bracket (mean 1.032,
-observed seed range [0.719, 1.245]); per-seed cross-validation
+pass criterion is the fixture's 10-seed sweep bracket (mean 0.977,
+observed seed range [0.733, 1.304]); per-seed cross-validation
 against the vendored Linux-aligned GPRT DualPI2 (JFI parity within
 0.01 on every seed) pins the operating point itself.
 
@@ -360,7 +371,7 @@ FqCoDel, by contrast, exhibits dramatically worse probe latency at N=40:
 |---|---|
 | DualPI2 with WRED classic | 7.83 ms |
 | DualPI2 with coupled-only classic | 7.83 ms |
-| DualPI2 with FqCoDel classic | 7.82 ms |
+| DualPI2 with FqCoDel classic | 7.83 ms |
 | Mainline FqCoDel | 29,082 ms |
 | Classic-only FIFO | 488 ms |
 
@@ -388,27 +399,31 @@ compositions differs by two orders of magnitude:
 
 | Mode | Per-flow goodput CV (N=40) |
 |---|---|
-| DualPI2 with WRED classic | 0.091 |
-| DualPI2 with coupled-only classic | 0.091 |
-| DualPI2 with FqCoDel classic | 0.001 |
+| DualPI2 with WRED classic | 0.186 |
+| DualPI2 with coupled-only classic | 0.186 |
+| DualPI2 with FqCoDel classic | 0.173 |
 | Mainline FqCoDel | 0.001 |
-| Classic-only FIFO | 0.159 |
+| Classic-only FIFO | 0.157 |
 
 ![Per-flow bulk goodput CV at N=40](figures/N-l4s/per-flow-goodput-cv.svg)
 
-The DualPI2-with-FqCoDel-classic composition achieves CV 0.001 — matching
-mainline FqCoDel's per-sub-flow isolation — while simultaneously preserving
-DualPI2's probe protection shown in the previous section. The WRED and
-coupled-only modes produce CV ≈ 0.09 because those modes place all
-ECT(1)-tagged bulk senders on a single shared L4S FIFO lane; the
-marking-based fairness between 40 flows sharing one lane is less uniform
-than FqCoDel's per-sub-flow isolation.
+All three DualPI2 compositions land at CV ≈ 0.17–0.19. The reason is
+structural: every bulk sender here is ECT(1)-tagged, so the coupled AQM
+routes all 40 of them onto the single shared L4S lane regardless of which
+AQM sits on the classic lane. The classic-lane choice (WRED, coupled-only,
+or FqCoDel) therefore does not isolate the bulk flows — their fairness is
+set by marking on the one shared L4S FIFO, which spreads goodput less
+uniformly across 40 flows than per-flow isolation does. Only mainline
+FqCoDel, which hashes every flow into its own sub-queue, reaches CV ≈ 0.001;
+the unmanaged FIFO sits at 0.157.
 
-The DualPI2-with-FqCoDel-classic composition therefore offers the best of
-both properties in this test matrix: probe protection at scale (CV 0.001)
-and per-flow fairness (same CV as pure FqCoDel). This positive compositional
-finding warrants further investigation at higher RTTs and with richer
-traffic mixes.
+The takeaway is that DualPI2's strength in this matrix is probe protection
+at scale (the previous section) rather than per-flow goodput uniformity:
+funnelling many scalable flows through one low-latency lane trades some
+inter-flow uniformity for that latency guarantee. Recovering per-flow
+isolation while keeping the coupled low-latency lane — for example by
+flow-queueing within the L4S lane — is a composition this matrix does not
+yet cover and is left for future work.
 
 ### Compositional safety under mixed traffic
 

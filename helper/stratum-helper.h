@@ -258,8 +258,12 @@ class Helper
      * @param edge the edge queue disc to configure
      * @param codePt DSCP code point this policy applies to
      * @param cirBps committed information rate in bits/s
+     * @param winLenSeconds TSW averaging-window length in seconds (default 1.0)
      */
-    void AddTsw2cmPolicy(Ptr<EdgeQueueDisc> edge, uint8_t codePt, double cirBps);
+    void AddTsw2cmPolicy(Ptr<EdgeQueueDisc> edge,
+                         uint8_t codePt,
+                         double cirBps,
+                         double winLenSeconds = 1.0);
 
     /**
      * @brief Add a TSW3CM policy entry.
@@ -268,8 +272,13 @@ class Helper
      * @param codePt DSCP code point this policy applies to
      * @param cirBps committed information rate in bits/s
      * @param pirBps peak information rate in bits/s
+     * @param winLenSeconds TSW averaging-window length in seconds (default 1.0)
      */
-    void AddTsw3cmPolicy(Ptr<EdgeQueueDisc> edge, uint8_t codePt, double cirBps, double pirBps);
+    void AddTsw3cmPolicy(Ptr<EdgeQueueDisc> edge,
+                         uint8_t codePt,
+                         double cirBps,
+                         double pirBps,
+                         double winLenSeconds = 1.0);
 
     // -------------------------------------------------------------------------
     // Policer entries

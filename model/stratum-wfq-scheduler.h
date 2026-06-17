@@ -59,7 +59,7 @@ namespace ns3::stratum
  * asymptotically; finite-window throughput shares may deviate by up to
  * `L_max` per flow during the busy-set startup transient. The
  * tighter per-packet variant that closes that startup gap is
- * `Wf2qPlusScheduler` (Bennett-Zhang 1996).
+ * `Wf2qPlusScheduler` (Bennett-Zhang, ToN 1997).
  */
 class WfqScheduler : public Scheduler
 {

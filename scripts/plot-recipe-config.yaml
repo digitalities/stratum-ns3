@@ -584,7 +584,7 @@ recipes:
           source: measured
           notes: >
             DualPI2 bottleneck at 10 Mbps, 60 s run (10 s warmup). cwnd-L.csv and
-            cwnd-C.csv each carry time_s,cwnd_bytes. Both senders show 100+ reduction
+            cwnd-C.csv each carry time_s,cwnd_bytes. Both senders show 70-90 reduction
             events per trace confirming responsive behaviour. The L4S sender uses
             TcpDctcp with ECT(1) marking; the Classic sender uses TcpCubic with
             ECT(0). Both cwnd traces converge to similar steady-state values
@@ -603,7 +603,8 @@ recipes:
           source: measured
           notes: >
             p_L time series sampled every 50 ms over 60 s. Both flows are responsive;
-            observed L:C throughput ratio mean = 1.224 (in fixture envelope [0.979, 1.469]).
+            observed L:C throughput ratio: default-seed 1.015, cross-seed mean 0.98
+            (range [0.73, 1.30] over 10 seeds; within the [0.60, 1.35] fixture bracket).
             p_L distribution captures the DualPI2 marking regime under real congestion:
             values cluster near zero post-convergence, spiking during cwnd reduction events.
             The third plot (L:C ratio ECDF) is omitted because derived_col is not

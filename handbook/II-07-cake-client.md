@@ -796,7 +796,8 @@ accumulates into an open measurement window; an inter-arrival
 exponentially-weighted moving average filters short-term bursts; and when an
 inter-arrival exceeds that running average the window closes, folding its
 bytes-per-second into a peak-bandwidth estimate. The reconfigure target is
-15/16 (≈ 93.75 %) of that estimate, throttled by a 250 ms deadband.
+15/16 (≈ 93.75 %) of that estimate, applied on each window close past a 250 ms
+warm-up.
 
 The kernel filters the two directions asymmetrically. The peak estimate
 *attacks upward* quickly (a one-quarter weight) when a faster window
@@ -813,13 +814,36 @@ helper.SetEnableAutorateIngress(true);
 
 **Convergence.** Driven by a single-packet arrival train whose spacing encodes
 a 10 Mbit/s bottleneck, and starting from a 2 Mbit/s bootstrap guess, the
-aggregate shaper climbs to **9.51 Mbit/s** within a fraction of a second and
-holds. When the bottleneck steps up to 20 Mbit/s, the shaper re-adapts upward
-to **19.02 Mbit/s**. Both sit a little above 15/16 of the nominal bottleneck
-(9.375 and 18.75 Mbit/s) because the measured wire length includes the 20-byte
-IPv4 header: the shaper tracks the *delivered* byte rate, header and all.
+aggregate shaper climbs to **9.51 Mbit/s** and holds. When the bottleneck steps
+up to 20 Mbit/s, the shaper re-adapts upward to **19.02 Mbit/s**. Both sit a
+little above 15/16 of the nominal bottleneck (9.375 and 18.75 Mbit/s) because the
+measured wire length includes the 20-byte IPv4 header: the shaper tracks the
+*delivered* byte rate, header and all.
 
-![CAKE autorate-ingress convergence. The aggregate path-β shaper starts at a 2 Mbit/s bootstrap, tracks upward to 9.51 Mbit/s against a 10 Mbit/s bottleneck — just above the dashed 15/16 set-point, the small excess being the counted 20-byte IPv4 header — and re-adapts upward to 19.02 Mbit/s after the bottleneck steps to 20 Mbit/s at the two-second mark. Deterministic single-packet workload, σ = 0.](figures/cake-autorate-converge/cake-autorate-converge.svg)
+The upward re-adaptation is not instantaneous. On a smooth, near-constant-rate
+train the rate holds flat for about a second after the step, then rises in one
+move. This is the window-close cadence, not sluggishness: a window closes only
+when an inter-arrival exceeds the running average, and a step *up* halves the
+spacing, so every new inter-arrival sits below the pre-step average until that
+average decays to the new spacing. Real traffic, with its bursts and gaps, keeps
+closing windows continuously and re-adapts in a fraction of a second; the
+deterministic train is the slow case, not the typical one.
+
+**Cross-stack validation.** The same stepping scenario run against native Linux
+`sch_cake` in `autorate-ingress` mode confirms the estimator. On the smooth
+train, ns-3 and Linux hold flat for the same ~1 s window-close lag and then rise
+to the same plateaus (the per-phase estimates agree to within ≈ 1.5 %). On real
+Linux, bursty traffic — frequent gaps — re-adapts in about 0.2 s, exactly as the
+mechanism predicts. The post-step lag is therefore a property of the smooth
+workload, not of CAKE or of the port. (A *responsive* transport such as TCP
+cannot be used to measure this: the ingress shaper drops to its set-point, the
+transport reads the drops as congestion and slows, and the estimate spirals
+down — so the measurement uses a non-responsive packet source on both stacks.)
+The measurements, drivers, and provenance are archived in the validation dataset
+(concept DOI [10.5281/zenodo.20724063](https://doi.org/10.5281/zenodo.20724063)),
+alongside the host-isolation cross-stack data.
+
+![CAKE autorate-ingress convergence, ns-3 versus native Linux. Left: on a smooth 10→20 Mbit/s stepping train (step at the ten-second mark), the ns-3 shaper (solid) and native Linux sch_cake autorate-ingress (dashed) both hold flat for about a second after the step, then rise to the same plateau — the same window-close cadence, validating the byte-exact estimator. ns-3 starts from the 2 Mbit/s bootstrap while Linux starts from zero, hence the different initial ramp. Right: on real Linux, bursty traffic re-adapts in about 0.2 s because its gaps close windows continuously; the post-step lag belongs to the smooth workload, not to CAKE.](figures/cake-autorate-converge/cake-autorate-xstack.svg)
 
 **Sticky downward.** The slow-decay direction is the counterpart. Seeded at
 20 Mbit/s and then offered only 5 Mbit/s, the estimate is still **11.3 Mbit/s**

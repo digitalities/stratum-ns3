@@ -41,7 +41,10 @@ LiveBulkCounter::Attach(Ptr<QueueDisc> inner, Time idleWindow)
 
     if (idleWindow.IsZero())
     {
-        // Default: 8 x inner's Interval (matches Linux bulk_flow_threshold).
+        // Default idle window: 8 x the inner's Interval. This is a Stratum
+        // heuristic for deciding when a host's flow has gone quiet; sch_cake
+        // has no time-window bulk threshold (its SPARSE/BULK classification is
+        // the per-flow DRR-rotation transition), so this is not a Linux port.
         // FqCobaltQueueDisc stores Interval as a StringValue (e.g. "100ms").
         StringValue intervalStr;
         if (inner->GetAttributeFailSafe("Interval", intervalStr))

@@ -42,14 +42,14 @@ LinuxAutorateHook::SeedRate(uint64_t rateBps)
 }
 
 void
-LinuxAutorateHook::OnEnqueue(uint32_t adjLenBytes, Time now)
+LinuxAutorateHook::OnEnqueue(uint32_t rawLenBytes, Time now)
 {
-    NS_LOG_FUNCTION(this << adjLenBytes << now);
+    NS_LOG_FUNCTION(this << rawLenBytes << now);
 
-    // Accumulate this packet's bytes into the open window first, mirroring the
-    // stats block at sch_cake.c:1871 (avg_window_bytes += len) which runs
+    // Accumulate this packet's raw bytes into the open window first, mirroring
+    // the stats block at sch_cake.c:1871 (avg_window_bytes += len) which runs
     // before the capacity-estimate block.
-    m_windowBytes += adjLenBytes;
+    m_windowBytes += rawLenBytes;
 
     // Incoming-bandwidth capacity estimate (sch_cake.c:1880-1916).
     uint64_t packetInterval = (now - m_lastEnqueue).GetNanoSeconds();
@@ -84,32 +84,51 @@ LinuxAutorateHook::OnEnqueue(uint32_t adjLenBytes, Time now)
         }
         m_windowBytes = 0;
         m_windowStart = now;
+        // The kernel evaluates the reconfigure inside this window-close branch
+        // (sch_cake.c:1897-1916); signal it to ComputeRateDelta.
+        m_windowJustClosed = true;
     }
 }
 
 int64_t
 LinuxAutorateHook::ComputeRateDelta(uint64_t currentRateBps) const
 {
-    const Time now = Simulator::Now();
-    if (m_haveReconfigured && (now - m_lastReconfig) < MilliSeconds(250))
+    // The kernel evaluates the reconfigure inside cake_enqueue, using the
+    // arriving packet's time, only on a window close and gated by
+    // `now > last_reconfig_time + 250 ms`. In the frozen sch_cake.c
+    // last_reconfig_time is never written (stays 0), so the gate reduces to
+    // "more than 250 ms of uptime", anchored at the shaper's start rather than
+    // a rolling per-update deadband. The relevant clock is the last arrival
+    // time (which equals Simulator::Now() when called after OnEnqueue), not an
+    // independent read. Consume the window-close event whether or not the gate
+    // is open, so a window that closes before 250 ms does not make a later
+    // non-window-close packet reconfigure.
+    const Time now = m_lastEnqueue;
+    const bool windowClosed = m_windowJustClosed;
+    m_windowJustClosed = false;
+    if (!windowClosed || now <= MilliSeconds(250))
     {
         return 0;
     }
-    m_haveReconfigured = true;
-    m_lastReconfig = now;
 
     if (m_avgPeakBandwidth == 0)
     {
         return 0;
     }
 
+    return static_cast<int64_t>(ComputeTargetBps()) - static_cast<int64_t>(currentRateBps);
+}
+
+uint64_t
+LinuxAutorateHook::ComputeTargetBps() const
+{
     // Target rate = avg_peak_bandwidth x 15/16 (sch_cake.c:1913), computed in
     // the kernel's bytes/sec unit, then converted to the dispatcher's bits/sec.
     // The x8 follows the >>4 (kernel order); doing it earlier would change the
-    // low bits the truncation drops.
+    // low bits the truncation drops. This is the byte-exact estimator output,
+    // independent of the reconfigure cadence that gates ComputeRateDelta.
     const uint64_t targetBytesPerSec = (m_avgPeakBandwidth * 15ULL) >> 4;
-    const uint64_t targetBps = targetBytesPerSec * 8ULL;
-    return static_cast<int64_t>(targetBps) - static_cast<int64_t>(currentRateBps);
+    return targetBytesPerSec * 8ULL;
 }
 
 } // namespace ns3::stratum::cake

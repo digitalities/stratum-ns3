@@ -295,13 +295,19 @@ HybridLlqDispatcher::OnDequeue(uint32_t slot, Ptr<QueueDiscItem> item, EdgeQueue
     const uint32_t kMax = EdgeQueueDisc::kMaxInnerSlots;
     if (!inner || inner->GetNPackets() == 0)
     {
-        // Drain-to-empty: reset deficit so an idle tin does not
-        // accrue save-up credit across the quiet period. Leave the
-        // cursor on this slot — when work returns it (the typical
-        // single-active-tin case under TCP), the next
-        // SelectDequeueSlot starts here rather than walking through
-        // every empty slot first.
+        // Drain-to-empty: reset deficit so an idle tin does not accrue
+        // save-up credit across the quiet period, and advance the cursor
+        // so other backlogged slots get service before this one is
+        // re-credited. Parking the cursor here would let a slot whose
+        // queue keeps bouncing off empty (ACK-clocked TCP holds it at one
+        // or two packets) collect a fresh quantum at every refill without
+        // ever reaching the round-completion yield below, starving every
+        // other backlogged slot for the length of a sender burst. Linux
+        // cake_dequeue advances cur_tin past a tin with no servable flows
+        // for the same reason; the pure-DRR sibling TinShaperDispatcher
+        // does likewise.
         m_deficit[slot] = 0;
+        m_drrCursor = (slot + 1) % kMax;
         return;
     }
     if (m_deficit[slot] <= 0)

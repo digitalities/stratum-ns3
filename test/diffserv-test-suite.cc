@@ -49,6 +49,8 @@
 #include "ns3/stratum-policy-classifier.h"
 #include "ns3/stratum-policy-entry.h"
 #include "ns3/stratum-pq-scheduler.h"
+#include "ns3/stratum-cake-linux-autorate-hook.h"
+#include "ns3/stratum-rate-based-shaper-dispatcher.h"
 #include "ns3/stratum-rate-based-tin-clock.h"
 #include "ns3/stratum-red-queue-disc.h"
 #include "ns3/stratum-red-sub-queue.h"
@@ -2304,6 +2306,89 @@ class MeterCascadeHelperPathTest : public TestCase
                               "Different seeds must produce different colour vectors "
                               "(helper-path cascade is a no-op?)");
 
+        Simulator::Destroy();
+    }
+};
+
+// =============================================================================
+//  S-13.17: TSW window length is wired through the helper
+// =============================================================================
+//
+// The TSW meters read PolicyEntry::winLen (the EWMA window), but the
+// helper's AddTsw2cmPolicy / AddTsw3cmPolicy gave no way to set it, so
+// it was pinned to the 1.0 s default. RFC 2859 leaves the window
+// implementation-defined, so this is configuration completeness, not
+// conformance: a winLen passed to the helper must reach the meter and
+// change the rate estimate. A same-instant burst makes the dependence
+// observable: avgRate accumulates as k * bytes / winLen, so a long
+// window keeps the burst's estimate below CIR (no downgrades) while a
+// short window pushes it far above CIR (downgrades fire).
+//
+/**
+ * @brief Verifies the helper forwards the TSW window length to the meter.
+ * @see specs/02-structural.md S-13.8
+ */
+class TswWinLenHelperWiringTest : public TestCase
+{
+  public:
+    TswWinLenHelperWiringTest()
+        : TestCase("S-13.17 TSW window length wired by helper changes the rate estimate")
+    {
+    }
+
+  private:
+    // RED count for a 60-packet same-instant burst at the given window.
+    uint32_t CountReds(double winLenSeconds)
+    {
+        Ptr<EdgeQueueDisc> edge = CreateObject<EdgeQueueDisc>();
+        auto inner = CreateObject<RedQueueDisc>();
+        edge->SetInnerDisc(inner);
+        inner->SetNumQueues(1);
+
+        diffserv::Helper h;
+        // CIR 1 Mbps = 125000 B/s.
+        h.AddTsw2cmPolicy(edge, /*codePt=*/10, /*cirBps=*/1000000.0, /*winLenSeconds=*/winLenSeconds);
+        h.AddPolicerEntry(edge,
+                          PolicerType::TSW2CM,
+                          /*initialCodePt=*/10,
+                          /*downgrade1=*/11,
+                          /*downgrade2=*/12);
+
+        inner->AddPhbEntry(10, 0, 0);
+        inner->SetScheduler(
+            CreateObjectWithAttributes<RoundRobinScheduler>("NumQueues", UintegerValue(1)));
+        edge->Initialize();
+        edge->AssignStreams(7);
+
+        auto pc = edge->GetPolicyClassifier();
+        uint32_t reds = 0;
+        // Same-instant burst (all at t = 0): avgRate accumulates as
+        // k * 1000 / winLen. At winLen = 1.0, 60 * 1000 = 60000 B/s stays
+        // below CIR for the whole burst; at a short window it blows past it.
+        for (int i = 0; i < 60; ++i)
+        {
+            uint8_t dscp = pc->ApplyPolicy(10, 1000, 0.0);
+            if (dscp == 12)
+            {
+                ++reds;
+            }
+        }
+        Simulator::Destroy();
+        return reds;
+    }
+
+    void DoRun() override
+    {
+        uint32_t redsLong = CountReds(1.0);
+        uint32_t redsShort = CountReds(0.001);
+        NS_TEST_ASSERT_MSG_EQ(redsLong,
+                              0U,
+                              "a long TSW window keeps the burst's rate estimate below CIR "
+                              "-> no downgrades");
+        NS_TEST_ASSERT_MSG_GT(redsShort,
+                              redsLong,
+                              "a short TSW window raises the rate estimate above CIR -> "
+                              "downgrades; the window length must be wired through the helper");
         Simulator::Destroy();
     }
 };
@@ -4703,6 +4788,75 @@ class HybridLlqOnDequeueAccountsOnlyDrrTest : public TestCase
 };
 
 // ---------------------------------------------------------------------
+//  hybrid LLQ: DRR cursor must advance off a drained slot
+// ---------------------------------------------------------------------
+
+/**
+ * @brief A DRR slot that drains to empty must release the dispatcher cursor so
+ * the next backlogged slot gets its turn.
+ *
+ * Parking the cursor on a slot that keeps bouncing off empty (an ACK-clocked TCP
+ * flow holds a slot at ~one packet that drains each service) lets that slot
+ * collect a fresh quantum at every refill while other backlogged slots starve.
+ * The pure DRR dispatcher (cake::TinShaperDispatcher) advances the cursor on
+ * drain-to-empty, matching Linux cake_dequeue's `cur_tin++` past a tin with no
+ * servable flows; the hybrid-LLQ dispatcher must do the same.
+ */
+class HybridLlqDrrCursorYieldsOnDrainTest : public TestCase
+{
+  public:
+    HybridLlqDrrCursorYieldsOnDrainTest()
+        : TestCase("hybrid LLQ: DRR cursor yields on drain so a bouncing slot does not monopolise")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const uint32_t payload = 500;
+        const uint32_t wireSize = payload + 20;
+
+        Ptr<EdgeQueueDisc> edge = CreateObject<EdgeQueueDisc>();
+        Ptr<HybridLlqDispatcher> hybrid = CreateObject<HybridLlqDispatcher>();
+        // SP slot 0 (idle here); equal-quantum DRR slots 1 and 2.
+        ConfigureHybridLlqEdge(edge, hybrid, 0, {1, 2}, {wireSize, wireSize});
+
+        // Serve DRR slot 1 down to empty — the bouncing-slot pattern.
+        NS_TEST_ASSERT_MSG_EQ(edge->Enqueue(MakeTinShaperItem(20, payload)),
+                              true,
+                              "slot 1 initial enqueue");
+        Ptr<QueueDiscItem> first = edge->Dequeue();
+        NS_TEST_ASSERT_MSG_NE(first, nullptr, "first dequeue (slot 1)");
+
+        // Refill slot 1 and also backlog slot 2. With the cursor correctly
+        // advanced off the drained slot 1, the next DRR turn goes to slot 2;
+        // a parked cursor re-serves slot 1 on a fresh quantum instead.
+        NS_TEST_ASSERT_MSG_EQ(edge->Enqueue(MakeTinShaperItem(20, payload)),
+                              true,
+                              "slot 1 refill");
+        NS_TEST_ASSERT_MSG_EQ(edge->Enqueue(MakeTinShaperItem(30, payload)),
+                              true,
+                              "slot 2 enqueue");
+
+        Ptr<QueueDiscItem> next = edge->Dequeue();
+        NS_TEST_ASSERT_MSG_NE(next, nullptr, "second dequeue");
+        if (next)
+        {
+            Ptr<Ipv4QueueDiscItem> ip = DynamicCast<Ipv4QueueDiscItem>(next);
+            const uint32_t dscp = ip->GetHeader().GetTos() >> 2;
+            NS_TEST_ASSERT_MSG_EQ(dscp,
+                                  30u,
+                                  "after slot 1 drained and both slots refilled, the DRR cursor "
+                                  "must yield to slot 2 (DSCP 30); a parked cursor re-served "
+                                  "slot 1 (DSCP "
+                                      << dscp << "), starving the other backlogged slot");
+        }
+
+        Simulator::Destroy();
+    }
+};
+
+// ---------------------------------------------------------------------
 //  S-17.15: cake::TinTokenBucket unit math
 //
 //  Pins the bucket arithmetic in isolation:
@@ -6292,6 +6446,63 @@ class CakeHelperDscpMapMatchesLinuxDiffserv4Test : public TestCase
                               "diffserv4 DSCP map diverges from the sch_cake table:"
                                   << detail.str());
 
+        Simulator::Destroy();
+    }
+};
+
+/**
+ * @brief The standalone rate-based (autorate-ingress) diffserv4 DSCP map matches
+ * the same Linux sch_cake.c diffserv4[] table the composer uses.
+ *
+ * The composer path (SetAsCakeDiffserv4) transcribes the kernel table; the
+ * RateBased shaper path built a separate hand-written predicate map that
+ * drifted from it. Both must agree with sch_cake.c over all 64 code points.
+ */
+class RateBasedDiffserv4DscpMapMatchesLinuxTest : public TestCase
+{
+  public:
+    RateBasedDiffserv4DscpMapMatchesLinuxTest()
+        : TestCase("rate-based diffserv4 DSCP map matches Linux sch_cake diffserv4[]")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        cake::Helper helper;
+        helper.SetShaperMode(cake::Helper::ShaperMode::RateBased);
+        helper.SetGlobalRateBps(10000000ULL);
+        helper.SetTinRateBpsAll(10000000ULL);
+        helper.SetTinCount(4);
+        Ptr<QueueDisc> disp = helper.BuildDispatcher();
+        Ptr<cake::RateBasedShaperDispatcher> rb =
+            DynamicCast<cake::RateBasedShaperDispatcher>(disp);
+        NS_TEST_ASSERT_MSG_NE(rb,
+                              nullptr,
+                              "RateBased BuildDispatcher must yield a RateBasedShaperDispatcher");
+        if (!rb)
+        {
+            return;
+        }
+
+        // BE(0)->slot 1, Bulk(1)->slot 0, Video(2)->slot 2, Voice(3)->slot 3.
+        constexpr std::array<uint8_t, 4> kTinToSlot = {1, 0, 2, 3};
+        uint32_t mismatches = 0;
+        std::ostringstream detail;
+        for (uint32_t dscp = 0; dscp < 64; ++dscp)
+        {
+            const uint32_t expected = kTinToSlot[kLinuxDiffserv4Tin[dscp]];
+            const uint32_t actual = rb->GetDscpToSlot(static_cast<uint8_t>(dscp));
+            if (actual != expected)
+            {
+                ++mismatches;
+                detail << " dscp" << dscp << "=" << actual << "(want " << expected << ")";
+            }
+        }
+        NS_TEST_ASSERT_MSG_EQ(mismatches,
+                              0u,
+                              "rate-based diffserv4 DSCP map diverges from sch_cake diffserv4[]:"
+                                  << detail.str());
         Simulator::Destroy();
     }
 };
@@ -8317,6 +8528,62 @@ class LlqRateCapSmokeTest : public TestCase
     }
 };
 
+/**
+ * @brief LLQ priority lane is policed: once the EF lane's measured rate exceeds
+ * its cap, the LLQ yields to the fair lane instead of serving EF.
+ *
+ * RFC 3246 requires the EF aggregate to be rate-limited so it cannot starve
+ * other PHBs. The cap can only engage if EF-lane departures reach the inner
+ * priority scheduler's rate estimator, and the inner scheduler must decline
+ * (rather than fall back to serving its lone queue) once that queue is over
+ * cap, so the outer LLQ can serve the fair lane. Mirrors the standalone
+ * S-6.2 PriorityScheduler rate cap, but on the composed LLQ path.
+ */
+class LlqPqRateCapEngagesTest : public TestCase
+{
+  public:
+    LlqPqRateCapEngagesTest()
+        : TestCase("S-11.4 LLQ PQ rate cap engages: EF lane over cap yields to the fair lane")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<LlqScheduler> sched =
+            CreateObjectWithAttributes<LlqScheduler>("NumQueues",
+                                                     UintegerValue(2),
+                                                     "LinkBandwidth",
+                                                     DoubleValue(48000.0),
+                                                     "FqVariant",
+                                                     EnumValue(LlqScheduler::FqVariant::SCFQ));
+        sched->SetParam(1, 1.0);
+        // Very low EF (queue 0) rate cap: any real departure exceeds it.
+        sched->SetPqRateCap(1.0);
+
+        // Backlog both the EF lane (queue 0) and the fair lane (queue 1).
+        for (int i = 0; i < 10; ++i)
+        {
+            sched->OnEnqueueWithTime(0, 1000, 0.0);
+            sched->OnEnqueueWithTime(1, 1000, 0.0);
+        }
+
+        // Simulate an EF-lane departure (top-level queue 0): drives the EF
+        // average rate far above the cap. This only engages the cap if the
+        // departure reaches the inner PQ's rate estimator.
+        sched->UpdateDepartureRate(0, 0, 1000, 0.1);
+
+        // EF is over its cap, so the policed LLQ must serve the fair lane.
+        int q = sched->SelectNextQueue();
+        NS_TEST_ASSERT_MSG_EQ(q,
+                              1,
+                              "LLQ EF lane over its rate cap must yield to the fair lane (queue 1); "
+                              "got queue "
+                                  << q);
+        Simulator::Destroy();
+    }
+};
+
 // =============================================================================
 //  Q-3.1: WFQ throughput shares at scale (4 queues, 1000 packets, ±2%)
 // =============================================================================
@@ -8427,6 +8694,87 @@ class WfqFairThroughputTest : public TestCase
         {
             m_count[q]++;
         }
+    }
+};
+
+// =============================================================================
+//  WFQ full-drain reactivation: virtual time must freeze across idle
+// =============================================================================
+
+/**
+ * @brief After the WFQ busy set fully drains and then reactivates, weighted
+ * service order is preserved.
+ *
+ * The busy-set virtual time advances at `1 / Sum_{i in B(t)} phi_i`. When the
+ * last backlogged flow drains, that sum must become exactly zero so `V(t)` is
+ * frozen until the next arrival (Parekh & Gallager, IEEE/ACM ToN 1(3), 1993,
+ * Eq. 10). With non-dyadic fractional weights (here `1/3` each), accumulating
+ * and then subtracting the weights leaves a one-ULP positive residue; if the
+ * sum is not pinned to zero on full drain, the next post-idle arrival computes
+ * `V = V_epoch + idle_gap / residue` (~1e16), every finish tag saturates, and
+ * the argmin scan collapses to the lowest queue index — weighted fairness is
+ * lost. Saturating-traffic gates never drain the busy set, so this regression
+ * exercises the drain-then-idle-then-reactivate path explicitly.
+ */
+class WfqFullDrainReactivationTest : public TestCase
+{
+  public:
+    WfqFullDrainReactivationTest()
+        : TestCase("WFQ full drain then reactivation preserves weighted service order")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<WfqScheduler> sched = CreateObjectWithAttributes<WfqScheduler>("NumQueues",
+                                                                           UintegerValue(3),
+                                                                           "LinkBandwidth",
+                                                                           DoubleValue(1.0e6));
+        // Equal, normalized (non-dyadic) shares — the documented weight convention.
+        sched->SetParam(0, 1.0 / 3.0);
+        sched->SetParam(1, 1.0 / 3.0);
+        sched->SetParam(2, 1.0 / 3.0);
+
+        // Busy period 1: one packet per flow at t=0, then drain the system empty.
+        for (uint32_t i = 0; i < 3; ++i)
+        {
+            sched->OnEnqueueWithTime(i, 1000, 0.0);
+        }
+        for (uint32_t i = 0; i < 3; ++i)
+        {
+            sched->SelectNextQueue();
+        }
+
+        // Idle gap, then busy period 2: five packets per flow re-offered at t=10s.
+        for (uint32_t i = 0; i < 3; ++i)
+        {
+            for (uint32_t p = 0; p < 5; ++p)
+            {
+                sched->OnEnqueueWithTime(i, 1000, 10.0);
+            }
+        }
+
+        // The first post-idle round must serve each flow exactly once
+        // (interleaved), not collapse to the lowest index.
+        bool served[3] = {false, false, false};
+        for (uint32_t k = 0; k < 3; ++k)
+        {
+            int q = sched->SelectNextQueue();
+            NS_TEST_ASSERT_MSG_GT_OR_EQ(q, 0, "WFQ returned no queue while backlogged");
+            NS_TEST_ASSERT_MSG_EQ(served[static_cast<uint32_t>(q)],
+                                  false,
+                                  "WFQ post-idle round served queue "
+                                      << q << " twice before the others — weighted fairness "
+                                              "collapsed to lowest-index priority");
+            served[static_cast<uint32_t>(q)] = true;
+        }
+
+        // Root-cause guard: virtual time must be bounded after reactivation,
+        // not the ~1e16 blowup the unclamped weight-sum residue produces.
+        NS_TEST_ASSERT_MSG_LT(sched->GetVirtualTime(),
+                              1.0e6,
+                              "WFQ virtual time blew up across the idle gap");
     }
 };
 
@@ -8847,6 +9195,78 @@ class TestFWMeterEdgeDispatch : public TestCase
         Ptr<Meter> meter2 = edge->GetMeter(MeterType::FAIR_WEIGHTED);
         NS_TEST_ASSERT_MSG_EQ(meter2, meter, "Second GetMeter call must return the cached slot");
 
+        Simulator::Destroy();
+    }
+};
+
+/**
+ * @brief The FW policer's penalty mode (PolicerEntry::downgrade2) is honoured on
+ * the classifier path, not just when ApplyPolicerFw is called directly.
+ *
+ * Periodic mode (downgrade2=2) keeps 1-in-6 excess packets at the initial code
+ * point. A colour-only policer path cannot carry the mode and downgrades every
+ * excess packet, so it would never let one through.
+ */
+class FwPolicerPeriodicModeThroughClassifierTest : public TestCase
+{
+  public:
+    FwPolicerPeriodicModeThroughClassifierTest()
+        : TestCase("FW periodic policer mode honoured on the classifier path (1-in-6)")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<EdgeQueueDisc> edge = CreateObject<EdgeQueueDisc>();
+        auto inner = CreateObject<RedQueueDisc>();
+        edge->SetInnerDisc(inner);
+        inner->SetNumQueues(1);
+        inner->AddPhbEntry(46, 0, 0);
+        inner->AddPhbEntry(0, 0, 0);
+        inner->SetScheduler(
+            CreateObjectWithAttributes<RoundRobinScheduler>("NumQueues", UintegerValue(1)));
+
+        edge->SetMeter(MeterType::FAIR_WEIGHTED, CreateObject<FWMeter>());
+
+        PolicyEntry policy;
+        policy.codePoint = 10;
+        policy.meter = MeterType::FAIR_WEIGHTED;
+        policy.policer = PolicerType::FAIR_WEIGHTED;
+        policy.policyIndex = 0;
+        policy.cir = 0; // every packet is immediately over CIR
+        edge->GetPolicyClassifier()->AddPolicyEntry(policy);
+
+        PolicerEntry policer;
+        policer.policer = PolicerType::FAIR_WEIGHTED;
+        policer.policyIndex = 0;
+        // The policer is keyed by (policyIndex, initialCodePt); initialCodePt
+        // must equal the incoming code point so the lookup matches. It is also
+        // the in-profile / periodic-pass remark.
+        policer.initialCodePt = 10;
+        policer.downgrade1 = 0;  // excess-packet remark
+        policer.downgrade2 = 2;  // periodic penalty mode (1-in-6)
+        edge->GetPolicyClassifier()->AddPolicerEntry(policer);
+
+        edge->Initialize();
+
+        // Classify the same flow 12 times. Every packet is over CIR (=0), so the
+        // periodic mode keeps every 6th packet at the initial code point (10)
+        // and downgrades the rest (0). The colour-only path cannot carry the
+        // mode and downgrades all of them, never letting one through.
+        uint32_t initials = 0;
+        for (int i = 0; i < 12; ++i)
+        {
+            const uint8_t remark = edge->GetPolicyClassifier()->ApplyPolicy(10, 1000, 1.0);
+            if (remark == 10)
+            {
+                ++initials;
+            }
+        }
+        NS_TEST_ASSERT_MSG_GT(initials,
+                              0u,
+                              "FW periodic policer mode must keep 1-in-6 packets at the initial "
+                              "code point on the classifier path; got 0 (downgrade2 mode ignored)");
         Simulator::Destroy();
     }
 };
@@ -11369,6 +11789,243 @@ class CakeAutorateIngressApiContractTest : public TestCase
     }
 };
 
+/**
+ * @brief Verifies an LLQ EF priority lane resumes once its measured rate decays
+ *        back below the configured cap.
+ *
+ * RFC 3246 polices the EF aggregate to its rate; it does not extinguish it. The
+ * cap must self-release after the EF lane backs off, exactly as the ns-2
+ * reference decays every queue's departure-rate estimator on each dequeue.
+ * @see specs/02-structural.md S-11.5
+ */
+class LlqPqRateCapRecoversAfterIdleTest : public TestCase
+{
+  public:
+    LlqPqRateCapRecoversAfterIdleTest()
+        : TestCase("S-11.5 LLQ PQ rate cap recovers: EF lane resumes after its rate decays "
+                   "below the cap")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<LlqScheduler> sched =
+            CreateObjectWithAttributes<LlqScheduler>("NumQueues",
+                                                     UintegerValue(2),
+                                                     "LinkBandwidth",
+                                                     DoubleValue(48000.0),
+                                                     "FqVariant",
+                                                     EnumValue(LlqScheduler::FqVariant::SCFQ));
+        sched->SetParam(1, 1.0);
+        // Cap = 8 kbps = 1000 bytes/s. A 1000-byte departure pushes the EF lane
+        // well over it; a few seconds of idle must bring it back under.
+        sched->SetPqRateCap(8000.0);
+
+        // Backlog both lanes.
+        for (int i = 0; i < 100; ++i)
+        {
+            sched->OnEnqueueWithTime(0, 1000, 0.0);
+            sched->OnEnqueueWithTime(1, 1000, 0.0);
+        }
+
+        // First, two EF departures drive the EF average rate above the cap.
+        sched->UpdateDepartureRate(0, 0, 1000, 0.1);
+        sched->UpdateDepartureRate(0, 0, 1000, 0.2);
+        NS_TEST_ASSERT_MSG_EQ(sched->SelectNextQueue(),
+                              1,
+                              "precondition: EF over its cap must yield to the fair lane");
+
+        // EF then stops departing; only the fair lane is served for ~3 s of
+        // model time. The EF rate estimator must decay so the cap self-releases.
+        double t = 0.2;
+        for (int i = 0; i < 30; ++i)
+        {
+            t += 0.1;
+            sched->UpdateDepartureRate(1, 0, 1000, t);
+            sched->OnEnqueueWithTime(0, 1000, t);
+            sched->OnEnqueueWithTime(1, 1000, t);
+        }
+
+        // The EF lane has now been idle and under its cap for seconds, so the
+        // strict-priority EF lane must be served again.
+        int q = sched->SelectNextQueue();
+        NS_TEST_ASSERT_MSG_EQ(q,
+                              0,
+                              "LLQ EF lane must resume once its measured rate decays below the "
+                              "cap (RFC 3246 polices the EF aggregate, it must not extinguish "
+                              "it); got queue "
+                                  << q);
+        Simulator::Destroy();
+    }
+};
+
+/**
+ * @brief Verifies @c RedSubQueue caps the active precedence count at @c kMaxPrec
+ *        so the fixed-size per-precedence parameter array is never indexed out
+ *        of bounds.
+ * @see specs/02-structural.md S-12.4
+ */
+class RedSubQueueNumPrecClampedTest : public TestCase
+{
+  public:
+    RedSubQueueNumPrecClampedTest()
+        : TestCase("S-12.4 RedSubQueue clamps numPrec to kMaxPrec (no out-of-bounds m_qParam)")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<RedSubQueue> sq = CreateObject<RedSubQueue>();
+        // Over-range misconfiguration: more precedence levels than the
+        // fixed-size m_qParam[kMaxPrec] array can hold.
+        sq->SetNumPrec(static_cast<uint32_t>(kMaxPrec) + 2);
+        NS_TEST_ASSERT_MSG_EQ(sq->GetNumPrec(),
+                              static_cast<uint32_t>(kMaxPrec),
+                              "SetNumPrec must clamp to kMaxPrec to keep m_qParam indexing "
+                              "in bounds");
+        Simulator::Destroy();
+    }
+};
+
+/**
+ * @brief Verifies the CAKE precedence preset assigns per-tin DRR quanta that
+ *        decay from tin 0, matching the Linux precedence quantum ladder.
+ *
+ * The Linux CAKE precedence configuration seeds a base quantum and decays it
+ * geometrically (each tin at 7/8 of the previous), so tin 0 (best effort)
+ * carries the largest DRR byte-share weight and tin 7 the smallest.
+ * @see specs/02-structural.md S-17.70
+ */
+class CakePrecedenceQuantumLadderTest : public TestCase
+{
+  public:
+    CakePrecedenceQuantumLadderTest()
+        : TestCase("S-17.70 CAKE precedence per-tin DRR quanta decay from tin 0 (Linux ladder)")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<EdgeQueueDisc> edge = CreateObject<EdgeQueueDisc>();
+        // enableLlq=false so the across-tin dispatcher is a plain DRR shaper and
+        // every tin (including tin 7) carries a real quantum.
+        cake::Helper::SetAsCakePrecedence(edge,
+                                          DataRate("10Mbps"),
+                                          /*enableAckFilter=*/false,
+                                          /*enableLlq=*/false,
+                                          /*enableTinShaping=*/false,
+                                          /*enableHostIsolation=*/false,
+                                          /*useInnerTbfShaping=*/false,
+                                          /*enableAckFilterAggressive=*/false);
+
+        Ptr<cake::TinShaperDispatcher> shaper =
+            DynamicCast<cake::TinShaperDispatcher>(edge->GetSlotDispatcher());
+        NS_TEST_ASSERT_MSG_NE(shaper,
+                              nullptr,
+                              "precedence (no LLQ) must install a TinShaperDispatcher");
+
+        NS_TEST_ASSERT_MSG_GT(shaper->GetQuantum(0),
+                              shaper->GetQuantum(7),
+                              "tin 0 (best effort) must carry a larger DRR quantum than tin 7, "
+                              "matching the Linux precedence quantum ladder; got q0="
+                                  << shaper->GetQuantum(0) << " q7=" << shaper->GetQuantum(7));
+
+        for (uint32_t s = 1; s < 8; ++s)
+        {
+            NS_TEST_ASSERT_MSG_GT_OR_EQ(shaper->GetQuantum(s - 1),
+                                        shaper->GetQuantum(s),
+                                        "precedence quanta must be non-increasing across the "
+                                        "ladder; slot "
+                                            << s);
+        }
+        Simulator::Destroy();
+    }
+};
+
+/**
+ * @brief Verifies the CAKE autorate capacity estimate accumulates the raw wire
+ *        length, so a configured per-tin overhead does not inflate it.
+ *
+ * The Linux capacity estimator folds the raw packet length into its window
+ * (`avg_window_bytes`, `sch_cake.c:1871`); the overhead/MPU/framing adjustment
+ * is confined to the shaper clocks. The inferred rate is therefore
+ * overhead-invariant: identical traffic at two overheads must yield the same
+ * autorate-inferred rate.
+ * @see specs/02-structural.md S-17.71
+ */
+class CakeAutorateWindowUsesRawLengthTest : public TestCase
+{
+  public:
+    CakeAutorateWindowUsesRawLengthTest()
+        : TestCase("S-17.71 CAKE autorate capacity estimate uses raw wire length "
+                   "(overhead-invariant)")
+    {
+    }
+
+  private:
+    Ptr<cake::RateBasedShaperDispatcher> m_disp;
+
+    void EnqueueOne()
+    {
+        Ptr<Packet> p = Create<Packet>(1000);
+        Ipv4Header h;
+        h.SetDscp(Ipv4Header::DscpDefault);
+        h.SetProtocol(17);
+        h.SetSource(Ipv4Address("10.0.0.1"));
+        h.SetDestination(Ipv4Address("10.0.0.2"));
+        m_disp->Enqueue(Create<Ipv4QueueDiscItem>(p, Address(), 0x0800, h));
+    }
+
+    uint64_t DriveAutorate(int32_t overhead)
+    {
+        m_disp = CreateObject<cake::RateBasedShaperDispatcher>();
+        m_disp->SetMaxSize(QueueSize("2000p"));
+        m_disp->ConfigureTin(0,
+                             100000000ULL,
+                             overhead,
+                             0,
+                             cake::RateBasedTinClock::FramingMode::NoAtm);
+        m_disp->ConfigureGlobal(100000000ULL);
+        m_disp->SetDscpToSlot(0, 0);
+        m_disp->SetAutorateHook(std::make_shared<cake::LinuxAutorateHook>());
+        m_disp->Initialize();
+
+        // Drive a windowed arrival stream spanning well past the 250 ms autorate
+        // warm-up so the capacity estimate engages and reconfigures the rate.
+        Time t = MilliSeconds(0);
+        for (int i = 0; i < 50; ++i)
+        {
+            Simulator::Schedule(t, &CakeAutorateWindowUsesRawLengthTest::EnqueueOne, this);
+            t += MilliSeconds(10);
+        }
+        Simulator::Stop(t + MilliSeconds(10));
+        Simulator::Run();
+        const uint64_t rate = m_disp->GetGlobalRateBps();
+        Simulator::Destroy();
+        m_disp = nullptr;
+        return rate;
+    }
+
+    void DoRun() override
+    {
+        const uint64_t rateNoOverhead = DriveAutorate(0);
+        const uint64_t rateLargeOverhead = DriveAutorate(1000);
+
+        NS_TEST_ASSERT_MSG_NE(rateNoOverhead,
+                              100000000ULL,
+                              "autorate must engage (move the rate off its configured value) "
+                              "for this test to discriminate");
+        NS_TEST_ASSERT_MSG_EQ(rateLargeOverhead,
+                              rateNoOverhead,
+                              "autorate capacity estimate must use raw wire length and stay "
+                              "overhead-invariant; overhead=1000 gave "
+                                  << rateLargeOverhead << " vs overhead=0 gave " << rateNoOverhead);
+    }
+};
+
 class DiffServTestSuite : public TestSuite
 {
   public:
@@ -11425,6 +12082,7 @@ class DiffServTestSuite : public TestSuite
         AddTestCase(new MeterAssignStreamsCascadeTest(), TestCase::Duration::QUICK);
         AddTestCase(new EdgeWithL4sInnerTest(), TestCase::Duration::QUICK);
         AddTestCase(new MeterCascadeHelperPathTest(), TestCase::Duration::QUICK);
+        AddTestCase(new TswWinLenHelperWiringTest(), TestCase::Duration::QUICK);
         AddTestCase(new QueueStatsProviderInterfaceTest(), TestCase::Duration::QUICK);
         AddTestCase(new S3PerClassRatePreservationTest(), TestCase::Duration::EXTENSIVE);
         AddTestCase(new MultiSlotDscpRoutingTest(), TestCase::Duration::QUICK);
@@ -11444,6 +12102,7 @@ class DiffServTestSuite : public TestSuite
         AddTestCase(new AckFilterAggressiveDropsSackTest(), TestCase::Duration::QUICK);
         AddTestCase(new AckFilterAggressiveSackArrivalTest(), TestCase::Duration::QUICK);
         AddTestCase(new CakeHelperDscpMapMatchesLinuxDiffserv4Test(), TestCase::Duration::QUICK);
+        AddTestCase(new RateBasedDiffserv4DscpMapMatchesLinuxTest(), TestCase::Duration::QUICK);
         AddTestCase(new CakeHelperDscpMapMatchesLinuxDiffserv3Test(), TestCase::Duration::QUICK);
         AddTestCase(new CakeHelperDscpMapMatchesLinuxDiffserv8Test(), TestCase::Duration::QUICK);
         AddTestCase(new CakeDiffserv3UnshapedContentionRatioTest(), TestCase::Duration::QUICK);
@@ -11455,6 +12114,7 @@ class DiffServTestSuite : public TestSuite
         AddTestCase(new HybridLlqDrrFairnessWhenSpEmptyTest(), TestCase::Duration::QUICK);
         AddTestCase(new HybridLlqPeekIsSideEffectFreeTest(), TestCase::Duration::QUICK);
         AddTestCase(new HybridLlqOnDequeueAccountsOnlyDrrTest(), TestCase::Duration::QUICK);
+        AddTestCase(new HybridLlqDrrCursorYieldsOnDrainTest(), TestCase::Duration::QUICK);
         AddTestCase(new TinTokenBucketUnitTest(), TestCase::Duration::QUICK);
         AddTestCase(new TinShaperRateCapHonoredTest(), TestCase::Duration::QUICK);
         AddTestCase(new TbfAsInnerSlotRateCapHonoredTest(), TestCase::Duration::QUICK);
@@ -11507,9 +12167,15 @@ class DiffServTestSuite : public TestSuite
         AddTestCase(new LlqPriorityFirstTest(), TestCase::Duration::QUICK);
         AddTestCase(new LlqFqManagesRemainingTest(), TestCase::Duration::QUICK);
         AddTestCase(new LlqRateCapSmokeTest(), TestCase::Duration::QUICK);
+        AddTestCase(new LlqPqRateCapEngagesTest(), TestCase::Duration::QUICK);
+        AddTestCase(new LlqPqRateCapRecoversAfterIdleTest(), TestCase::Duration::QUICK);
+        AddTestCase(new RedSubQueueNumPrecClampedTest(), TestCase::Duration::QUICK);
+        AddTestCase(new CakePrecedenceQuantumLadderTest(), TestCase::Duration::QUICK);
+        AddTestCase(new CakeAutorateWindowUsesRawLengthTest(), TestCase::Duration::QUICK);
 
         // --- Q-3: WFQ fairness ---
         AddTestCase(new WfqFairThroughputTest(), TestCase::Duration::QUICK);
+        AddTestCase(new WfqFullDrainReactivationTest(), TestCase::Duration::QUICK);
         // --- Q-4: WF2Q+ delay ---
         AddTestCase(new Wf2qpVsWfqDelayTest(), TestCase::Duration::QUICK);
 
@@ -11520,6 +12186,7 @@ class DiffServTestSuite : public TestSuite
         AddTestCase(new TestFWMeterPeriodic(), TestCase::Duration::QUICK);
         AddTestCase(new TestFWMeterMultiFlowIsolation(), TestCase::Duration::QUICK);
         AddTestCase(new TestFWMeterEdgeDispatch(), TestCase::Duration::QUICK);
+        AddTestCase(new FwPolicerPeriodicModeThroughClassifierTest(), TestCase::Duration::QUICK);
 
         // --- S-15: Statistics ---
         AddTestCase(new PacketAccountingBalanceTest(), TestCase::Duration::QUICK);

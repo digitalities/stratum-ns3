@@ -133,10 +133,10 @@ QueueDisc::QueueDisc()
       m_couplingFactor(2.0),
       m_classicAqmMode(ClassicAqm::Wred),
       m_l4sBandwidthBps(1e9),
+      m_mtu(1500),
       m_baseProb(0.0),
       m_controllerInterval(MilliSeconds(16)),
       m_lastSojournMs(0.0),
-      m_lastSojournInitialized(false),
       m_forceBaseProbForTest(false),
       m_lastCoupledProb(0.0),
       m_lastL4sMarkProb(0.0)
@@ -523,34 +523,36 @@ QueueDisc::IsL4sPacket(Ptr<const QueueDiscItem> item) const
 }
 
 double
-QueueDisc::ComputeL4sSojournMs() const
+QueueDisc::ComputeItemSojournMs(Ptr<const QueueDiscItem> item) const
 {
-    if (!m_l4sQueue)
+    if (!item)
     {
         return 0.0;
     }
-
-    // Head packet's enqueue timestamp — true sojourn.
-    Ptr<const QueueDiscItem> head = m_l4sQueue->Peek();
-    if (head)
+    // The item's own enqueue timestamp — true per-packet sojourn, read at
+    // dequeue so each packet is judged against its own age.
+    TimestampTag tag;
+    if (item->GetPacket()->PeekPacketTag(tag))
     {
-        TimestampTag tag;
-        if (head->GetPacket()->PeekPacketTag(tag))
-        {
-            Time sojourn = Simulator::Now() - tag.GetTimestamp();
-            return sojourn.GetSeconds() * 1e3;
-        }
+        Time sojourn = Simulator::Now() - tag.GetTimestamp();
+        return sojourn.GetSeconds() * 1e3;
     }
+    return 0.0;
+}
 
-    // Bandwidth proxy fallback.
-    uint32_t qlen = m_l4sQueue->GetCurrentSize().GetValue();
-    if (qlen == 0 || m_l4sBandwidthBps <= 0.0)
+uint32_t
+QueueDisc::TotalQueueBytes() const
+{
+    uint32_t bytes = 0;
+    if (m_l4sQueue)
     {
-        return 0.0;
+        bytes += m_l4sQueue->GetNBytes();
     }
-    constexpr double kMtuBytes = 1500.0;
-    double sojournSec = static_cast<double>(qlen) * 8.0 * kMtuBytes / m_l4sBandwidthBps;
-    return sojournSec * 1e3;
+    if (m_classicAqm)
+    {
+        bytes += m_classicAqm->GetNBytes();
+    }
+    return bytes;
 }
 
 double
@@ -618,13 +620,15 @@ QueueDisc::UpdateBaseProb()
     double prevSojournSec = m_lastSojournMs * 1e-3;
 
     double error = sojournSec - targetSec;
-    double derivative = m_lastSojournInitialized ? (sojournSec - prevSojournSec) : 0.0;
+    // GPRT and the RFC 9332 App. A.1 pseudocode initialise prevq = 0
+    // (m_lastSojournMs starts at 0), so the first tick applies the full
+    // beta*(curq - 0) proportional term rather than suppressing it.
+    double derivative = sojournSec - prevSojournSec;
 
     m_baseProb += kAlphaHz * error + kBetaHz * derivative;
     m_baseProb = std::clamp(m_baseProb, 0.0, 1.0);
 
     m_lastSojournMs = sojournMs;
-    m_lastSojournInitialized = true;
 }
 
 void
@@ -647,13 +651,26 @@ QueueDisc::ComputeCoupledDropProb() const
 bool
 QueueDisc::ApplyL4sCoupledMark(Ptr<QueueDiscItem> item)
 {
-    double sojournMs = ComputeL4sSojournMs();
-    // Step branch: native L4S AQM (the App. A.1 ramp with range -> 0).
-    // Coupled branch: p_CL = k * p' (App. A.1 Figure 6 line 4), capped
-    // at 1 like the recur() marking it feeds.
-    double pL = (sojournMs >= m_l4sTargetSojournMs)
-                    ? 1.0
-                    : std::clamp(m_couplingFactor * m_baseProb, 0.0, 1.0);
+    // Step branch (RFC 9332 App. A.1 StepAqm): mark with certainty once the
+    // packet's own sojourn reaches the L4S target. Coupled branch:
+    // p_CL = k * p' (App. A.1 Fig. 6 line 4), capped at 1 like the recur()
+    // marking it feeds. The coupled probabilistic mark is suppressed while
+    // the total queue is below two MTUs (App. A.1 MustDrop floor); the step
+    // mark is not gated by the floor.
+    double sojournMs = ComputeItemSojournMs(item);
+    double pL;
+    if (sojournMs >= m_l4sTargetSojournMs)
+    {
+        pL = 1.0;
+    }
+    else if (TotalQueueBytes() < 2 * m_mtu)
+    {
+        pL = 0.0;
+    }
+    else
+    {
+        pL = std::clamp(m_couplingFactor * m_baseProb, 0.0, 1.0);
+    }
     m_lastL4sMarkProb = pL;
 
     bool drewMark = (pL > 0.0) && (m_rng->GetValue(0.0, 1.0) < pL);
@@ -680,6 +697,12 @@ QueueDisc::ApplyL4sCoupledMark(Ptr<QueueDiscItem> item)
 bool
 QueueDisc::MaybeCoupledDrop(Ptr<QueueDiscItem> item)
 {
+    // RFC 9332 App. A.1 MustDrop floor (GPRT m_thLen = 2 * m_mtu): take no
+    // coupled action while the total queue sits below two MTUs.
+    if (TotalQueueBytes() < 2 * m_mtu)
+    {
+        return false;
+    }
     double pC = ComputeCoupledDropProb();
     m_lastCoupledProb = pC;
     if (pC <= 0.0)
@@ -737,9 +760,9 @@ QueueDisc::EnqueueL4s(Ptr<QueueDiscItem> item)
 {
     NS_LOG_FUNCTION(this << item);
 
-    ApplyL4sCoupledMark(item);
-
-    // Timestamp tag for true sojourn measurement at the head.
+    // Timestamp tag for per-packet sojourn measurement at dequeue. The
+    // coupled / step CE mark is applied in DoDequeue (RFC 9332 App. A.1
+    // StepAqm), keyed off this stamp, not at enqueue.
     TimestampTag tag(Simulator::Now());
     item->GetPacket()->ReplacePacketTag(tag);
 
@@ -765,6 +788,9 @@ QueueDisc::DoDequeue()
             Ptr<QueueDiscItem> item = m_l4sQueue->Dequeue();
             if (item)
             {
+                // RFC 9332 App. A.1: apply the L4S step / coupled CE mark
+                // per packet, on the way out.
+                ApplyL4sCoupledMark(item);
                 return item;
             }
         }
@@ -782,7 +808,14 @@ QueueDisc::DoDequeue()
     }
     if (static_cast<uint32_t>(idx) == m_l4sQueueIdxLegacy)
     {
-        return m_l4sQueue->Dequeue();
+        Ptr<QueueDiscItem> item = m_l4sQueue->Dequeue();
+        if (item)
+        {
+            // RFC 9332 App. A.1: apply the L4S step / coupled CE mark per
+            // packet, on the way out.
+            ApplyL4sCoupledMark(item);
+        }
+        return item;
     }
     return m_classicAqm->Dequeue();
 }

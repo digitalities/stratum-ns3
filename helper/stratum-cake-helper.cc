@@ -235,47 +235,25 @@ Helper::BuildDispatcher()
         // bulk-TCP scenarios at DSCP=0.
         if (m_tinCount == 4)
         {
-            // Tin 0 (Bulk): CS1, LE, AF11
-            rb->SetDscpToSlot(8, 0);  // CS1
-            rb->SetDscpToSlot(1, 0);  // LE
-            rb->SetDscpToSlot(10, 0); // AF11
-
-            // Tin 2 (Video): AF12, AF13, CS2, AF21..AF43
-            for (uint8_t d : {uint8_t{12},
-                              uint8_t{14},
-                              uint8_t{16},
-                              uint8_t{18},
-                              uint8_t{20},
-                              uint8_t{22},
-                              uint8_t{24},
-                              uint8_t{26},
-                              uint8_t{28},
-                              uint8_t{30},
-                              uint8_t{34},
-                              uint8_t{36},
-                              uint8_t{38}})
-            {
-                rb->SetDscpToSlot(d, 2);
-            }
-            // Tin 3 (Voice): CS4, CS5, VA, EF, CS6, CS7
-            for (uint8_t d :
-                 {uint8_t{32}, uint8_t{40}, uint8_t{44}, uint8_t{46}, uint8_t{48}, uint8_t{56}})
-            {
-                rb->SetDscpToSlot(d, 3);
-            }
-            // All remaining DSCPs -> Tin 1 (Best-Effort default).
+            // DSCP -> tin slot transcribed from the Linux sch_cake.c
+            // diffserv4[] table (the same table SetAsCakeDiffserv4 uses),
+            // mapped through this layout's slot order
+            // Bulk(0)/BE(1)/Video(2)/Voice(3). Linux storage tins: 0=BE,
+            // 1=Bulk, 2=Video, 3=Voice.
+            static constexpr std::array<uint8_t, 64> kLinuxDiffserv4Tin = {
+                0, 1, 0, 0, 2, 0, 0, 0, //
+                1, 0, 0, 0, 0, 0, 0, 0, //
+                2, 0, 2, 0, 2, 0, 2, 0, //
+                2, 0, 2, 0, 2, 0, 2, 0, //
+                3, 0, 2, 0, 2, 0, 2, 0, //
+                3, 0, 0, 0, 3, 0, 3, 0, //
+                3, 0, 0, 0, 0, 0, 0, 0, //
+                3, 0, 0, 0, 0, 0, 0, 0, //
+            };
+            static constexpr std::array<uint8_t, 4> kTinToSlot = {1, 0, 2, 3};
             for (uint8_t d = 0; d < 64; ++d)
             {
-                const bool isBulk = (d == 8 || d == 1 || d == 10);
-                const bool isVideo =
-                    (d == 12 || d == 14 || d == 16 || d == 18 || d == 20 || d == 22 || d == 24 ||
-                     d == 26 || d == 28 || d == 30 || d == 34 || d == 36 || d == 38);
-                const bool isVoice =
-                    (d == 32 || d == 40 || d == 44 || d == 46 || d == 48 || d == 56);
-                if (!isBulk && !isVideo && !isVoice)
-                {
-                    rb->SetDscpToSlot(d, 1);
-                }
+                rb->SetDscpToSlot(d, kTinToSlot[kLinuxDiffserv4Tin[d]]);
             }
             // Linux cake_config_diffserv4 scan priority: BE < Bulk < Video <
             // Voice (raw tin-index order there); this layout's slots are
@@ -808,12 +786,18 @@ Helper::SetAsCakePrecedence(Ptr<EdgeQueueDisc> edge,
     NS_LOG_FUNCTION(edge << totalRate << enableAckFilter << enableLlq << enableTinShaping
                          << enableHostIsolation << useInnerTbfShaping << enableAckFilterAggressive);
 
-    // precedence: 8 tins, one per IP precedence value (top 3 bits of
-    // DSCP). Shares are progressive — tin 0 = 0.125 (lowest precedence,
-    // bulk-equivalent), tin 7 = 1.0 (network control). The relative
-    // ordering mirrors Linux's `cake_class_quanta_precedence` table.
-    static constexpr std::array<double, 8> kShares =
-        {0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1.0};
+    // precedence: 8 tins, one per IP precedence value (top 3 bits of DSCP).
+    // Per-tin DRR shares follow Linux's cake_config_precedence quantum ladder
+    // (a base quantum decayed geometrically, quantum *= 7; quantum >>= 3), so
+    // tin 0 (best effort) carries the largest bandwidth-sharing weight and tin 7
+    // the smallest; higher tins rely on selection priority instead.
+    std::array<double, 8> shares{};
+    double share = 1.0;
+    for (auto& s : shares)
+    {
+        s = share;
+        share = share * 7.0 / 8.0;
+    }
 
     std::array<uint8_t, kMaxCodePoints> dscpMap{};
     for (uint32_t dscp = 0; dscp < kMaxCodePoints; ++dscp)
@@ -826,7 +810,7 @@ Helper::SetAsCakePrecedence(Ptr<EdgeQueueDisc> edge,
     InstallTins(edge,
                 totalRate,
                 enableAckFilter,
-                kShares.data(),
+                shares.data(),
                 8,
                 dscpMap.data(),
                 enableLlq ? 7u : kNoLlqSlot,

@@ -623,7 +623,10 @@ EdgeQueueDisc::DoEnqueue(Ptr<QueueDiscItem> item)
     // dropper drops) bubble up via AddQueueDiscClass's
     // ChildQueueDiscDropFunctor — attached per populated slot by
     // EnsureDefaultInner.
-    uint32_t slot = m_dscpToSlot[finalDscp];
+    // A DSCP is a 6-bit code point (RFC 2474), but finalDscp originates from a
+    // user-configured policer remark; mask to the 6-bit range so a misconfigured
+    // code point above 63 cannot read past the 64-entry map.
+    uint32_t slot = m_dscpToSlot[finalDscp & 0x3Fu];
     NS_ASSERT_MSG(slot < kMaxInnerSlots && m_inners[slot],
                   "DSCP " << static_cast<uint32_t>(finalDscp) << " routes to slot " << slot
                           << " which is not populated");

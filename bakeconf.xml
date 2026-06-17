@@ -58,7 +58,7 @@
       <source type="git">
         <attribute name="url" value="https://github.com/digitalities/stratum-ns3.git"/>
         <attribute name="module_directory" value="stratum"/>
-        <attribute name="revision" value="v1.2"/>
+        <attribute name="revision" value="v1.3.0"/>
       </source>
       <depends_on name="ns-3.48" optional="False"/>
       <!--

@@ -1,0 +1,301 @@
+diff --git a/src/test/ns3tc/fq-cobalt-queue-disc-test-suite.cc b/src/test/ns3tc/fq-cobalt-queue-disc-test-suite.cc
+index 41aa9680c..584534cfa 100644
+--- a/src/test/ns3tc/fq-cobalt-queue-disc-test-suite.cc
++++ b/src/test/ns3tc/fq-cobalt-queue-disc-test-suite.cc
+@@ -1730,6 +1730,42 @@ MakeAckOnlyItem(Ipv4Address src,
+     return Create<Ipv4QueueDiscItem>(p, Address(), 0x0800, ip);
+ }
+ 
++/**
++ * @ingroup system-tests-tc
++ *
++ * Build an IPv4 + TCP data-bearing ACK (the ACK flag set, but with @p
++ * payloadBytes of segment data after the TCP header). Linux cake_ack_filter
++ * accepts such a packet as a filtering TRIGGER (it only checks the ACK/SYN
++ * flags on the triggering packet); the pure-ACK / option-walk checks apply to
++ * the queued drop candidates, not the trigger.
++ */
++static Ptr<Ipv4QueueDiscItem>
++MakeDataAckItem(Ipv4Address src,
++                Ipv4Address dst,
++                uint16_t srcPort,
++                uint16_t dstPort,
++                uint32_t ackNum,
++                uint32_t payloadBytes)
++{
++    TcpHeader tcp;
++    tcp.SetSourcePort(srcPort);
++    tcp.SetDestinationPort(dstPort);
++    tcp.SetAckNumber(SequenceNumber32(ackNum));
++    tcp.SetSequenceNumber(SequenceNumber32(1));
++    tcp.SetFlags(TcpHeader::ACK);
++    tcp.SetWindowSize(65535);
++
++    Ptr<Packet> p = Create<Packet>(payloadBytes);
++    p->AddHeader(tcp);
++
++    Ipv4Header ip;
++    ip.SetSource(src);
++    ip.SetDestination(dst);
++    ip.SetProtocol(6);
++    ip.SetPayloadSize(p->GetSize());
++    return Create<Ipv4QueueDiscItem>(p, Address(), 0x0800, ip);
++}
++
+ /**
+  * @ingroup system-tests-tc
+  *
+@@ -2052,6 +2088,59 @@ class FqCobaltQueueDiscScanSkipsCobaltRejection : public TestCase
+     }
+ };
+ 
++/**
++ * @ingroup system-tests-tc
++ *
++ * A data-bearing ACK (ACK flag set, segment data after the TCP header) must be
++ * accepted as a filtering TRIGGER and drop an older redundant pure ACK in the
++ * same flow. Linux cake_ack_filter gates the triggering packet on the ACK/SYN
++ * flags only; the pure-ACK / option-walk checks apply to the queued drop
++ * candidates, not the trigger. Over-constraining the trigger to pure ACKs lets
++ * piggybacked (data + ACK) packets fail to filter redundant ACKs.
++ */
++class FqCobaltQueueDiscAckFilterDataBearingTrigger : public TestCase
++{
++  public:
++    FqCobaltQueueDiscAckFilterDataBearingTrigger()
++        : TestCase("FqCobalt ACK filter: a data-bearing ACK is a valid trigger")
++    {
++    }
++
++  private:
++    void DoRun() override
++    {
++        const Ipv4Address srcA("10.1.1.1");
++        const Ipv4Address dstA("10.2.2.2");
++        constexpr uint16_t kSport = 1024;
++        constexpr uint16_t kDport = 80;
++
++        // Roomy queue so the trigger is not Cobalt-rejected.
++        Ptr<FqCobaltQueueDisc> q = CreateObjectWithAttributes<FqCobaltQueueDisc>(
++            "EnableAckFilter",
++            BooleanValue(true),
++            "EnableAckFilterAggressive",
++            BooleanValue(true),
++            "MaxSize",
++            QueueSizeValue(QueueSize("8p")));
++        q->SetQuantum(1514);
++        q->Initialize();
++
++        // Two redundant pure ACKs (cumulative 10), then a data-bearing ACK with
++        // a higher cumulative number. The data-bearing ACK must trigger the
++        // filter and drop a redundant older pure ACK.
++        q->Enqueue(MakeAckOnlyItem(srcA, dstA, kSport, kDport, 10));
++        q->Enqueue(MakeAckOnlyItem(srcA, dstA, kSport, kDport, 10));
++        q->Enqueue(MakeDataAckItem(srcA, dstA, kSport, kDport, 20, /*payloadBytes=*/200));
++
++        NS_TEST_ASSERT_MSG_GT(q->GetAckFilterDrops(),
++                              0u,
++                              "A data-bearing ACK must trigger the ACK filter (Linux gates the "
++                              "trigger on flags only); got 0 drops, so the trigger was wrongly "
++                              "rejected for carrying segment data.");
++        Simulator::Destroy();
++    }
++};
++
+ /**
+  * @ingroup system-tests-tc
+  *
+@@ -4546,6 +4635,7 @@ FqCobaltQueueDiscTestSuite::FqCobaltQueueDiscTestSuite()
+     AddTestCase(new FqCobaltQueueDiscSetLinearProbing, TestCase::Duration::QUICK);
+     AddTestCase(new FqCobaltQueueDiscL4sMode, TestCase::Duration::QUICK);
+     AddTestCase(new FqCobaltQueueDiscAckFilter, TestCase::Duration::QUICK);
++    AddTestCase(new FqCobaltQueueDiscAckFilterDataBearingTrigger, TestCase::Duration::QUICK);
+     AddTestCase(new FqCobaltQueueDiscAckFilterIpv6, TestCase::Duration::QUICK);
+     AddTestCase(new FqCobaltQueueDiscAckFilterDropReason, TestCase::Duration::QUICK);
+     AddTestCase(new FqCobaltQueueDiscExtractFlowKeyTcpOnly, TestCase::Duration::QUICK);
+diff --git a/src/traffic-control/model/fq-cobalt-queue-disc.cc b/src/traffic-control/model/fq-cobalt-queue-disc.cc
+index 12afeab79..a43fd7b13 100644
+--- a/src/traffic-control/model/fq-cobalt-queue-disc.cc
++++ b/src/traffic-control/model/fq-cobalt-queue-disc.cc
+@@ -1174,18 +1174,30 @@ NotAfter32(uint32_t a, uint32_t b)
+  *
+  * Both @c IsAckCandidate (queued-side gate) and @c IsValidAckTrigger
+  * (trigger-side gate) need the same wire-level decoding: TCP header bounds,
+- * cumulative ACK number, flags, TCP option walk (rejecting unknown options
+- * per Linux cake_tcph_may_drop), TS extraction, payload-length check. The
+- * only difference is which TCP-flag mask disqualifies the item:
+- *   - trigger-side rejects SYN only (sch_cake.c:1249-1251);
+- *   - queued-side rejects SYN | FIN | RST | URG | PSH (sch_cake.c:1310-1316).
++ * cumulative ACK number, flags, TCP option walk, TS extraction,
++ * payload-length check. The differences, selected by @p requireDroppable:
++ *   - flag mask: trigger-side rejects SYN only (sch_cake.c:1249-1251);
++ *     queued-side rejects SYN | FIN | RST | URG | PSH (sch_cake.c:1310-1316);
++ *   - a queued drop candidate (@p requireDroppable true) must parse cleanly,
++ *     be a pure ACK (payload == 0), and carry no unknown TCP option (Linux
++ *     cake_tcph_may_drop);
++ *   - the trigger (@p requireDroppable false) is gated on the ACK/SYN flags
++ *     alone (sch_cake.c:1246-1251) and reads its timestamp tolerantly
++ *     (cake_tcph_get_tstamp): it may carry data and an unknown, malformed, or
++ *     truncated option without being disqualified -- the option walk stops at
++ *     the malformation rather than rejecting the packet.
+  *
+- * Returns true on a wire-valid ACK-only segment (payload == 0) with no
+- * disqualifying flag in @p stateFlagMask and no unknown TCP options.
++ * The malformed / truncated-option trigger path is unreachable from a stock
++ * ns-3 @c TcpHeader, which never serializes such a header, and a hand-built
++ * one cannot survive @c Ipv4QueueDiscItem::Hash flow classification (it
++ * deserializes the header and aborts on the bad option before the filter
++ * runs), so the relaxation is verified against Linux by inspection rather than
++ * a regression test.
+  */
+ bool
+ ParseAckFilterPacket(Ptr<const QueueDiscItem> item,
+                      uint8_t stateFlagMask,
++                     bool requireDroppable,
+                      uint32_t& ackNumOut,
+                      uint32_t& tstampOut,
+                      uint32_t& tsecrOut,
+@@ -1220,10 +1232,21 @@ ParseAckFilterPacket(Ptr<const QueueDiscItem> item,
+                 (static_cast<uint32_t>(buf[10]) << 8) | buf[11];
+ 
+     const uint32_t tcpHdrBytes = ((buf[12] >> 4) & 0x0F) * 4;
+-    if (tcpHdrBytes < 20 || tcpHdrBytes > copyLen)
++    if (tcpHdrBytes < 20)
+     {
+         return false;
+     }
++    // The declared header may run past the bytes we copied. A queued drop
++    // candidate must parse cleanly, so reject it; the trigger only needs the
++    // fixed header (ACK number + flags) plus any timestamp it can read, so it
++    // walks the options that are present and stops at the truncation (Linux
++    // gates the trigger on the ACK/SYN flags alone, sch_cake.c:1246-1251, and
++    // reads the timestamp tolerantly via cake_tcph_get_tstamp).
++    if (tcpHdrBytes > copyLen && requireDroppable)
++    {
++        return false;
++    }
++    const uint32_t optWalkEnd = std::min(tcpHdrBytes, copyLen);
+     const uint8_t flags = buf[13];
+     if ((flags & stateFlagMask) != 0)
+     {
+@@ -1252,10 +1275,10 @@ ParseAckFilterPacket(Ptr<const QueueDiscItem> item,
+     // subset check is performed by ScanAndDropRedundant on a queued /
+     // trigger basis (mirrors Linux cake_tcph_sack_compare at
+     // sch_cake.c:1061-1129).
+-    if (tcpHdrBytes > 20)
++    if (optWalkEnd > 20)
+     {
+         uint32_t off = 20;
+-        while (off < tcpHdrBytes)
++        while (off < optWalkEnd)
+         {
+             const uint8_t kind = buf[off];
+             if (kind == 0) // EOL — end of options
+@@ -1267,14 +1290,27 @@ ParseAckFilterPacket(Ptr<const QueueDiscItem> item,
+                 ++off;
+                 continue;
+             }
+-            if (off + 1 >= tcpHdrBytes)
++            if (off + 1 >= optWalkEnd)
+             {
+-                return false; // option header truncated
++                // Option header truncated. A queued drop candidate must parse
++                // cleanly, so reject it; the trigger stops walking and keeps
++                // whatever timestamp it read (Linux cake_tcph_get_tstamp).
++                if (requireDroppable)
++                {
++                    return false;
++                }
++                break;
+             }
+             const uint8_t optLen = buf[off + 1];
+-            if (optLen < 2 || off + optLen > tcpHdrBytes)
++            if (optLen < 2 || off + optLen > optWalkEnd)
+             {
+-                return false; // malformed / truncated option length
++                // Malformed / truncated option length: reject a drop
++                // candidate; the trigger stops walking here.
++                if (requireDroppable)
++                {
++                    return false;
++                }
++                break;
+             }
+             if (kind == 8 && optLen == 10) // Timestamp (well-formed)
+             {
+@@ -1296,9 +1332,17 @@ ParseAckFilterPacket(Ptr<const QueueDiscItem> item,
+                 off += optLen;
+                 continue;
+             }
+-            else if (kind != 5) // SACK (kind=5) is allowed; reject anything else
++            else if (kind != 5) // SACK (kind=5) is allowed
+             {
+-                return false;
++                // Unknown option. A queued drop candidate must be rejected
++                // (Linux cake_tcph_may_drop). The triggering packet only needs
++                // the ACK flag (sch_cake.c:1246-1251), so skip the option.
++                if (requireDroppable)
++                {
++                    return false;
++                }
++                off += optLen;
++                continue;
+             }
+             off += optLen;
+         }
+@@ -1308,10 +1352,20 @@ ParseAckFilterPacket(Ptr<const QueueDiscItem> item,
+     const uint32_t totalBytes = pkt->GetSize();
+     if (totalBytes < tcpHdrBytes)
+     {
+-        return false;
++        // The declared header runs past the packet, so the payload length is
++        // unknown. A drop candidate cannot be confirmed pure-ACK, so reject
++        // it; the trigger only needs the fixed header it already parsed.
++        if (requireDroppable)
++        {
++            return false;
++        }
++        return true;
+     }
+     const uint32_t payload = totalBytes - tcpHdrBytes;
+-    return payload == 0;
++    // A queued drop candidate must be a pure ACK (no segment data). The
++    // triggering packet may carry data — Linux gates the trigger on the ACK
++    // flag only (sch_cake.c:1246-1251); the seglen check is for drop candidates.
++    return requireDroppable ? (payload == 0) : true;
+ }
+ } // namespace
+ 
+@@ -1330,7 +1384,13 @@ FqCobaltQueueDisc::IsAckCandidate(Ptr<const QueueDiscItem> item,
+     // The aggressive flag is reserved for ScanAndDropRedundant's
+     // eligibility state machine; it does not change candidacy here.
+     (void)aggressive;
+-    return ParseAckFilterPacket(item, kQueuedStateFlags, ackNumOut, tstampOut, tsecrOut, hasTsOut);
++    return ParseAckFilterPacket(item,
++                                kQueuedStateFlags,
++                                /*requireDroppable=*/true,
++                                ackNumOut,
++                                tstampOut,
++                                tsecrOut,
++                                hasTsOut);
+ }
+ 
+ bool
+@@ -1346,7 +1406,16 @@ FqCobaltQueueDisc::IsValidAckTrigger(Ptr<const QueueDiscItem> item,
+     // drop targets, not triggers); the trigger path's only flag-based
+     // exclusion is the SYN check.
+     constexpr uint8_t kTriggerStateFlags = 0x02 /*SYN*/;
+-    return ParseAckFilterPacket(item, kTriggerStateFlags, ackNumOut, tstampOut, tsecrOut, hasTsOut);
++    // The trigger only needs the ACK flag: it may carry segment data or
++    // unknown TCP options. The pure-ACK / option checks apply to the queued
++    // drop candidates, not the trigger (sch_cake.c:1246-1251).
++    return ParseAckFilterPacket(item,
++                                kTriggerStateFlags,
++                                /*requireDroppable=*/false,
++                                ackNumOut,
++                                tstampOut,
++                                tsecrOut,
++                                hasTsOut);
+ }
+ 
+ /**

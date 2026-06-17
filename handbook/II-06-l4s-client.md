@@ -97,11 +97,21 @@ Classic coupled drop:  p_C = p'^2                  [k-independent: eq. (1) is p_
 ```
 
 where $p'$ is the P.I base probability driven by the controller. The
-coupled draw runs before delegating to the inner classic AQM, so
-inner WRED early-drops remain available as a secondary signal under
-`ClassicAqm::Wred`, can be bypassed entirely under
+classic coupled drop runs at enqueue, before delegating to the inner
+classic AQM, so inner WRED early-drops remain available as a secondary
+signal under `ClassicAqm::Wred`, can be bypassed entirely under
 `ClassicAqm::CoupledOnly`, or can be replaced with FqCoDel's per-flow
 CoDel machinery under `ClassicAqm::FqCoDel`.
+
+The L4S-lane CE mark is applied at dequeue, per packet, against the
+dequeued packet's own enqueue timestamp: the step mark with certainty
+once that packet's own sojourn reaches the L4S target, otherwise the
+coupled mark $p_L = \min(k p', 1)$. The coupled mark and the classic
+coupled drop are both suppressed while the total queue (both sub-queues)
+sits below two MTUs — a near-empty queue takes no coupled action — while
+the step mark is not floor-gated. This matches the RFC 9332 App. A.1
+step AQM (mark a dequeued packet when its sojourn exceeds the target)
+and the two-MTU suppression floor in the vendored GPRT DualPI2.
 
 ### RFC 9332 App. A.1 controller
 
@@ -116,8 +126,9 @@ with the RFC-default coefficients $\alpha = 0.16$ Hz, $\beta = 3.2$ Hz
 $RTT_{max} = 100$ ms). Sojourn is the *classic* sub-queue's head
 delay (App. A.1 Fig. 6 line 2: `curq = cq.time()`), measured via
 `l4s::TimestampTag` with a bandwidth-derived proxy as defensive
-fallback; the L4S sub-queue's own sojourn drives only the step-mark
-threshold, not the PI integrator.
+fallback. The PI integrator runs only off this classic-queue sojourn;
+the per-packet L4S step mark applied at dequeue (above) is a separate
+mechanism and does not feed the integrator.
 $p'$ is clamped to $[0, 1]$; an empty classic queue drives the error
 term to $-\text{target}$ and $p'$ naturally drains to 0.
 

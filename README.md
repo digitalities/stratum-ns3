@@ -211,6 +211,15 @@ DiffServ on ns-2; the latter composes DiffServ + L4S + CAKE on ns-3.
 For the full 25-year chain see
 [github.com/digitalities/diffserv4ns](https://github.com/digitalities/diffserv4ns).
 
+## Acknowledgements
+
+The substrate builds on the work of others:
+
+- **Nortel Networks** (2000): the ns-2 DiffServ module that DiffServ4NS extended, inherited here as the classical-DiffServ client (Farhan Shallwani, Jeremy Ethridge, Peter Pieda, Mandeep Baines).
+- **Xuan Chen, ISI** (2001): ns-2 integration of the Nortel module.
+- **Pasquale Imputato and Stefano Avallone** (2016): the ns-3 traffic-control layer this substrate builds on.
+- **The GPRT group** (2026): the ns-3 DualPI2 implementation (arXiv:2603.20166) the substrate's L4S marking and coupling are validated against (Maria Eduarda Veras, Eduardo Freitas, Assis T. de Oliveira Filho, Djamel Sadok, Judith Kelner).
+
 ## Licence
 
 GPLv2, matching both ns-3 mainline and the DiffServ4NS-0.1 ancestor.

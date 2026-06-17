@@ -97,6 +97,13 @@ RateBasedShaperDispatcher::SetDscpToSlot(uint8_t dscp, uint32_t slot)
     m_dscpToSlot[dscp] = static_cast<uint8_t>(slot);
 }
 
+uint32_t
+RateBasedShaperDispatcher::GetDscpToSlot(uint8_t dscp) const
+{
+    NS_ASSERT_MSG(dscp < 64, "DSCP codepoint out of 6-bit range");
+    return m_dscpToSlot[dscp];
+}
+
 void
 RateBasedShaperDispatcher::SetIngressMode(bool enabled)
 {
@@ -208,14 +215,10 @@ RateBasedShaperDispatcher::DoEnqueue(Ptr<QueueDiscItem> item)
     // already stores a typed pointer, so this is a direct call.
     if (m_autorateHook != nullptr)
     {
-        const uint32_t adjLen = RateBasedTinClock::ComputeAdjLen(
-            item->GetSize(),
-            static_cast<uint32_t>(slot) < m_tinClocks.size() ? m_tinClocks[slot].overhead : 0,
-            static_cast<uint32_t>(slot) < m_tinClocks.size()
-                ? m_tinClocks[slot].framing
-                : RateBasedTinClock::FramingMode::NoAtm,
-            static_cast<uint32_t>(slot) < m_tinClocks.size() ? m_tinClocks[slot].mpu : 0U);
-        m_autorateHook->OnEnqueue(adjLen, now);
+        // The autorate capacity estimate accumulates the RAW wire length:
+        // sch_cake.c:1871 folds qdisc_pkt_len into avg_window_bytes, keeping the
+        // overhead/MPU/framing adjustment confined to the shaper clocks above.
+        m_autorateHook->OnEnqueue(item->GetSize(), now);
 
         // Close the autorate loop: apply the inferred rate to the aggregate
         // clock and rescale the per-tin clocks proportionally so their relative

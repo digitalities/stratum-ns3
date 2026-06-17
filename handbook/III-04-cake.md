@@ -314,6 +314,10 @@ reproduction recipe.
   *"Piece of CAKE: A Comprehensive Queue Management Solution for
   Home Gateways"*, arXiv:1804.07617, 2018.
 - Linux reference: `tc-cake(8)` manual; `iproute2` `tc/q_cake.c`.
+- Data deposit: the matched-buffer cross-stack measurements behind the
+  host-fairness analysis (methods note, figures, and raw per-replicate records)
+  are archived at DOI
+  [10.5281/zenodo.20724064](https://doi.org/10.5281/zenodo.20724064).
 - Client chapter: [The CAKE client](II-07-cake-client.md) (tins, shaping modes,
   ACK filter, feature scope, composition with the substrate).
 - Companion chapter: [The L4S client](II-06-l4s-client.md) (the substrate's other

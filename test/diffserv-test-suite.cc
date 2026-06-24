@@ -23,14 +23,16 @@
 #include "ns3/ipv4-global-routing-helper.h"
 #include "ns3/ipv4-header.h"
 #include "ns3/ipv4-queue-disc-item.h"
+#include "ns3/ipv6-header.h"
+#include "ns3/ipv6-queue-disc-item.h"
 #include "ns3/on-off-helper.h"
 #include "ns3/packet-sink-helper.h"
 #include "ns3/point-to-point-helper.h"
 #include "ns3/rng-seed-manager.h"
 #include "ns3/simulator.h"
-#include "ns3/stratum-app-type-tag.h"
 #include "ns3/stratum-aqm-registry.h"
 #include "ns3/stratum-cake-helper.h"
+#include "ns3/stratum-cake-linux-autorate-hook.h"
 #include "ns3/stratum-cake-stats-formatter.h"
 #include "ns3/stratum-constants.h"
 #include "ns3/stratum-core-queue-disc.h"
@@ -41,6 +43,7 @@
 #include "ns3/stratum-fw-meter.h"
 #include "ns3/stratum-helper.h"
 #include "ns3/stratum-hybrid-llq-dispatcher.h"
+#include "ns3/stratum-install-helper.h"
 #include "ns3/stratum-l4s-queue-disc.h"
 #include "ns3/stratum-llq-scheduler.h"
 #include "ns3/stratum-meter.h"
@@ -49,7 +52,6 @@
 #include "ns3/stratum-policy-classifier.h"
 #include "ns3/stratum-policy-entry.h"
 #include "ns3/stratum-pq-scheduler.h"
-#include "ns3/stratum-cake-linux-autorate-hook.h"
 #include "ns3/stratum-rate-based-shaper-dispatcher.h"
 #include "ns3/stratum-rate-based-tin-clock.h"
 #include "ns3/stratum-red-queue-disc.h"
@@ -1406,6 +1408,22 @@ MakePortIpv4Item(Ipv4Address src,
     return Create<Ipv4QueueDiscItem>(portPkt, Address(), 0x0800, hdr);
 }
 
+// =============================================================================
+//  Helper: create an Ipv6QueueDiscItem with given fields
+// =============================================================================
+
+static Ptr<Ipv6QueueDiscItem>
+MakeIpv6Item(Ipv6Address src, Ipv6Address dst, uint8_t protocol, uint32_t payloadSize)
+{
+    Ptr<Packet> pkt = Create<Packet>(payloadSize);
+    Ipv6Header hdr;
+    hdr.SetSource(src);
+    hdr.SetDestination(dst);
+    hdr.SetNextHeader(protocol);       // v6: SetNextHeader, not SetProtocol
+    hdr.SetPayloadLength(payloadSize); // v6: SetPayloadLength, not SetPayloadSize
+    return Create<Ipv6QueueDiscItem>(pkt, Address(), 0x86DD, hdr);
+}
+
 /// Convenience: TCP item with ports
 static Ptr<Ipv4QueueDiscItem>
 MakeTcpIpv4Item(Ipv4Address src,
@@ -1443,13 +1461,7 @@ class EdgeDscpMarkingTest : public TestCase
         inner->SetNumQueues(1);
 
         // Mark rule: any packet -> DSCP 20
-        MarkRule rule;
-        rule.dscp = 20;
-        rule.srcAddr = kAnyHost;
-        rule.dstAddr = kAnyHost;
-        rule.protocol = kAnyProtocol;
-        rule.appType = 0;
-        edge->AddMarkRule(rule);
+        edge->AddMarkRule({.dscp = 20});
 
         // Policy: DSCP 20 -> Dumb meter + Dumb policer
         PolicyEntry policy;
@@ -1539,13 +1551,7 @@ class EdgeNoMatchPassthroughTest : public TestCase
         inner->SetNumQueues(2);
 
         // Mark rule: only matches src=10.0.0.1 -> DSCP 20
-        MarkRule rule;
-        rule.dscp = 20;
-        rule.srcAddr = static_cast<int32_t>(Ipv4Address("10.0.0.1").Get());
-        rule.dstAddr = kAnyHost;
-        rule.protocol = kAnyProtocol;
-        rule.appType = 0;
-        edge->AddMarkRule(rule);
+        edge->AddMarkRule({.dscp = 20, .srcAddr = Ipv4Address("10.0.0.1")});
 
         // Policies for DSCP 46 (pass-through) and DSCP 20
         PolicyEntry policy46;
@@ -1634,22 +1640,10 @@ class EdgeSpecificAddrMatchTest : public TestCase
         inner->SetNumQueues(2);
 
         // Rule 1: src=10.0.0.1 -> DSCP 20
-        MarkRule rule1;
-        rule1.dscp = 20;
-        rule1.srcAddr = static_cast<int32_t>(Ipv4Address("10.0.0.1").Get());
-        rule1.dstAddr = kAnyHost;
-        rule1.protocol = kAnyProtocol;
-        rule1.appType = 0;
-        edge->AddMarkRule(rule1);
+        edge->AddMarkRule({.dscp = 20, .srcAddr = Ipv4Address("10.0.0.1")});
 
         // Rule 2: src=10.0.0.2 -> DSCP 30
-        MarkRule rule2;
-        rule2.dscp = 30;
-        rule2.srcAddr = static_cast<int32_t>(Ipv4Address("10.0.0.2").Get());
-        rule2.dstAddr = kAnyHost;
-        rule2.protocol = kAnyProtocol;
-        rule2.appType = 0;
-        edge->AddMarkRule(rule2);
+        edge->AddMarkRule({.dscp = 30, .srcAddr = Ipv4Address("10.0.0.2")});
 
         // Policy + policer for DSCP 20 (Dumb passthrough)
         PolicyEntry policy20;
@@ -1740,6 +1734,132 @@ class EdgeSpecificAddrMatchTest : public TestCase
 };
 
 // =============================================================================
+//  S-13.18: Edge classify+mark over IPv6 end-to-end (Q-18.1)
+// =============================================================================
+
+/**
+ * @brief Verifies the edge enqueue/classify/mark/dequeue path for IPv6 items.
+ *
+ * Two source-address mark rules select different DSCPs; ECN bits survive the
+ * DSCP rewrite unchanged.
+ *
+ * @see specs/02-structural.md S-13.18
+ */
+class EdgeIpv6ClassifyMarkTest : public TestCase
+{
+  public:
+    EdgeIpv6ClassifyMarkTest()
+        : TestCase("S-13.18 Edge classifies+marks IPv6 by source, ECN preserved")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<EdgeQueueDisc> edge = CreateObject<EdgeQueueDisc>();
+        auto inner = CreateObject<RedQueueDisc>();
+        edge->SetInnerDisc(inner);
+        inner->SetNumQueues(2);
+
+        // Rule 1: src=2001:db8::1 -> DSCP 20
+        edge->AddMarkRule({.dscp = 20, .srcAddr = Ipv6Address("2001:db8::1")});
+
+        // Rule 2: src=2001:db8::2 -> DSCP 30
+        edge->AddMarkRule({.dscp = 30, .srcAddr = Ipv6Address("2001:db8::2")});
+
+        // Policy + policer for DSCP 20 (DUMB passthrough)
+        PolicyEntry policy20;
+        policy20.codePoint = 20;
+        policy20.meter = MeterType::DUMB;
+        policy20.policer = PolicerType::DUMB;
+        policy20.policyIndex = 0;
+        edge->GetPolicyClassifier()->AddPolicyEntry(policy20);
+
+        PolicerEntry policer20;
+        policer20.policer = PolicerType::DUMB;
+        policer20.policyIndex = 0;
+        policer20.initialCodePt = 20;
+        policer20.downgrade1 = 20;
+        policer20.downgrade2 = 20;
+        edge->GetPolicyClassifier()->AddPolicerEntry(policer20);
+
+        // Policy + policer for DSCP 30 (DUMB passthrough)
+        PolicyEntry policy30;
+        policy30.codePoint = 30;
+        policy30.meter = MeterType::DUMB;
+        policy30.policer = PolicerType::DUMB;
+        policy30.policyIndex = 1;
+        edge->GetPolicyClassifier()->AddPolicyEntry(policy30);
+
+        PolicerEntry policer30;
+        policer30.policer = PolicerType::DUMB;
+        policer30.policyIndex = 1;
+        policer30.initialCodePt = 30;
+        policer30.downgrade1 = 30;
+        policer30.downgrade2 = 30;
+        edge->GetPolicyClassifier()->AddPolicerEntry(policer30);
+
+        // PHB: DSCP 20 -> queue 0, prec 0; DSCP 30 -> queue 1, prec 0
+        inner->AddPhbEntry(20, 0, 0);
+        inner->AddPhbEntry(30, 1, 0);
+
+        // Scheduler: RR with 2 queues
+        Ptr<RoundRobinScheduler> sched =
+            CreateObjectWithAttributes<RoundRobinScheduler>("NumQueues", UintegerValue(2));
+        inner->SetScheduler(sched);
+
+        edge->Initialize();
+
+        // Packet 1: from 2001:db8::1 with ECT(1) set — DSCP 20, ECN must survive
+        Ptr<Ipv6QueueDiscItem> item1 =
+            MakeIpv6Item(Ipv6Address("2001:db8::1"), Ipv6Address("2001:db8::99"), 17, 500);
+        const_cast<Ipv6Header&>(item1->GetHeader()).SetEcn(Ipv6Header::ECN_ECT1);
+        NS_TEST_ASSERT_MSG_EQ(edge->Enqueue(item1), true, "IPv6 packet 1 should enqueue");
+
+        // Packet 2: from 2001:db8::2 -> DSCP 30
+        Ptr<Ipv6QueueDiscItem> item2 =
+            MakeIpv6Item(Ipv6Address("2001:db8::2"), Ipv6Address("2001:db8::99"), 17, 500);
+        NS_TEST_ASSERT_MSG_EQ(edge->Enqueue(item2), true, "IPv6 packet 2 should enqueue");
+
+        // Dequeue both (RR: q0 first, then q1)
+        Ptr<QueueDiscItem> deq1 = edge->Dequeue();
+        NS_TEST_ASSERT_MSG_NE(deq1, nullptr, "Should dequeue IPv6 packet 1");
+        Ptr<Ipv6QueueDiscItem> ipDeq1 = DynamicCast<Ipv6QueueDiscItem>(deq1);
+        NS_TEST_ASSERT_MSG_NE(ipDeq1, nullptr, "Dequeued item 1 should be Ipv6");
+        if (!ipDeq1)
+        {
+            Simulator::Destroy();
+            return;
+        }
+        uint8_t dscp1 = ipDeq1->GetHeader().GetTrafficClass() >> 2;
+        NS_TEST_ASSERT_MSG_EQ(dscp1,
+                              20,
+                              "IPv6 packet from 2001:db8::1 should have DSCP 20, got "
+                                  << static_cast<uint32_t>(dscp1));
+        NS_TEST_ASSERT_MSG_EQ(ipDeq1->GetHeader().GetEcn(),
+                              Ipv6Header::ECN_ECT1,
+                              "ECN ECT(1) must survive the DSCP rewrite");
+
+        Ptr<QueueDiscItem> deq2 = edge->Dequeue();
+        NS_TEST_ASSERT_MSG_NE(deq2, nullptr, "Should dequeue IPv6 packet 2");
+        Ptr<Ipv6QueueDiscItem> ipDeq2 = DynamicCast<Ipv6QueueDiscItem>(deq2);
+        NS_TEST_ASSERT_MSG_NE(ipDeq2, nullptr, "Dequeued item 2 should be Ipv6");
+        if (!ipDeq2)
+        {
+            Simulator::Destroy();
+            return;
+        }
+        uint8_t dscp2 = ipDeq2->GetHeader().GetTrafficClass() >> 2;
+        NS_TEST_ASSERT_MSG_EQ(dscp2,
+                              30,
+                              "IPv6 packet from 2001:db8::2 should have DSCP 30, got "
+                                  << static_cast<uint32_t>(dscp2));
+
+        Simulator::Destroy();
+    }
+};
+
+// =============================================================================
 //  S-13.4: Port-based mark rule (RFC 2475 MF classification)
 // =============================================================================
 
@@ -1764,35 +1884,34 @@ class PortBasedMarkRuleTest : public TestCase
         inner->SetNumQueues(2);
 
         // Rule 1: TCP dstPort=23 -> DSCP 10 (AF11)
-        MarkRule rule1;
-        rule1.dscp = 10;
-        rule1.srcAddr = kAnyHost;
-        rule1.dstAddr = kAnyHost;
-        rule1.protocol = 6; // TCP
-        rule1.appType = 0;
-        rule1.srcPort = kAnyPort;
-        rule1.dstPort = 23;
-        edge->AddMarkRule(rule1);
+        edge->AddMarkRule({.dscp = 10, .protocol = 6, .dstPort = 23});
 
         // Rule 2: TCP dstPort=20 -> DSCP 12 (AF12)
-        MarkRule rule2;
-        rule2.dscp = 12;
-        rule2.srcAddr = kAnyHost;
-        rule2.dstAddr = kAnyHost;
-        rule2.protocol = 6;
-        rule2.appType = 0;
-        rule2.srcPort = kAnyPort;
-        rule2.dstPort = 20;
-        edge->AddMarkRule(rule2);
+        edge->AddMarkRule({.dscp = 12, .protocol = 6, .dstPort = 20});
 
         // Dumb policy/policer for DSCPs 10, 12, 0 (default)
         diffserv::Helper h;
         h.AddDumbPolicy(edge, 10);
         h.AddDumbPolicy(edge, 12);
         h.AddDumbPolicy(edge, 0);
-        h.AddPolicerEntry(edge, PolicerType::DUMB, 10, 10, 10);
-        h.AddPolicerEntry(edge, PolicerType::DUMB, 12, 12, 12);
-        h.AddPolicerEntry(edge, PolicerType::DUMB, 0, 0, 0);
+        h.AddPolicerEntry(edge,
+                          {.policer = PolicerType::DUMB,
+                           .initialCodePt = 10,
+                           .downgrade1 = 10,
+                           .downgrade2 = 10,
+                           .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
+        h.AddPolicerEntry(edge,
+                          {.policer = PolicerType::DUMB,
+                           .initialCodePt = 12,
+                           .downgrade1 = 12,
+                           .downgrade2 = 12,
+                           .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
+        h.AddPolicerEntry(edge,
+                          {.policer = PolicerType::DUMB,
+                           .initialCodePt = 0,
+                           .downgrade1 = 0,
+                           .downgrade2 = 0,
+                           .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
 
         h.AddPhbEntry(inner, 10, 0, 0);
         h.AddPhbEntry(inner, 12, 0, 0);
@@ -1805,8 +1924,8 @@ class PortBasedMarkRuleTest : public TestCase
 
         // Disable RED drops: set thMin > qlim so threshold check never fires.
         // This test validates classification, not RED behavior.
-        inner->ConfigQueue(0, 0, 1000.0, 2000.0, 0.1);
-        inner->ConfigQueue(1, 0, 1000.0, 2000.0, 0.1);
+        inner->ConfigQueue({.queue = 0, .prec = 0, .thMin = 1000.0, .thMax = 2000.0, .maxP = 0.1});
+        inner->ConfigQueue({.queue = 1, .prec = 0, .thMin = 1000.0, .thMax = 2000.0, .maxP = 0.1});
 
         // Packet 1: TCP to port 23 -> should get DSCP 10
         Ptr<Ipv4QueueDiscItem> item1 =
@@ -1933,13 +2052,7 @@ class MeterInjectionTest : public TestCase
                               "GetMeter should return the injected instance");
 
         // Mark rule: any packet -> DSCP 10.
-        MarkRule rule;
-        rule.dscp = 10;
-        rule.srcAddr = kAnyHost;
-        rule.dstAddr = kAnyHost;
-        rule.protocol = kAnyProtocol;
-        rule.appType = 0;
-        edge->AddMarkRule(rule);
+        edge->AddMarkRule({.dscp = 10});
 
         // Policy: DSCP 10 is metered by the (injected) SRTCM strategy.
         PolicyEntry policy;
@@ -2137,13 +2250,7 @@ class EdgeWithL4sInnerTest : public TestCase
         edge->SetInnerDisc(l4s);
 
         // Edge classifier: any packet → DSCP 46 (EF).
-        MarkRule rule;
-        rule.dscp = 46;
-        rule.srcAddr = kAnyHost;
-        rule.dstAddr = kAnyHost;
-        rule.protocol = kAnyProtocol;
-        rule.appType = 0;
-        edge->AddMarkRule(rule);
+        edge->AddMarkRule({.dscp = 46});
 
         PolicyEntry policy;
         policy.codePoint = 46;
@@ -2244,12 +2351,13 @@ class MeterCascadeHelperPathTest : public TestCase
 
         diffserv::Helper h;
         // CIR 1 Mbps = 125 KB/s; feed at 2 Mbps so expected GREEN ratio ~ 0.5.
-        h.AddTsw2cmPolicy(edge, /*codePt=*/10, /*cirBps=*/1000000.0);
+        h.AddTsw2cmPolicy(edge, {.codePt = 10, .cirBps = 1000000.0});
         h.AddPolicerEntry(edge,
-                          PolicerType::TSW2CM,
-                          /*initialCodePt=*/10,
-                          /*downgrade1=*/11,
-                          /*downgrade2=*/12);
+                          {.policer = PolicerType::TSW2CM,
+                           .initialCodePt = 10,
+                           .downgrade1 = 11,
+                           .downgrade2 = 12,
+                           .policyIndex = static_cast<uint32_t>(PolicerType::TSW2CM)});
 
         inner->AddPhbEntry(10, 0, 0);
         inner->SetScheduler(
@@ -2347,12 +2455,14 @@ class TswWinLenHelperWiringTest : public TestCase
 
         diffserv::Helper h;
         // CIR 1 Mbps = 125000 B/s.
-        h.AddTsw2cmPolicy(edge, /*codePt=*/10, /*cirBps=*/1000000.0, /*winLenSeconds=*/winLenSeconds);
+        h.AddTsw2cmPolicy(edge,
+                          {.codePt = 10, .cirBps = 1000000.0, .winLenSeconds = winLenSeconds});
         h.AddPolicerEntry(edge,
-                          PolicerType::TSW2CM,
-                          /*initialCodePt=*/10,
-                          /*downgrade1=*/11,
-                          /*downgrade2=*/12);
+                          {.policer = PolicerType::TSW2CM,
+                           .initialCodePt = 10,
+                           .downgrade1 = 11,
+                           .downgrade2 = 12,
+                           .policyIndex = static_cast<uint32_t>(PolicerType::TSW2CM)});
 
         inner->AddPhbEntry(10, 0, 0);
         inner->SetScheduler(
@@ -2424,13 +2534,7 @@ class QueueStatsProviderInterfaceTest : public TestCase
         Ptr<l4s::QueueDisc> l4s = CreateObject<l4s::QueueDisc>();
         edge->SetInnerDisc(l4s);
 
-        MarkRule rule;
-        rule.dscp = 46;
-        rule.srcAddr = kAnyHost;
-        rule.dstAddr = kAnyHost;
-        rule.protocol = kAnyProtocol;
-        rule.appType = 0;
-        edge->AddMarkRule(rule);
+        edge->AddMarkRule({.dscp = 46});
 
         PolicyEntry policy;
         policy.codePoint = 46;
@@ -2757,68 +2861,78 @@ S3PerClassRatePreservationTest::DoRun()
     edgeInner->SetScheduler(llq);
 
     // Port-based mark rules
-    helper.AddMarkRuleWithPorts(edgeDisc,
-                                46,
-                                kAnyHost,
-                                kAnyHost,
-                                kAnyProtocol,
-                                kAnyAppType,
-                                kAnyPort,
-                                5060);
-    helper.AddMarkRuleWithPorts(edgeDisc,
-                                10,
-                                kAnyHost,
-                                kAnyHost,
-                                kAnyProtocol,
-                                kAnyAppType,
-                                kAnyPort,
-                                5004);
-    helper.AddMarkRuleWithPorts(edgeDisc,
-                                18,
-                                kAnyHost,
-                                kAnyHost,
-                                kAnyProtocol,
-                                kAnyAppType,
-                                kAnyPort,
-                                23);
-    helper.AddMarkRuleWithPorts(edgeDisc,
-                                20,
-                                kAnyHost,
-                                kAnyHost,
-                                kAnyProtocol,
-                                kAnyAppType,
-                                kAnyPort,
-                                21);
-    helper.AddMarkRuleWithPorts(edgeDisc,
-                                26,
-                                kAnyHost,
-                                kAnyHost,
-                                kAnyProtocol,
-                                kAnyAppType,
-                                kAnyPort,
-                                80);
+    edgeDisc->AddMarkRule({.dscp = 46, .dstPort = 5060});
+    edgeDisc->AddMarkRule({.dscp = 10, .dstPort = 5004});
+    edgeDisc->AddMarkRule({.dscp = 18, .dstPort = 23});
+    edgeDisc->AddMarkRule({.dscp = 20, .dstPort = 21});
+    edgeDisc->AddMarkRule({.dscp = 26, .dstPort = 80});
 
     // Policies
-    helper.AddTokenBucketPolicy(edgeDisc, 46, 500000.0, 10000.0);
+    helper.AddTokenBucketPolicy(edgeDisc, {.codePt = 46, .cirBps = 500000.0, .cbsBytes = 10000.0});
     helper.AddDumbPolicy(edgeDisc, 51);
-    helper.AddTsw2cmPolicy(edgeDisc, 10, 600000.0);
+    helper.AddTsw2cmPolicy(edgeDisc, {.codePt = 10, .cirBps = 600000.0});
     helper.AddDumbPolicy(edgeDisc, 12);
     helper.AddDumbPolicy(edgeDisc, 18);
     helper.AddDumbPolicy(edgeDisc, 20);
     helper.AddDumbPolicy(edgeDisc, 26);
-    helper.AddTokenBucketPolicy(edgeDisc, 0, 400000.0, 2000.0);
+    helper.AddTokenBucketPolicy(edgeDisc, {.codePt = 0, .cirBps = 400000.0, .cbsBytes = 2000.0});
     helper.AddDumbPolicy(edgeDisc, 50);
 
     // Policers
-    helper.AddPolicerEntry(edgeDisc, PolicerType::TOKEN_BUCKET, 46, 51, 51);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 51, 51, 51);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::TSW2CM, 10, 12, 12);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 12, 12, 12);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 18, 18, 18);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 20, 20, 20);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 26, 26, 26);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::TOKEN_BUCKET, 0, 50, 50);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 50, 50, 50);
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::TOKEN_BUCKET,
+                            .initialCodePt = 46,
+                            .downgrade1 = 51,
+                            .downgrade2 = 51,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::TOKEN_BUCKET)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 51,
+                            .downgrade1 = 51,
+                            .downgrade2 = 51,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::TSW2CM,
+                            .initialCodePt = 10,
+                            .downgrade1 = 12,
+                            .downgrade2 = 12,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::TSW2CM)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 12,
+                            .downgrade1 = 12,
+                            .downgrade2 = 12,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 18,
+                            .downgrade1 = 18,
+                            .downgrade2 = 18,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 20,
+                            .downgrade1 = 20,
+                            .downgrade2 = 20,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 26,
+                            .downgrade1 = 26,
+                            .downgrade2 = 26,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::TOKEN_BUCKET,
+                            .initialCodePt = 0,
+                            .downgrade1 = 50,
+                            .downgrade2 = 50,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::TOKEN_BUCKET)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 50,
+                            .downgrade1 = 50,
+                            .downgrade2 = 50,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
 
     // PHB table
     helper.AddPhbEntry(edgeInner, 46, 0, 0);
@@ -2847,15 +2961,24 @@ S3PerClassRatePreservationTest::DoRun()
     edgeInner->SetQueueBandwidth(2, 810000.0);
     edgeInner->SetQueueBandwidth(3, 810000.0);
 
-    helper.ConfigQueue(edgeInner, 0, 0, 20.0, 20.0, 1.0);
-    helper.ConfigQueue(edgeInner, 0, 1, -1.0, -1.0, 0.0);
-    helper.ConfigQueue(edgeInner, 1, 0, 60.0, 110.0, 0.02);
-    helper.ConfigQueue(edgeInner, 1, 1, 30.0, 60.0, 0.6);
-    helper.ConfigQueue(edgeInner, 2, 0, 30.0, 50.0, 0.1);
-    helper.ConfigQueue(edgeInner, 2, 1, 30.0, 50.0, 0.2);
-    helper.ConfigQueue(edgeInner, 3, 0, 30.0, 60.0, 0.5);
-    helper.ConfigQueue(edgeInner, 4, 0, 50.0, 50.0, 1.0);
-    helper.ConfigQueue(edgeInner, 4, 1, -1.0, -1.0, 0.0);
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 0, .prec = 0, .thMin = 20.0, .thMax = 20.0, .maxP = 1.0});
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 0, .prec = 1, .thMin = -1.0, .thMax = -1.0, .maxP = 0.0});
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 1, .prec = 0, .thMin = 60.0, .thMax = 110.0, .maxP = 0.02});
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 1, .prec = 1, .thMin = 30.0, .thMax = 60.0, .maxP = 0.6});
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 2, .prec = 0, .thMin = 30.0, .thMax = 50.0, .maxP = 0.1});
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 2, .prec = 1, .thMin = 30.0, .thMax = 50.0, .maxP = 0.2});
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 3, .prec = 0, .thMin = 30.0, .thMax = 60.0, .maxP = 0.5});
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 4, .prec = 0, .thMin = 50.0, .thMax = 50.0, .maxP = 1.0});
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 4, .prec = 1, .thMin = -1.0, .thMax = -1.0, .maxP = 0.0});
 
     m_edgeDisc = edgeDisc;
 
@@ -2876,8 +2999,9 @@ S3PerClassRatePreservationTest::DoRun()
     Ptr<TrafficControlLayer> tcCore = coreDev->GetNode()->GetObject<TrafficControlLayer>();
     tcCore->SetRootQueueDiscOnDevice(coreDev, coreDisc);
     coreDisc->Initialize();
-    coreInner->SetMredMode(MredMode::DROP_TAIL);
-    helper.ConfigQueue(coreInner, 0, 0, 60.0, 60.0, 1.0);
+    coreInner->SetMredModeAllQueues(MredMode::DROP_TAIL);
+    helper.ConfigQueue(coreInner,
+                       {.queue = 0, .prec = 0, .thMin = 60.0, .thMax = 60.0, .maxP = 1.0});
 
     // ===================================================================
     // Traffic generators — matching diffserv-example-3 --scale=full exactly
@@ -3056,14 +3180,14 @@ S3PerClassRatePreservationTest::DoRun()
 
     std::ostringstream s1310Sum;
     s1310Sum << "\n  [S-13.10] Per-class service rates (mean over t∈[" << kMeasureStart << ","
-              << kSimTime << "], n=" << m_acc.samples << "):\n"
-              << std::fixed << std::setprecision(1) << "    Premium = " << premium << " kbps  (ref "
-              << kPremiumRef << ")\n"
-              << "    Gold    = " << gold << " kbps  (ref " << kGoldRef << ")\n"
-              << "    Silver  = " << silver << " kbps  (ref " << kSilverRef << ")\n"
-              << "    Bronze  = " << bronze << " kbps  (ref " << kBronzeRef << ")\n"
-              << "    BE      = " << be << " kbps  (ref " << kBeRef << ")\n"
-              << "    Total   = " << total << " kbps  (ref " << kTotalRef << ")\n";
+             << kSimTime << "], n=" << m_acc.samples << "):\n"
+             << std::fixed << std::setprecision(1) << "    Premium = " << premium << " kbps  (ref "
+             << kPremiumRef << ")\n"
+             << "    Gold    = " << gold << " kbps  (ref " << kGoldRef << ")\n"
+             << "    Silver  = " << silver << " kbps  (ref " << kSilverRef << ")\n"
+             << "    Bronze  = " << bronze << " kbps  (ref " << kBronzeRef << ")\n"
+             << "    BE      = " << be << " kbps  (ref " << kBeRef << ")\n"
+             << "    Total   = " << total << " kbps  (ref " << kTotalRef << ")\n";
     std::cout << s1310Sum.str() << std::endl;
 
     auto checkBand = [&](double observed, double ref, const char* name) {
@@ -3145,9 +3269,9 @@ class MultiSlotDscpRoutingTest : public TestCase
         // high thresholds gives deterministic tail-drop semantics suitable
         // for a single-packet routing assertion.
         red0->SetMredMode(MredMode::DROP_TAIL, 0);
-        red0->ConfigQueue(0, 0, 1000.0, 2000.0, 0.1);
+        red0->ConfigQueue({.queue = 0, .prec = 0, .thMin = 1000.0, .thMax = 2000.0, .maxP = 0.1});
         red1->SetMredMode(MredMode::DROP_TAIL, 0);
-        red1->ConfigQueue(0, 0, 1000.0, 2000.0, 0.1);
+        red1->ConfigQueue({.queue = 0, .prec = 0, .thMin = 1000.0, .thMax = 2000.0, .maxP = 0.1});
 
         // Push one DSCP 46 packet, then one DSCP 10 packet.
         auto makeItem = [](uint8_t dscp) {
@@ -3239,9 +3363,9 @@ class MultiSlotStrictPriorityTest : public TestCase
         // DROP_TAIL mode with high thresholds so neither inner early-drops
         // under the modest burst this test pushes.
         red0->SetMredMode(MredMode::DROP_TAIL, 0);
-        red0->ConfigQueue(0, 0, 1000.0, 2000.0, 0.1);
+        red0->ConfigQueue({.queue = 0, .prec = 0, .thMin = 1000.0, .thMax = 2000.0, .maxP = 0.1});
         red1->SetMredMode(MredMode::DROP_TAIL, 0);
-        red1->ConfigQueue(0, 0, 1000.0, 2000.0, 0.1);
+        red1->ConfigQueue({.queue = 0, .prec = 0, .thMin = 1000.0, .thMax = 2000.0, .maxP = 0.1});
 
         auto makeItem = [](uint8_t dscp) {
             Ptr<Packet> p = Create<Packet>(500);
@@ -3382,7 +3506,7 @@ class BackwardCompatSingleInnerTest : public TestCase
         edge->Initialize();
 
         red->SetMredMode(MredMode::DROP_TAIL, 0);
-        red->ConfigQueue(0, 0, 1000.0, 2000.0, 0.1);
+        red->ConfigQueue({.queue = 0, .prec = 0, .thMin = 1000.0, .thMax = 2000.0, .maxP = 0.1});
 
         // A DSCP 46 packet with NO explicit SetDscpToSlot override must
         // still route correctly (default map: every DSCP → slot 0).
@@ -3477,10 +3601,10 @@ class PerSlotQueueStatsProbesTest : public TestCase
         // (`thMin=thMax=0` would force-drop the only packet).
         red0->SetMredMode(MredMode::DROP_TAIL, 0);
         red0->SetMredMode(MredMode::DROP_TAIL, 1);
-        red0->ConfigQueue(0, 0, 1000.0, 2000.0, 0.1);
-        red0->ConfigQueue(1, 0, 1000.0, 2000.0, 0.1);
+        red0->ConfigQueue({.queue = 0, .prec = 0, .thMin = 1000.0, .thMax = 2000.0, .maxP = 0.1});
+        red0->ConfigQueue({.queue = 1, .prec = 0, .thMin = 1000.0, .thMax = 2000.0, .maxP = 0.1});
         red1->SetMredMode(MredMode::DROP_TAIL, 0);
-        red1->ConfigQueue(0, 0, 1000.0, 2000.0, 0.1);
+        red1->ConfigQueue({.queue = 0, .prec = 0, .thMin = 1000.0, .thMax = 2000.0, .maxP = 0.1});
 
         // Backward-compat: zero-arg still targets slot 0.
         NS_TEST_ASSERT_MSG_EQ(edge->GetNumQueues(),
@@ -3629,6 +3753,101 @@ class EdgeSlotZeroDelegationParityTest : public TestCase
                               perSlotBuf.str(),
                               "PrintStats() output must equal PrintStats(0) output");
 
+        Simulator::Destroy();
+    }
+};
+
+// =============================================================================
+//  SetAsDiffserv: structural characterisation (EF + BE profile)
+// =============================================================================
+
+// Verifies the one-call DiffServ composer reproduces the canonical EF+BE edge.
+class SetAsDiffservComposesEfEdgeTest : public TestCase
+{
+  public:
+    SetAsDiffservComposesEfEdgeTest()
+        : TestCase("SetAsDiffserv composes the canonical EF + BE edge")
+    {
+    }
+
+    void DoRun() override
+    {
+        Ptr<ns3::stratum::EdgeQueueDisc> edge = CreateObject<ns3::stratum::EdgeQueueDisc>();
+        ns3::stratum::diffserv::Helper::SetAsDiffserv(
+            edge,
+            {.profile = ns3::stratum::diffserv::Profile::ExpeditedForwarding});
+
+        Ptr<ns3::stratum::RedQueueDisc> inner =
+            DynamicCast<ns3::stratum::RedQueueDisc>(edge->GetInnerDisc());
+        NS_TEST_ASSERT_MSG_NE(inner, nullptr, "edge has no inner RED disc");
+        NS_TEST_ASSERT_MSG_EQ(inner->GetNumQueues(), 2u, "EF profile must have 2 queues");
+
+        uint8_t q = 0xFF;
+        uint8_t p = 0xFF;
+        NS_TEST_ASSERT_MSG_EQ(inner->LookupPhb(46, q, p), true, "EF (46) must be mapped");
+        NS_TEST_ASSERT_MSG_EQ(q, 0, "EF -> queue 0");
+        NS_TEST_ASSERT_MSG_EQ(p, 0, "EF -> prec 0");
+        NS_TEST_ASSERT_MSG_EQ(inner->LookupPhb(0, q, p), true, "BE (0) must be mapped");
+        NS_TEST_ASSERT_MSG_EQ(q, 1, "BE -> queue 1");
+
+        NS_TEST_ASSERT_MSG_NE(inner->GetScheduler(), nullptr, "default scheduler must be set");
+        NS_TEST_ASSERT_MSG_NE(DynamicCast<ns3::stratum::PriorityScheduler>(inner->GetScheduler()),
+                              nullptr,
+                              "default scheduler must be PriorityScheduler");
+        Simulator::Destroy();
+    }
+};
+
+// Verifies the BestEffort profile composes a single best-effort queue.
+class SetAsDiffservComposesBestEffortEdgeTest : public TestCase
+{
+  public:
+    SetAsDiffservComposesBestEffortEdgeTest()
+        : TestCase("SetAsDiffserv composes a single best-effort queue")
+    {
+    }
+
+    void DoRun() override
+    {
+        Ptr<ns3::stratum::EdgeQueueDisc> edge = CreateObject<ns3::stratum::EdgeQueueDisc>();
+        ns3::stratum::diffserv::Helper::SetAsDiffserv(
+            edge,
+            {.profile = ns3::stratum::diffserv::Profile::BestEffort});
+
+        Ptr<ns3::stratum::RedQueueDisc> inner =
+            DynamicCast<ns3::stratum::RedQueueDisc>(edge->GetInnerDisc());
+        NS_TEST_ASSERT_MSG_NE(inner, nullptr, "edge has no inner RED disc");
+        NS_TEST_ASSERT_MSG_EQ(inner->GetNumQueues(), 1u, "BestEffort must have 1 queue");
+        uint8_t q = 0xFF;
+        uint8_t p = 0xFF;
+        NS_TEST_ASSERT_MSG_EQ(inner->LookupPhb(0, q, p), true, "BE (0) must be mapped");
+        NS_TEST_ASSERT_MSG_EQ(q, 0, "BE -> queue 0");
+        Simulator::Destroy();
+    }
+};
+
+// Verifies a caller-provided scheduler is used as-is.
+class SetAsDiffservUsesProvidedSchedulerTest : public TestCase
+{
+  public:
+    SetAsDiffservUsesProvidedSchedulerTest()
+        : TestCase("SetAsDiffserv uses a caller-provided scheduler")
+    {
+    }
+
+    void DoRun() override
+    {
+        Ptr<ns3::stratum::EdgeQueueDisc> edge = CreateObject<ns3::stratum::EdgeQueueDisc>();
+        Ptr<ns3::stratum::WfqScheduler> wfq =
+            CreateObjectWithAttributes<ns3::stratum::WfqScheduler>("NumQueues", UintegerValue(2));
+        ns3::stratum::diffserv::Helper::SetAsDiffserv(
+            edge,
+            {.profile = ns3::stratum::diffserv::Profile::ExpeditedForwarding, .scheduler = wfq});
+
+        Ptr<ns3::stratum::RedQueueDisc> inner =
+            DynamicCast<ns3::stratum::RedQueueDisc>(edge->GetInnerDisc());
+        NS_TEST_ASSERT_MSG_NE(inner, nullptr, "edge has no inner RED disc");
+        NS_TEST_ASSERT_MSG_EQ(inner->GetScheduler(), wfq, "provided scheduler must be used as-is");
         Simulator::Destroy();
     }
 };
@@ -3810,9 +4029,9 @@ class SlotDispatcherByteIdentityTest : public TestCase
         // under the modest burst the cases push — same idiom S-14.1
         // established in 2001 and S-13.12 continues to use.
         red0->SetMredMode(MredMode::DROP_TAIL, 0);
-        red0->ConfigQueue(0, 0, 1000.0, 2000.0, 0.1);
+        red0->ConfigQueue({.queue = 0, .prec = 0, .thMin = 1000.0, .thMax = 2000.0, .maxP = 0.1});
         red1->SetMredMode(MredMode::DROP_TAIL, 0);
-        red1->ConfigQueue(0, 0, 1000.0, 2000.0, 0.1);
+        red1->ConfigQueue({.queue = 0, .prec = 0, .thMin = 1000.0, .thMax = 2000.0, .maxP = 0.1});
     }
 
     void DoRun() override
@@ -4032,7 +4251,8 @@ ConfigureThreeSlotShaperEdge(Ptr<EdgeQueueDisc> edge,
     for (auto& inner : {inner0, inner1, inner2})
     {
         inner->SetMredMode(MredMode::DROP_TAIL, 0);
-        inner->ConfigQueue(0, 0, 10000.0, 20000.0, 0.1);
+        inner->ConfigQueue(
+            {.queue = 0, .prec = 0, .thMin = 10000.0, .thMax = 20000.0, .maxP = 0.1});
     }
 }
 
@@ -4420,7 +4640,8 @@ ConfigureHybridLlqEdge(Ptr<EdgeQueueDisc> edge,
     for (auto& inner : innersByIdx)
     {
         inner->SetMredMode(MredMode::DROP_TAIL, 0);
-        inner->ConfigQueue(0, 0, 10000.0, 20000.0, 0.1);
+        inner->ConfigQueue(
+            {.queue = 0, .prec = 0, .thMin = 10000.0, .thMax = 20000.0, .maxP = 0.1});
     }
 }
 
@@ -4831,9 +5052,7 @@ class HybridLlqDrrCursorYieldsOnDrainTest : public TestCase
         // Refill slot 1 and also backlog slot 2. With the cursor correctly
         // advanced off the drained slot 1, the next DRR turn goes to slot 2;
         // a parked cursor re-serves slot 1 on a fresh quantum instead.
-        NS_TEST_ASSERT_MSG_EQ(edge->Enqueue(MakeTinShaperItem(20, payload)),
-                              true,
-                              "slot 1 refill");
+        NS_TEST_ASSERT_MSG_EQ(edge->Enqueue(MakeTinShaperItem(20, payload)), true, "slot 1 refill");
         NS_TEST_ASSERT_MSG_EQ(edge->Enqueue(MakeTinShaperItem(30, payload)),
                               true,
                               "slot 2 enqueue");
@@ -5848,13 +6067,7 @@ class EgressDscpWashTest : public TestCase
         Ptr<RoundRobinScheduler> sched =
             CreateObjectWithAttributes<RoundRobinScheduler>("NumQueues", UintegerValue(1));
         inner->SetScheduler(sched);
-        MarkRule rule;
-        rule.dscp = 46;
-        rule.srcAddr = kAnyHost;
-        rule.dstAddr = kAnyHost;
-        rule.protocol = kAnyProtocol;
-        rule.appType = 0;
-        edge->AddMarkRule(rule);
+        edge->AddMarkRule({.dscp = 46});
         edge->Initialize();
         return edge;
     }
@@ -5902,6 +6115,102 @@ class EgressDscpWashTest : public TestCase
             uint8_t tos = RoundTripTos(edge, kInitialTos);
             NS_TEST_ASSERT_MSG_EQ(tos >> 2, 0u, "wash=true: dequeued DSCP zeroed");
             NS_TEST_ASSERT_MSG_EQ(tos & 0x3, kEct1, "wash=true: ECN bits preserved");
+            Simulator::Destroy();
+        }
+    }
+};
+
+// =============================================================================
+//  S-17.28v6: Egress DSCP wash over IPv6
+// =============================================================================
+
+/**
+ * @brief Verifies the Wash attribute zeros DSCP at egress for IPv6 while
+ *        preserving ECN bits.
+ * @see specs/02-structural.md S-17.28v6
+ *
+ * IPv6 twin of EgressDscpWashTest. Uses the same EdgeQueueDisc / MakeEdge
+ * helper but sends an Ipv6QueueDiscItem carrying an initial DSCP and ECT(1).
+ * After dequeue the top six bits of the IPv6 Traffic Class byte must be
+ * zeroed (wash=true) or match the classifier mark (wash=false), while the
+ * low two ECN bits are preserved in both cases.
+ */
+class EgressDscpWashIpv6Test : public TestCase
+{
+  public:
+    EgressDscpWashIpv6Test()
+        : TestCase("S-17.28v6 Wash attribute zeros DSCP on dequeue for IPv6, preserves ECN")
+    {
+    }
+
+  private:
+    /// Build an edge-disc identical to EgressDscpWashTest::MakeEdge but
+    /// toggling the egress wash behaviour via the Wash attribute.
+    Ptr<EdgeQueueDisc> MakeEdge(bool wash) const
+    {
+        Ptr<EdgeQueueDisc> edge =
+            CreateObjectWithAttributes<EdgeQueueDisc>("Wash", BooleanValue(wash));
+        Ptr<RedQueueDisc> inner = CreateObject<RedQueueDisc>();
+        inner->SetNumQueues(1);
+        edge->SetInnerDisc(inner);
+        inner->AddPhbEntry(46, 0, 0);
+        Ptr<RoundRobinScheduler> sched =
+            CreateObjectWithAttributes<RoundRobinScheduler>("NumQueues", UintegerValue(1));
+        inner->SetScheduler(sched);
+        edge->AddMarkRule({.dscp = 46});
+        edge->Initialize();
+        return edge;
+    }
+
+    /// Send one UDP IPv6 packet through @p edge with the supplied initial
+    /// Traffic Class byte and return the dequeued IPv6 header's Traffic
+    /// Class byte.
+    uint8_t RoundTripTc(Ptr<EdgeQueueDisc> edge, uint8_t initialTc) const
+    {
+        Ptr<Ipv6QueueDiscItem> item =
+            MakeIpv6Item(Ipv6Address("2001:db8::1"), Ipv6Address("2001:db8::2"), 17, 100);
+        Ipv6Header hdr = item->GetHeader();
+        hdr.SetTrafficClass(initialTc);
+        Ptr<Packet> pkt = Create<Packet>(100);
+        Ptr<Ipv6QueueDiscItem> tagged = Create<Ipv6QueueDiscItem>(pkt, Address(), 0x86DD, hdr);
+        bool enq = edge->Enqueue(tagged);
+        NS_ASSERT_MSG(enq, "v6 wash test: enqueue must succeed");
+        Ptr<QueueDiscItem> deq = edge->Dequeue();
+        NS_ASSERT_MSG(deq, "v6 wash test: dequeue must succeed");
+        Ptr<Ipv6QueueDiscItem> ip = DynamicCast<Ipv6QueueDiscItem>(deq);
+        NS_ASSERT_MSG(ip, "v6 wash test: dequeued item must be Ipv6QueueDiscItem");
+        return ip->GetHeader().GetTrafficClass();
+    }
+
+    void DoRun() override
+    {
+        // Initial Traffic Class carries ECT(1) (low two bits = 0b01) and an
+        // initial DSCP=10 in the high six bits. Edge mark rule rewrites
+        // DSCP -> 46 (EF).
+        const uint8_t kEct1Bits = 0x1;
+        const uint8_t kInitialTc = static_cast<uint8_t>((10 << 2) | kEct1Bits);
+
+        // Wash=false (default): the rewrite stamps DSCP=46 in the high six
+        // bits of Traffic Class; the low two ECN bits are preserved.
+        {
+            Ptr<EdgeQueueDisc> edge = MakeEdge(false);
+            uint8_t tc = RoundTripTc(edge, kInitialTc);
+            NS_TEST_ASSERT_MSG_EQ(
+                tc >> 2,
+                46u,
+                "wash=false: dequeued IPv6 DSCP should equal classifier mark (46/EF)");
+            NS_TEST_ASSERT_MSG_EQ(tc & 0x3, kEct1Bits, "wash=false: IPv6 ECN bits preserved");
+            Simulator::Destroy();
+        }
+
+        // Wash=true: the high six bits of Traffic Class are zeroed at dequeue;
+        // classification still drove inner-slot routing, but the packet exits
+        // with DSCP=0. ECN bits remain ECT(1).
+        {
+            Ptr<EdgeQueueDisc> edge = MakeEdge(true);
+            uint8_t tc = RoundTripTc(edge, kInitialTc);
+            NS_TEST_ASSERT_MSG_EQ(tc >> 2, 0u, "wash=true: dequeued IPv6 DSCP zeroed");
+            NS_TEST_ASSERT_MSG_EQ(tc & 0x3, kEct1Bits, "wash=true: IPv6 ECN bits preserved");
             Simulator::Destroy();
         }
     }
@@ -6000,11 +6309,7 @@ class CakeOverheadStatisticalRateAdjustmentTest : public TestCase
         // TbfQueueDisc, which is what ConfigureLinkLayerOverhead adjusts.
         cake::Helper::SetAsCakeDiffserv4(edge,
                                          DataRate("100Mbps"),
-                                         /*ackFilter*/ false,
-                                         /*llq*/ false,
-                                         /*tinShaping*/ true,
-                                         /*hostIso*/ false,
-                                         /*useInnerTbfShaping*/ true);
+                                         {.tinShaping = true, .innerTbfShaping = true});
 
         // Snapshot Voice tin rate pre-config (share=25% of 100Mbps -> 25Mbps).
         Ptr<TbfQueueDisc> voiceTbf = edge->GetInnerDiscAt(3)->GetObject<TbfQueueDisc>();
@@ -6066,11 +6371,7 @@ class CakeRawModeNoRateAdjustmentTest : public TestCase
         Ptr<EdgeQueueDisc> edge = CreateObject<EdgeQueueDisc>();
         cake::Helper::SetAsCakeDiffserv4(edge,
                                          DataRate("100Mbps"),
-                                         /*ackFilter*/ false,
-                                         /*llq*/ false,
-                                         /*tinShaping*/ true,
-                                         /*hostIso*/ false,
-                                         /*useInnerTbfShaping*/ true);
+                                         {.tinShaping = true, .innerTbfShaping = true});
 
         Ptr<TbfQueueDisc> voiceTbf = edge->GetInnerDiscAt(3)->GetObject<TbfQueueDisc>();
         NS_TEST_ASSERT_MSG_NE(voiceTbf,
@@ -6129,11 +6430,7 @@ class CakeConservativePresetTest : public TestCase
         // TbfQueueDisc; the conservative preset downscales those rates.
         cake::Helper::SetAsCakeDiffserv4(edge,
                                          DataRate("100Mbps"),
-                                         /*ackFilter*/ false,
-                                         /*llq*/ false,
-                                         /*tinShaping*/ true,
-                                         /*hostIso*/ false,
-                                         /*useInnerTbfShaping*/ true);
+                                         {.tinShaping = true, .innerTbfShaping = true});
 
         Ptr<TbfQueueDisc> voiceTbf = edge->GetInnerDiscAt(3)->GetObject<TbfQueueDisc>();
         NS_TEST_ASSERT_MSG_NE(voiceTbf,
@@ -6441,10 +6738,10 @@ class CakeHelperDscpMapMatchesLinuxDiffserv4Test : public TestCase
             }
         }
         std::cout << "S17_5SUM,mismatches=" << mismatches << std::endl;
-        NS_TEST_ASSERT_MSG_EQ(mismatches,
-                              0u,
-                              "diffserv4 DSCP map diverges from the sch_cake table:"
-                                  << detail.str());
+        NS_TEST_ASSERT_MSG_EQ(
+            mismatches,
+            0u,
+            "diffserv4 DSCP map diverges from the sch_cake table:" << detail.str());
 
         Simulator::Destroy();
     }
@@ -6499,10 +6796,10 @@ class RateBasedDiffserv4DscpMapMatchesLinuxTest : public TestCase
                 detail << " dscp" << dscp << "=" << actual << "(want " << expected << ")";
             }
         }
-        NS_TEST_ASSERT_MSG_EQ(mismatches,
-                              0u,
-                              "rate-based diffserv4 DSCP map diverges from sch_cake diffserv4[]:"
-                                  << detail.str());
+        NS_TEST_ASSERT_MSG_EQ(
+            mismatches,
+            0u,
+            "rate-based diffserv4 DSCP map diverges from sch_cake diffserv4[]:" << detail.str());
         Simulator::Destroy();
     }
 };
@@ -6543,10 +6840,10 @@ class CakeHelperDscpMapMatchesLinuxDiffserv3Test : public TestCase
             }
         }
         std::cout << "S17_6SUM,mismatches=" << mismatches << std::endl;
-        NS_TEST_ASSERT_MSG_EQ(mismatches,
-                              0u,
-                              "diffserv3 DSCP map diverges from the sch_cake table:"
-                                  << detail.str());
+        NS_TEST_ASSERT_MSG_EQ(
+            mismatches,
+            0u,
+            "diffserv3 DSCP map diverges from the sch_cake table:" << detail.str());
 
         Simulator::Destroy();
     }
@@ -6587,10 +6884,10 @@ class CakeHelperDscpMapMatchesLinuxDiffserv8Test : public TestCase
             }
         }
         std::cout << "S17_7SUM,mismatches=" << mismatches << std::endl;
-        NS_TEST_ASSERT_MSG_EQ(mismatches,
-                              0u,
-                              "diffserv8 DSCP map diverges from the sch_cake table:"
-                                  << detail.str());
+        NS_TEST_ASSERT_MSG_EQ(
+            mismatches,
+            0u,
+            "diffserv8 DSCP map diverges from the sch_cake table:" << detail.str());
 
         Simulator::Destroy();
     }
@@ -6671,8 +6968,7 @@ class CakeDiffserv3UnshapedContentionRatioTest : public TestCase
         // (precision manipulators) persists across the suite's cases,
         // which share one process.
         std::ostringstream sum;
-        sum << "S17_62SUM,lsBytes=" << lsBytes << ",beBytes=" << beBytes
-            << ",lsOverBe=" << ratio;
+        sum << "S17_62SUM,lsBytes=" << lsBytes << ",beBytes=" << beBytes << ",lsOverBe=" << ratio;
         std::cout << sum.str() << std::endl;
         // cake_config_diffserv3 quanta are 1024 / 64 / 256 for BE /
         // Bulk / Latency-Sensitive (sch_cake.c:2576-2580): the served
@@ -6866,21 +7162,11 @@ class CakeHelperPathAlphaGammaEquivalenceTest : public TestCase
         m_edgeGamma = CreateObject<EdgeQueueDisc>();
 
         // Path alpha: useInnerTbfShaping defaulted to false.
-        cake::Helper::SetAsCakeDiffserv4(m_edgeAlpha,
-                                         totalRate,
-                                         /*enableAckFilter=*/false,
-                                         /*enableLlq=*/false,
-                                         /*enableTinShaping=*/true,
-                                         /*enableHostIsolation=*/false,
-                                         /*useInnerTbfShaping=*/false);
+        cake::Helper::SetAsCakeDiffserv4(m_edgeAlpha, totalRate, {.tinShaping = true});
         // Path gamma: same args, useInnerTbfShaping=true.
         cake::Helper::SetAsCakeDiffserv4(m_edgeGamma,
                                          totalRate,
-                                         /*enableAckFilter=*/false,
-                                         /*enableLlq=*/false,
-                                         /*enableTinShaping=*/true,
-                                         /*enableHostIsolation=*/false,
-                                         /*useInnerTbfShaping=*/true);
+                                         {.tinShaping = true, .innerTbfShaping = true});
         m_edgeAlpha->Initialize();
         m_edgeGamma->Initialize();
 
@@ -6960,22 +7246,10 @@ class EfPriorityServiceTest : public TestCase
         inner->SetNumQueues(2);
 
         // Mark rule 1: src=10.0.0.1 -> DSCP 46 (EF)
-        MarkRule rule1;
-        rule1.dscp = 46;
-        rule1.srcAddr = static_cast<int32_t>(Ipv4Address("10.0.0.1").Get());
-        rule1.dstAddr = kAnyHost;
-        rule1.protocol = kAnyProtocol;
-        rule1.appType = 0;
-        edge->AddMarkRule(rule1);
+        edge->AddMarkRule({.dscp = 46, .srcAddr = Ipv4Address("10.0.0.1")});
 
         // Mark rule 2: src=10.0.0.2 -> DSCP 0 (BE)
-        MarkRule rule2;
-        rule2.dscp = 0;
-        rule2.srcAddr = static_cast<int32_t>(Ipv4Address("10.0.0.2").Get());
-        rule2.dstAddr = kAnyHost;
-        rule2.protocol = kAnyProtocol;
-        rule2.appType = 0;
-        edge->AddMarkRule(rule2);
+        edge->AddMarkRule({.dscp = 0, .srcAddr = Ipv4Address("10.0.0.2")});
 
         // Policy for DSCP 46 (EF), Dumb meter+policer
         PolicyEntry policy46;
@@ -7031,8 +7305,8 @@ class EfPriorityServiceTest : public TestCase
         inner->SetMredMode(MredMode::DROP_TAIL, 0);
         inner->SetMredMode(MredMode::DROP_TAIL, 1);
         // Set thMin > qlim so threshold check never fires; pure tail-drop behaviour
-        inner->ConfigQueue(0, 0, 1000.0, 2000.0, 0.1);
-        inner->ConfigQueue(1, 0, 1000.0, 2000.0, 0.1);
+        inner->ConfigQueue({.queue = 0, .prec = 0, .thMin = 1000.0, .thMax = 2000.0, .maxP = 0.1});
+        inner->ConfigQueue({.queue = 1, .prec = 0, .thMin = 1000.0, .thMax = 2000.0, .maxP = 0.1});
 
         // Enqueue 5 BE packets from 10.0.0.2 (-> queue 1)
         for (int i = 0; i < 5; ++i)
@@ -7120,31 +7394,13 @@ class AfDropPrecedenceTest : public TestCase
         inner->SetNumQueues(1);
 
         // Mark rule: src=10.0.0.1 -> DSCP 10 (AF11)
-        MarkRule rule1;
-        rule1.dscp = 10;
-        rule1.srcAddr = static_cast<int32_t>(Ipv4Address("10.0.0.1").Get());
-        rule1.dstAddr = kAnyHost;
-        rule1.protocol = kAnyProtocol;
-        rule1.appType = 0;
-        edge->AddMarkRule(rule1);
+        edge->AddMarkRule({.dscp = 10, .srcAddr = Ipv4Address("10.0.0.1")});
 
         // Mark rule: src=10.0.0.2 -> DSCP 12 (AF12)
-        MarkRule rule2;
-        rule2.dscp = 12;
-        rule2.srcAddr = static_cast<int32_t>(Ipv4Address("10.0.0.2").Get());
-        rule2.dstAddr = kAnyHost;
-        rule2.protocol = kAnyProtocol;
-        rule2.appType = 0;
-        edge->AddMarkRule(rule2);
+        edge->AddMarkRule({.dscp = 12, .srcAddr = Ipv4Address("10.0.0.2")});
 
         // Mark rule: src=10.0.0.3 -> DSCP 14 (AF13)
-        MarkRule rule3;
-        rule3.dscp = 14;
-        rule3.srcAddr = static_cast<int32_t>(Ipv4Address("10.0.0.3").Get());
-        rule3.dstAddr = kAnyHost;
-        rule3.protocol = kAnyProtocol;
-        rule3.appType = 0;
-        edge->AddMarkRule(rule3);
+        edge->AddMarkRule({.dscp = 14, .srcAddr = Ipv4Address("10.0.0.3")});
 
         // Dumb policies + policers for all three DSCPs (pass-through, no metering)
         auto addDumbPolicyAndPolicer = [&](uint8_t dscp, uint32_t policyIdx) {
@@ -7189,11 +7445,11 @@ class AfDropPrecedenceTest : public TestCase
 
         // Configure RED thresholds for each precedence level
         // prec 0 (AF11): lenient (high thresholds, low maxP)
-        inner->ConfigQueue(0, 0, 20.0, 40.0, 0.02);
+        inner->ConfigQueue({.queue = 0, .prec = 0, .thMin = 20.0, .thMax = 40.0, .maxP = 0.02});
         // prec 1 (AF12): moderate
-        inner->ConfigQueue(0, 1, 10.0, 30.0, 0.1);
+        inner->ConfigQueue({.queue = 0, .prec = 1, .thMin = 10.0, .thMax = 30.0, .maxP = 0.1});
         // prec 2 (AF13): aggressive (low thresholds, high maxP)
-        inner->ConfigQueue(0, 2, 5.0, 15.0, 0.5);
+        inner->ConfigQueue({.queue = 0, .prec = 2, .thMin = 5.0, .thMax = 15.0, .maxP = 0.5});
 
         // Send 150 packets interleaved: round-robin among 3 sources (50 each)
         int sent0 = 0;
@@ -7278,22 +7534,10 @@ class BestEffortLowestPriorityTest : public TestCase
 
         // Rule 1 (specific): src=10.0.0.1 -> DSCP 46 (EF)  [added first — first
         // match wins]
-        MarkRule ruleEf;
-        ruleEf.dscp = 46;
-        ruleEf.srcAddr = static_cast<int32_t>(Ipv4Address("10.0.0.1").Get());
-        ruleEf.dstAddr = kAnyHost;
-        ruleEf.protocol = kAnyProtocol;
-        ruleEf.appType = 0;
-        edge->AddMarkRule(ruleEf);
+        edge->AddMarkRule({.dscp = 46, .srcAddr = Ipv4Address("10.0.0.1")});
 
         // Rule 2 (catch-all): any -> DSCP 0 (BE)
-        MarkRule ruleBe;
-        ruleBe.dscp = 0;
-        ruleBe.srcAddr = kAnyHost;
-        ruleBe.dstAddr = kAnyHost;
-        ruleBe.protocol = kAnyProtocol;
-        ruleBe.appType = 0;
-        edge->AddMarkRule(ruleBe);
+        edge->AddMarkRule({.dscp = 0});
 
         // Dumb policies + policers for EF (46) and BE (0)
         PolicyEntry policyEf;
@@ -7343,8 +7587,8 @@ class BestEffortLowestPriorityTest : public TestCase
         inner->SetMredMode(MredMode::DROP_TAIL, 0);
         inner->SetMredMode(MredMode::DROP_TAIL, 1);
         // Set thMin > qlim so threshold check never fires; pure tail-drop behaviour
-        inner->ConfigQueue(0, 0, 1000.0, 2000.0, 0.1);
-        inner->ConfigQueue(1, 0, 1000.0, 2000.0, 0.1);
+        inner->ConfigQueue({.queue = 0, .prec = 0, .thMin = 1000.0, .thMax = 2000.0, .maxP = 0.1});
+        inner->ConfigQueue({.queue = 1, .prec = 0, .thMin = 1000.0, .thMax = 2000.0, .maxP = 0.1});
 
         // Interleave: enqueue 1 EF, 1 BE, 1 EF, 1 BE, ... (10 total, 5 each)
         for (int i = 0; i < 5; ++i)
@@ -7427,9 +7671,16 @@ class HelperSrTcmConfigTest : public TestCase
         auto inner = helper.InstallRedInner(edge);
 
         // Configure via helper: mark rule + srTCM policy + policer + PHB
-        helper.AddMarkRule(edge, 46, kAnyHost, kAnyHost, kAnyProtocol, kAnyAppType);
-        helper.AddSrTcmPolicy(edge, 46, 1000000.0, 10000.0, 20000.0);
-        helper.AddPolicerEntry(edge, PolicerType::SRTCM, 46, 46, 0);
+        edge->AddMarkRule({.dscp = 46});
+        helper.AddSrTcmPolicy(
+            edge,
+            {.codePt = 46, .cirBps = 1000000.0, .cbsBytes = 10000.0, .ebsBytes = 20000.0});
+        helper.AddPolicerEntry(edge,
+                               {.policer = PolicerType::SRTCM,
+                                .initialCodePt = 46,
+                                .downgrade1 = 46,
+                                .downgrade2 = 0,
+                                .policyIndex = static_cast<uint32_t>(PolicerType::SRTCM)});
         helper.AddPhbEntry(inner, 46, 0, 0);
 
         // Verify the policy classifier can meter correctly
@@ -7547,13 +7798,7 @@ E2EEdgeCoreTopologyTest::DoRun()
     edgeDiscInner->SetNumQueues(2);
 
     // Mark rule: any packet → DSCP 46 (EF)
-    MarkRule efRule;
-    efRule.dscp = 46;
-    efRule.srcAddr = kAnyHost;
-    efRule.dstAddr = kAnyHost;
-    efRule.protocol = kAnyProtocol;
-    efRule.appType = 0;
-    edgeDisc->AddMarkRule(efRule);
+    edgeDisc->AddMarkRule({.dscp = 46});
 
     // Policy: DSCP 46 → Dumb meter + Dumb policer (passthrough)
     PolicyEntry policy46;
@@ -7586,7 +7831,7 @@ E2EEdgeCoreTopologyTest::DoRun()
     edgeDiscInner->SetScheduler(edgePq);
 
     // DROP_TAIL mode (no RED)
-    edgeDiscInner->SetMredMode(MredMode::DROP_TAIL);
+    edgeDiscInner->SetMredModeAllQueues(MredMode::DROP_TAIL);
 
     // ---- Install CoreQueueDisc on core's outbound link ----
     TrafficControlHelper tchCore;
@@ -7620,7 +7865,7 @@ E2EEdgeCoreTopologyTest::DoRun()
     coreInner->SetScheduler(corePq);
 
     // DROP_TAIL mode
-    coreInner->SetMredMode(MredMode::DROP_TAIL);
+    coreInner->SetMredModeAllQueues(MredMode::DROP_TAIL);
 
     // ---- PacketSink on sink node (port 9) ----
     uint16_t port = 9;
@@ -8365,7 +8610,7 @@ class TestDiffServMonitorHelperDtorCancelsEvents : public TestCase
         disc->SetNumQueues(1);
         disc->SetNumPrec(0, 1);
         disc->AddPhbEntry(0, 0, 0);
-        disc->ConfigQueue(0, 0, 1000.0, 2000.0, 0.0);
+        disc->ConfigQueue({.queue = 0, .prec = 0, .thMin = 1000.0, .thMax = 2000.0, .maxP = 0.0});
         disc->Initialize();
 
         {
@@ -8575,11 +8820,12 @@ class LlqPqRateCapEngagesTest : public TestCase
 
         // EF is over its cap, so the policed LLQ must serve the fair lane.
         int q = sched->SelectNextQueue();
-        NS_TEST_ASSERT_MSG_EQ(q,
-                              1,
-                              "LLQ EF lane over its rate cap must yield to the fair lane (queue 1); "
-                              "got queue "
-                                  << q);
+        NS_TEST_ASSERT_MSG_EQ(
+            q,
+            1,
+            "LLQ EF lane over its rate cap must yield to the fair lane (queue 1); "
+            "got queue "
+                << q);
         Simulator::Destroy();
     }
 };
@@ -8765,8 +9011,9 @@ class WfqFullDrainReactivationTest : public TestCase
             NS_TEST_ASSERT_MSG_EQ(served[static_cast<uint32_t>(q)],
                                   false,
                                   "WFQ post-idle round served queue "
-                                      << q << " twice before the others — weighted fairness "
-                                              "collapsed to lowest-index priority");
+                                      << q
+                                      << " twice before the others — weighted fairness "
+                                         "collapsed to lowest-index priority");
             served[static_cast<uint32_t>(q)] = true;
         }
 
@@ -9244,8 +9491,8 @@ class FwPolicerPeriodicModeThroughClassifierTest : public TestCase
         // must equal the incoming code point so the lookup matches. It is also
         // the in-profile / periodic-pass remark.
         policer.initialCodePt = 10;
-        policer.downgrade1 = 0;  // excess-packet remark
-        policer.downgrade2 = 2;  // periodic penalty mode (1-in-6)
+        policer.downgrade1 = 0; // excess-packet remark
+        policer.downgrade2 = 2; // periodic penalty mode (1-in-6)
         edge->GetPolicyClassifier()->AddPolicerEntry(policer);
 
         edge->Initialize();
@@ -9617,7 +9864,7 @@ PerfRegressionTest::DoRun()
     edgeDiscInner->SetNumPrec(1, 1); // BE: 1 prec level
     edgeDiscInner->SetQueueLimit(0, 30);
     edgeDiscInner->SetQueueLimit(1, 50);
-    edgeDiscInner->SetMredMode(MredMode::DROP_TAIL);
+    edgeDiscInner->SetMredModeAllQueues(MredMode::DROP_TAIL);
 
     Ptr<PriorityScheduler> pqSched =
         CreateObjectWithAttributes<PriorityScheduler>("NumQueues",
@@ -9626,23 +9873,28 @@ PerfRegressionTest::DoRun()
                                                       DoubleValue(1.0));
     edgeDiscInner->SetScheduler(pqSched);
 
-    helper.AddMarkRule(edgeDisc,
-                       46,
-                       kAnyHost,
-                       static_cast<int32_t>(destAddr0.Get()),
-                       kAnyProtocol,
-                       0);
-    helper
-        .AddMarkRule(edgeDisc, 0, kAnyHost, static_cast<int32_t>(destAddr1.Get()), kAnyProtocol, 0);
+    edgeDisc->AddMarkRule({.dscp = 46, .dstAddr = destAddr0});
+    edgeDisc->AddMarkRule({.dscp = 0, .dstAddr = destAddr1});
 
     double cirEfBps = 300000.0;
     double cbsEfBytes = kPacketSize + 1.0;
-    helper.AddTokenBucketPolicy(edgeDisc, 46, cirEfBps, cbsEfBytes);
+    helper.AddTokenBucketPolicy(edgeDisc,
+                                {.codePt = 46, .cirBps = cirEfBps, .cbsBytes = cbsEfBytes});
     helper.AddDumbPolicy(edgeDisc, 48);
     helper.AddDumbPolicy(edgeDisc, 0);
 
-    helper.AddPolicerEntry(edgeDisc, PolicerType::TOKEN_BUCKET, 46, 48, 48);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 0, 0, 0);
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::TOKEN_BUCKET,
+                            .initialCodePt = 46,
+                            .downgrade1 = 48,
+                            .downgrade2 = 48,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::TOKEN_BUCKET)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 0,
+                            .downgrade1 = 0,
+                            .downgrade2 = 0,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
 
     helper.AddPhbEntry(edgeDiscInner, 46, 0, 0);
     helper.AddPhbEntry(edgeDiscInner, 48, 0, 1);
@@ -9654,16 +9906,19 @@ PerfRegressionTest::DoRun()
     tc->SetRootQueueDiscOnDevice(e1Dev, edgeDisc);
     edgeDisc->Initialize();
 
-    helper.ConfigQueue(edgeDiscInner, 0, 0, 30.0, 30.0, 1.0);
-    helper.ConfigQueue(edgeDiscInner, 0, 1, 0.0, 0.0, 0.0);
-    helper.ConfigQueue(edgeDiscInner, 1, 0, 50.0, 50.0, 1.0);
+    helper.ConfigQueue(edgeDiscInner,
+                       {.queue = 0, .prec = 0, .thMin = 30.0, .thMax = 30.0, .maxP = 1.0});
+    helper.ConfigQueue(edgeDiscInner,
+                       {.queue = 0, .prec = 1, .thMin = 0.0, .thMax = 0.0, .maxP = 0.0});
+    helper.ConfigQueue(edgeDiscInner,
+                       {.queue = 1, .prec = 0, .thMin = 50.0, .thMax = 50.0, .maxP = 1.0});
 
     // ---- DiffServ Core (core -> e1 direction, minimal config) ----
     Ptr<CoreQueueDisc> coreDisc = CreateObject<CoreQueueDisc>();
     auto coreInner = helper.InstallRedInner(coreDisc);
     coreInner->SetNumQueues(1);
     coreInner->SetNumPrec(0, 1);
-    coreInner->SetMredMode(MredMode::DROP_TAIL);
+    coreInner->SetMredModeAllQueues(MredMode::DROP_TAIL);
 
     Ptr<PriorityScheduler> corePq = CreateObjectWithAttributes<PriorityScheduler>("NumQueues",
                                                                                   UintegerValue(1),
@@ -9676,7 +9931,8 @@ PerfRegressionTest::DoRun()
     Ptr<TrafficControlLayer> tcCore = coreDev->GetNode()->GetObject<TrafficControlLayer>();
     tcCore->SetRootQueueDiscOnDevice(coreDev, coreDisc);
     coreDisc->Initialize();
-    helper.ConfigQueue(coreInner, 0, 0, 50.0, 50.0, 1.0);
+    helper.ConfigQueue(coreInner,
+                       {.queue = 0, .prec = 0, .thMin = 50.0, .thMax = 50.0, .maxP = 1.0});
 
     // ---- Traffic: EF flow (1 CBR at 300 kbps) ----
     uint16_t efPort = 9;
@@ -9757,9 +10013,9 @@ PerfRegressionTest::DoRun()
     // Log results for baseline tracking
     std::ostringstream q7Sum;
     q7Sum << "\n  [Q-7] Performance results:\n"
-              << "    Wall-clock: " << std::fixed << std::setprecision(1) << wallSec
-              << " s (budget: " << kMaxWallClockSec << " s)\n"
-              << "    Peak RSS:   " << (peakRss / (1024 * 1024)) << " MB (budget: 1024 MB)\n";
+          << "    Wall-clock: " << std::fixed << std::setprecision(1) << wallSec
+          << " s (budget: " << kMaxWallClockSec << " s)\n"
+          << "    Peak RSS:   " << (peakRss / (1024 * 1024)) << " MB (budget: 1024 MB)\n";
     std::cout << q7Sum.str() << std::endl;
 }
 
@@ -9843,7 +10099,7 @@ AfDropPrecedenceQualityTest::DoRun()
     edgeDiscInner->SetNumQueues(1);
     edgeDiscInner->SetNumPrec(0, 3);
     edgeDiscInner->SetQueueLimit(0, 50);
-    edgeDiscInner->SetMredMode(MredMode::RIO_D); // Per-precedence RED
+    edgeDiscInner->SetMredModeAllQueues(MredMode::RIO_D); // Per-precedence RED
 
     Ptr<PriorityScheduler> sched = CreateObjectWithAttributes<PriorityScheduler>("NumQueues",
                                                                                  UintegerValue(1),
@@ -9859,15 +10115,19 @@ AfDropPrecedenceQualityTest::DoRun()
     // downgrade to AF12/AF13.
     //
     // Even simpler: mark each flow directly by destination port.
-    helper
-        .AddMarkRule(edgeDisc, 10, kAnyHost, static_cast<int32_t>(sinkAddr.Get()), kAnyProtocol, 0);
+    edgeDisc->AddMarkRule({.dscp = 10, .dstAddr = sinkAddr});
 
     // Dumb policy for all three AF DSCPs (no metering, just classification)
     helper.AddDumbPolicy(edgeDisc, 10);
     helper.AddDumbPolicy(edgeDisc, 12);
     helper.AddDumbPolicy(edgeDisc, 14);
 
-    helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 10, 10, 10);
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 10,
+                            .downgrade1 = 10,
+                            .downgrade2 = 10,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
 
     // PHB: AF11/12/13 -> queue 0, prec 0/1/2
     helper.AddPhbEntry(edgeDiscInner, 10, 0, 0); // AF11 -> lowest drop (best)
@@ -9880,11 +10140,21 @@ AfDropPrecedenceQualityTest::DoRun()
     edgeDisc->Initialize();
 
     // RIO thresholds: prec 0 most tolerant, prec 2 least
-    helper.ConfigQueue(edgeDiscInner, 0, 0, 40.0, 50.0,
-                       0.02);                                  // AF11: high thresholds
-    helper.ConfigQueue(edgeDiscInner, 0, 1, 20.0, 40.0, 0.05); // AF12: medium
-    helper.ConfigQueue(edgeDiscInner, 0, 2, 5.0, 15.0,
-                       0.10); // AF13: aggressive drop
+    helper.ConfigQueue(edgeDiscInner,
+                       {.queue = 0,
+                        .prec = 0,
+                        .thMin = 40.0,
+                        .thMax = 50.0,
+                        .maxP = 0.02}); // AF11: high thresholds
+    helper.ConfigQueue(
+        edgeDiscInner,
+        {.queue = 0, .prec = 1, .thMin = 20.0, .thMax = 40.0, .maxP = 0.05}); // AF12: medium
+    helper.ConfigQueue(edgeDiscInner,
+                       {.queue = 0,
+                        .prec = 2,
+                        .thMin = 5.0,
+                        .thMax = 15.0,
+                        .maxP = 0.10}); // AF13: aggressive drop
 
     // ---- Traffic: 3 TCP BulkSend flows on different ports ----
     // All classified to AF11 initially, then we re-mark AF12/AF13
@@ -10021,7 +10291,7 @@ AfDropPrecedenceQualityTest::DoRun()
     inner2->SetNumQueues(1);
     inner2->SetNumPrec(0, 3);
     inner2->SetQueueLimit(0, 50);
-    inner2->SetMredMode(MredMode::RIO_D);
+    inner2->SetMredModeAllQueues(MredMode::RIO_D);
 
     Ptr<PriorityScheduler> sched2 = CreateObjectWithAttributes<PriorityScheduler>("NumQueues",
                                                                                   UintegerValue(1),
@@ -10030,32 +10300,32 @@ AfDropPrecedenceQualityTest::DoRun()
     inner2->SetScheduler(sched2);
 
     // Mark by source address: src0 -> AF11, src1 -> AF12, src2 -> AF13
-    h2.AddMarkRule(edge2,
-                   10,
-                   static_cast<int32_t>(srcIfs[0].GetAddress(0).Get()),
-                   kAnyHost,
-                   kAnyProtocol,
-                   0);
-    h2.AddMarkRule(edge2,
-                   12,
-                   static_cast<int32_t>(srcIfs[1].GetAddress(0).Get()),
-                   kAnyHost,
-                   kAnyProtocol,
-                   0);
-    h2.AddMarkRule(edge2,
-                   14,
-                   static_cast<int32_t>(srcIfs[2].GetAddress(0).Get()),
-                   kAnyHost,
-                   kAnyProtocol,
-                   0);
+    edge2->AddMarkRule({.dscp = 10, .srcAddr = srcIfs[0].GetAddress(0)});
+    edge2->AddMarkRule({.dscp = 12, .srcAddr = srcIfs[1].GetAddress(0)});
+    edge2->AddMarkRule({.dscp = 14, .srcAddr = srcIfs[2].GetAddress(0)});
 
     h2.AddDumbPolicy(edge2, 10);
     h2.AddDumbPolicy(edge2, 12);
     h2.AddDumbPolicy(edge2, 14);
 
-    h2.AddPolicerEntry(edge2, PolicerType::DUMB, 10, 10, 10);
-    h2.AddPolicerEntry(edge2, PolicerType::DUMB, 12, 12, 12);
-    h2.AddPolicerEntry(edge2, PolicerType::DUMB, 14, 14, 14);
+    h2.AddPolicerEntry(edge2,
+                       {.policer = PolicerType::DUMB,
+                        .initialCodePt = 10,
+                        .downgrade1 = 10,
+                        .downgrade2 = 10,
+                        .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
+    h2.AddPolicerEntry(edge2,
+                       {.policer = PolicerType::DUMB,
+                        .initialCodePt = 12,
+                        .downgrade1 = 12,
+                        .downgrade2 = 12,
+                        .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
+    h2.AddPolicerEntry(edge2,
+                       {.policer = PolicerType::DUMB,
+                        .initialCodePt = 14,
+                        .downgrade1 = 14,
+                        .downgrade2 = 14,
+                        .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
 
     h2.AddPhbEntry(inner2, 10, 0, 0); // AF11 -> prec 0 (lowest drop)
     h2.AddPhbEntry(inner2, 12, 0, 1); // AF12 -> prec 1
@@ -10067,9 +10337,18 @@ AfDropPrecedenceQualityTest::DoRun()
     edge2->Initialize();
 
     // RIO thresholds: lower thresholds = more aggressive dropping
-    h2.ConfigQueue(inner2, 0, 0, 40.0, 50.0, 0.02); // AF11: most tolerant
-    h2.ConfigQueue(inner2, 0, 1, 20.0, 40.0, 0.05); // AF12: medium
-    h2.ConfigQueue(inner2, 0, 2, 5.0, 15.0, 0.10);  // AF13: most aggressive
+    h2.ConfigQueue(
+        inner2,
+        {.queue = 0, .prec = 0, .thMin = 40.0, .thMax = 50.0, .maxP = 0.02}); // AF11: most tolerant
+    h2.ConfigQueue(
+        inner2,
+        {.queue = 0, .prec = 1, .thMin = 20.0, .thMax = 40.0, .maxP = 0.05}); // AF12: medium
+    h2.ConfigQueue(inner2,
+                   {.queue = 0,
+                    .prec = 2,
+                    .thMin = 5.0,
+                    .thMax = 15.0,
+                    .maxP = 0.10}); // AF13: most aggressive
 
     // ---- 3 TCP BulkSend flows ----
     uint16_t ports[3] = {100, 200, 300};
@@ -10123,10 +10402,10 @@ AfDropPrecedenceQualityTest::DoRun()
 
     std::ostringstream q5Sum;
     q5Sum << "\n  [Q-5] AF PHB results:\n"
-              << "    tput:  AF11=" << (tput0 / 1e3) << " AF12=" << (tput1 / 1e3)
-              << " AF13=" << (tput2 / 1e3) << " kbps\n"
-              << "    total: " << (totalTput / 1e3) << " kbps"
-              << " (link: " << (kLinkBw / 1e3) << " kbps)\n";
+          << "    tput:  AF11=" << (tput0 / 1e3) << " AF12=" << (tput1 / 1e3)
+          << " AF13=" << (tput2 / 1e3) << " kbps\n"
+          << "    total: " << (totalTput / 1e3) << " kbps"
+          << " (link: " << (kLinkBw / 1e3) << " kbps)\n";
     std::cout << q5Sum.str() << std::endl;
 }
 
@@ -10261,7 +10540,7 @@ ThreeClassCoexistenceTest::DoRun()
     discInner->SetQueueLimit(0, 50);
     discInner->SetQueueLimit(1, 100);
     discInner->SetQueueLimit(2, 100);
-    discInner->SetMredMode(MredMode::DROP_TAIL);
+    discInner->SetMredModeAllQueues(MredMode::DROP_TAIL);
 
     // PQ scheduler: EF (queue 0) has strict priority
     Ptr<PriorityScheduler> pq = CreateObjectWithAttributes<PriorityScheduler>("NumQueues",
@@ -10271,32 +10550,32 @@ ThreeClassCoexistenceTest::DoRun()
     discInner->SetScheduler(pq);
 
     // Mark by source address
-    hlp.AddMarkRule(disc,
-                    46,
-                    static_cast<int32_t>(srcIfs[0].GetAddress(0).Get()),
-                    kAnyHost,
-                    kAnyProtocol,
-                    0); // EF
-    hlp.AddMarkRule(disc,
-                    10,
-                    static_cast<int32_t>(srcIfs[1].GetAddress(0).Get()),
-                    kAnyHost,
-                    kAnyProtocol,
-                    0); // AF
-    hlp.AddMarkRule(disc,
-                    0,
-                    static_cast<int32_t>(srcIfs[2].GetAddress(0).Get()),
-                    kAnyHost,
-                    kAnyProtocol,
-                    0); // BE
+    disc->AddMarkRule({.dscp = 46, .srcAddr = srcIfs[0].GetAddress(0)}); // EF
+    disc->AddMarkRule({.dscp = 10, .srcAddr = srcIfs[1].GetAddress(0)}); // AF
+    disc->AddMarkRule({.dscp = 0, .srcAddr = srcIfs[2].GetAddress(0)});  // BE
 
     hlp.AddDumbPolicy(disc, 46);
     hlp.AddDumbPolicy(disc, 10);
     hlp.AddDumbPolicy(disc, 0);
 
-    hlp.AddPolicerEntry(disc, PolicerType::DUMB, 46, 46, 46);
-    hlp.AddPolicerEntry(disc, PolicerType::DUMB, 10, 10, 10);
-    hlp.AddPolicerEntry(disc, PolicerType::DUMB, 0, 0, 0);
+    hlp.AddPolicerEntry(disc,
+                        {.policer = PolicerType::DUMB,
+                         .initialCodePt = 46,
+                         .downgrade1 = 46,
+                         .downgrade2 = 46,
+                         .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
+    hlp.AddPolicerEntry(disc,
+                        {.policer = PolicerType::DUMB,
+                         .initialCodePt = 10,
+                         .downgrade1 = 10,
+                         .downgrade2 = 10,
+                         .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
+    hlp.AddPolicerEntry(disc,
+                        {.policer = PolicerType::DUMB,
+                         .initialCodePt = 0,
+                         .downgrade1 = 0,
+                         .downgrade2 = 0,
+                         .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
 
     hlp.AddPhbEntry(discInner, 46, 0, 0); // EF -> queue 0
     hlp.AddPhbEntry(discInner, 10, 1, 0); // AF -> queue 1
@@ -10307,9 +10586,11 @@ ThreeClassCoexistenceTest::DoRun()
     tcl->SetRootQueueDiscOnDevice(eDv, disc);
     disc->Initialize();
 
-    hlp.ConfigQueue(discInner, 0, 0, 50.0, 50.0, 1.0);
-    hlp.ConfigQueue(discInner, 1, 0, 100.0, 100.0, 1.0);
-    hlp.ConfigQueue(discInner, 2, 0, 100.0, 100.0, 1.0);
+    hlp.ConfigQueue(discInner, {.queue = 0, .prec = 0, .thMin = 50.0, .thMax = 50.0, .maxP = 1.0});
+    hlp.ConfigQueue(discInner,
+                    {.queue = 1, .prec = 0, .thMin = 100.0, .thMax = 100.0, .maxP = 1.0});
+    hlp.ConfigQueue(discInner,
+                    {.queue = 2, .prec = 0, .thMin = 100.0, .thMax = 100.0, .maxP = 1.0});
 
     // ---- EF: CBR UDP at 3 Mbps ----
     uint16_t efPort = 9;
@@ -10409,12 +10690,12 @@ ThreeClassCoexistenceTest::DoRun()
 
     std::ostringstream q6Sum;
     q6Sum << "\n  [Q-6] Three-class coexistence results:\n"
-              << "    EF:  " << (efTput / 1e6) << " Mbps (target: 3 Mbps)"
-              << " maxDelay: " << (m_maxEfDelay * 1e3) << " ms\n"
-              << "    AF:  " << (afTput / 1e6) << " Mbps\n"
-              << "    BE:  " << (beTput / 1e6) << " Mbps\n"
-              << "    Sum: " << ((efTput + afTput + beTput) / 1e6) << " Mbps"
-              << " (link: " << (kLinkBw / 1e6) << " Mbps)\n";
+          << "    EF:  " << (efTput / 1e6) << " Mbps (target: 3 Mbps)"
+          << " maxDelay: " << (m_maxEfDelay * 1e3) << " ms\n"
+          << "    AF:  " << (afTput / 1e6) << " Mbps\n"
+          << "    BE:  " << (beTput / 1e6) << " Mbps\n"
+          << "    Sum: " << ((efTput + afTput + beTput) / 1e6) << " Mbps"
+          << " (link: " << (kLinkBw / 1e6) << " Mbps)\n";
     std::cout << q6Sum.str() << std::endl;
 }
 
@@ -10545,29 +10826,44 @@ class Example2ThreeClassTest : public TestCase
         discInner->SetScheduler(pq);
 
         // Mark rules: Premium by src, Gold by dst port, BE is default
-        h.AddMarkRule(disc,
-                      46,
-                      static_cast<int32_t>(sIf[0].GetAddress(0).Get()),
-                      kAnyHost,
-                      kAnyProtocol,
-                      0);
-        h.AddMarkRuleWithPorts(disc, 10, kAnyHost, kAnyHost, 6, 0, kAnyPort, 23);
-        h.AddMarkRuleWithPorts(disc, 12, kAnyHost, kAnyHost, 6, 0, kAnyPort, 20);
+        disc->AddMarkRule({.dscp = 46, .srcAddr = sIf[0].GetAddress(0)});
+        disc->AddMarkRule({.dscp = 10, .protocol = 6, .dstPort = 23});
+        disc->AddMarkRule({.dscp = 12, .protocol = 6, .dstPort = 20});
 
         // Metering
-        h.AddTokenBucketPolicy(disc, 46, 500000.0, 100000.0);
+        h.AddTokenBucketPolicy(disc, {.codePt = 46, .cirBps = 500000.0, .cbsBytes = 100000.0});
         h.AddDumbPolicy(disc, 51);
-        h.AddPolicerEntry(disc, PolicerType::TOKEN_BUCKET, 46, 51, 51);
+        h.AddPolicerEntry(disc,
+                          {.policer = PolicerType::TOKEN_BUCKET,
+                           .initialCodePt = 46,
+                           .downgrade1 = 51,
+                           .downgrade2 = 51,
+                           .policyIndex = static_cast<uint32_t>(PolicerType::TOKEN_BUCKET)});
 
         h.AddDumbPolicy(disc, 10);
-        h.AddPolicerEntry(disc, PolicerType::DUMB, 10, 10, 10);
-        h.AddTsw2cmPolicy(disc, 12, 500000.0);
+        h.AddPolicerEntry(disc,
+                          {.policer = PolicerType::DUMB,
+                           .initialCodePt = 10,
+                           .downgrade1 = 10,
+                           .downgrade2 = 10,
+                           .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
+        h.AddTsw2cmPolicy(disc, {.codePt = 12, .cirBps = 500000.0});
         h.AddDumbPolicy(disc, 14);
-        h.AddPolicerEntry(disc, PolicerType::TSW2CM, 12, 14, 14);
+        h.AddPolicerEntry(disc,
+                          {.policer = PolicerType::TSW2CM,
+                           .initialCodePt = 12,
+                           .downgrade1 = 14,
+                           .downgrade2 = 14,
+                           .policyIndex = static_cast<uint32_t>(PolicerType::TSW2CM)});
 
-        h.AddTokenBucketPolicy(disc, 0, 700000.0, 100000.0);
+        h.AddTokenBucketPolicy(disc, {.codePt = 0, .cirBps = 700000.0, .cbsBytes = 100000.0});
         h.AddDumbPolicy(disc, 50);
-        h.AddPolicerEntry(disc, PolicerType::TOKEN_BUCKET, 0, 50, 50);
+        h.AddPolicerEntry(disc,
+                          {.policer = PolicerType::TOKEN_BUCKET,
+                           .initialCodePt = 0,
+                           .downgrade1 = 50,
+                           .downgrade2 = 50,
+                           .policyIndex = static_cast<uint32_t>(PolicerType::TOKEN_BUCKET)});
 
         // PHB
         h.AddPhbEntry(discInner, 46, 0, 0);
@@ -10584,17 +10880,21 @@ class Example2ThreeClassTest : public TestCase
         disc->Initialize();
 
         discInner->SetMredMode(MredMode::DROP_TAIL, 0);
-        h.ConfigQueue(discInner, 0, 0, 30.0, 30.0, 1.0);
-        h.ConfigQueue(discInner, 0, 1, 0.0, 0.0, 0.0);
+        h.ConfigQueue(discInner,
+                      {.queue = 0, .prec = 0, .thMin = 30.0, .thMax = 30.0, .maxP = 1.0});
+        h.ConfigQueue(discInner, {.queue = 0, .prec = 1, .thMin = 0.0, .thMax = 0.0, .maxP = 0.0});
 
         discInner->SetMredMode(MredMode::RIO_C, 1);
-        h.ConfigQueue(discInner, 1, 0, 60.0, 110.0, 0.02);
-        h.ConfigQueue(discInner, 1, 1, 30.0, 60.0, 0.6);
-        h.ConfigQueue(discInner, 1, 2, 5.0, 10.0, 0.8);
+        h.ConfigQueue(discInner,
+                      {.queue = 1, .prec = 0, .thMin = 60.0, .thMax = 110.0, .maxP = 0.02});
+        h.ConfigQueue(discInner,
+                      {.queue = 1, .prec = 1, .thMin = 30.0, .thMax = 60.0, .maxP = 0.6});
+        h.ConfigQueue(discInner, {.queue = 1, .prec = 2, .thMin = 5.0, .thMax = 10.0, .maxP = 0.8});
 
         discInner->SetMredMode(MredMode::DROP_TAIL, 2);
-        h.ConfigQueue(discInner, 2, 0, 100.0, 100.0, 1.0);
-        h.ConfigQueue(discInner, 2, 1, 0.0, 0.0, 0.0);
+        h.ConfigQueue(discInner,
+                      {.queue = 2, .prec = 0, .thMin = 100.0, .thMax = 100.0, .maxP = 1.0});
+        h.ConfigQueue(discInner, {.queue = 2, .prec = 1, .thMin = 0.0, .thMax = 0.0, .maxP = 0.0});
 
         // ---- EF: CBR 300 kbps ----
         PacketSinkHelper eSink("ns3::UdpSocketFactory",
@@ -10712,10 +11012,10 @@ class Example2ThreeClassTest : public TestCase
 
         std::ostringstream q2Sum;
         q2Sum << "\n  [Q-2] Example-2 three-class results:\n"
-                  << "    EF:    " << (efT / 1e3) << " kbps\n"
-                  << "    Gold:  " << (goldT / 1e3) << " kbps\n"
-                  << "    BE:    " << (beT / 1e3) << " kbps\n"
-                  << "    Total: " << ((efT + goldT + beT) / 1e3) << " kbps (link: 2000 kbps)\n";
+              << "    EF:    " << (efT / 1e3) << " kbps\n"
+              << "    Gold:  " << (goldT / 1e3) << " kbps\n"
+              << "    BE:    " << (beT / 1e3) << " kbps\n"
+              << "    Total: " << ((efT + goldT + beT) / 1e3) << " kbps (link: 2000 kbps)\n";
         std::cout << q2Sum.str() << std::endl;
     }
 };
@@ -10964,13 +11264,11 @@ class TestSAqmRunnerGoodputWindowFullSimtime : public TestCase
         NS_TEST_ASSERT_MSG_EQ(rows.size(), 3u, "expected 2 bulk + 1 probe rows");
         for (const auto& r : rows)
         {
-            const double expected =
-                (r.fmRxBytes - r.fmRetxBytes) * 8.0 / kAqmEvalSmokeSimTime;
+            const double expected = (r.fmRxBytes - r.fmRetxBytes) * 8.0 / kAqmEvalSmokeSimTime;
             NS_TEST_ASSERT_MSG_EQ_TOL(r.rxRateBps,
                                       expected,
                                       1.0,
-                                      "rx_rate_bps for '" << r.name
-                                                          << "' is not bytes*8/simTime");
+                                      "rx_rate_bps for '" << r.name << "' is not bytes*8/simTime");
         }
     }
 };
@@ -11912,14 +12210,7 @@ class CakePrecedenceQuantumLadderTest : public TestCase
         Ptr<EdgeQueueDisc> edge = CreateObject<EdgeQueueDisc>();
         // enableLlq=false so the across-tin dispatcher is a plain DRR shaper and
         // every tin (including tin 7) carries a real quantum.
-        cake::Helper::SetAsCakePrecedence(edge,
-                                          DataRate("10Mbps"),
-                                          /*enableAckFilter=*/false,
-                                          /*enableLlq=*/false,
-                                          /*enableTinShaping=*/false,
-                                          /*enableHostIsolation=*/false,
-                                          /*useInnerTbfShaping=*/false,
-                                          /*enableAckFilterAggressive=*/false);
+        cake::Helper::SetAsCakePrecedence(edge, DataRate("10Mbps"));
 
         Ptr<cake::TinShaperDispatcher> shaper =
             DynamicCast<cake::TinShaperDispatcher>(edge->GetSlotDispatcher());
@@ -12026,6 +12317,93 @@ class CakeAutorateWindowUsesRawLengthTest : public TestCase
     }
 };
 
+/// Verifies InstallRoot replaces the default root qdisc the internet stack adds.
+class InstallRootReplacesDefaultTest : public TestCase
+{
+  public:
+    InstallRootReplacesDefaultTest()
+        : TestCase("InstallRoot replaces the InternetStackHelper default root qdisc")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        NodeContainer nodes;
+        nodes.Create(2);
+        PointToPointHelper p2p;
+        NetDeviceContainer devices = p2p.Install(nodes);
+        InternetStackHelper internet;
+        internet.Install(nodes);
+        Ipv4AddressHelper addr;
+        addr.SetBase("10.0.0.0", "255.255.255.0");
+        addr.Assign(devices);
+
+        Ptr<NetDevice> dev = devices.Get(0);
+        Ptr<TrafficControlLayer> tc = dev->GetNode()->GetObject<TrafficControlLayer>();
+        NS_TEST_ASSERT_MSG_EQ((tc != nullptr), true, "TrafficControlLayer should be aggregated");
+        NS_TEST_ASSERT_MSG_EQ((tc->GetRootQueueDiscOnDevice(dev) != nullptr),
+                              true,
+                              "InternetStackHelper should attach a default root qdisc");
+
+        Ptr<EdgeQueueDisc> edge = CreateObject<EdgeQueueDisc>();
+        Ptr<QueueDisc> returned = InstallRoot(dev, edge);
+
+        NS_TEST_ASSERT_MSG_EQ((returned == edge),
+                              true,
+                              "InstallRoot should return the disc it installed");
+        NS_TEST_ASSERT_MSG_EQ((tc->GetRootQueueDiscOnDevice(dev) == edge),
+                              true,
+                              "InstallRoot should set the edge as the device root qdisc");
+        Simulator::Destroy();
+    }
+};
+
+/// Verifies InstallRoot sets the root when the device currently has none.
+class InstallRootOnBareDeviceTest : public TestCase
+{
+  public:
+    InstallRootOnBareDeviceTest()
+        : TestCase("InstallRoot sets the root on a device that has no qdisc")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        NodeContainer nodes;
+        nodes.Create(2);
+        PointToPointHelper p2p;
+        NetDeviceContainer devices = p2p.Install(nodes);
+        InternetStackHelper internet;
+        internet.Install(nodes);
+        Ipv4AddressHelper addr;
+        addr.SetBase("10.0.0.0", "255.255.255.0");
+        addr.Assign(devices);
+
+        Ptr<NetDevice> dev = devices.Get(0);
+        Ptr<TrafficControlLayer> tc = dev->GetNode()->GetObject<TrafficControlLayer>();
+        if (tc->GetRootQueueDiscOnDevice(dev))
+        {
+            tc->DeleteRootQueueDiscOnDevice(dev);
+        }
+        NS_TEST_ASSERT_MSG_EQ((tc->GetRootQueueDiscOnDevice(dev) == nullptr),
+                              true,
+                              "precondition: device should have no root qdisc");
+
+        Ptr<EdgeQueueDisc> edge = CreateObject<EdgeQueueDisc>();
+        Ptr<QueueDisc> returned = InstallRoot(dev, edge);
+
+        NS_TEST_ASSERT_MSG_EQ((returned == edge),
+                              true,
+                              "InstallRoot should return the disc it installed");
+        NS_TEST_ASSERT_MSG_EQ((tc->GetRootQueueDiscOnDevice(dev) == edge),
+                              true,
+                              "InstallRoot should set the root even when none was present");
+        Simulator::Destroy();
+    }
+};
+
 class DiffServTestSuite : public TestSuite
 {
   public:
@@ -12077,6 +12455,7 @@ class DiffServTestSuite : public TestSuite
         AddTestCase(new EdgeDscpMarkingTest(), TestCase::Duration::QUICK);
         AddTestCase(new EdgeNoMatchPassthroughTest(), TestCase::Duration::QUICK);
         AddTestCase(new EdgeSpecificAddrMatchTest(), TestCase::Duration::QUICK);
+        AddTestCase(new EdgeIpv6ClassifyMarkTest(), TestCase::Duration::QUICK);
         AddTestCase(new PortBasedMarkRuleTest(), TestCase::Duration::QUICK);
         AddTestCase(new MeterInjectionTest(), TestCase::Duration::QUICK);
         AddTestCase(new MeterAssignStreamsCascadeTest(), TestCase::Duration::QUICK);
@@ -12090,6 +12469,9 @@ class DiffServTestSuite : public TestSuite
         AddTestCase(new BackwardCompatSingleInnerTest(), TestCase::Duration::QUICK);
         AddTestCase(new PerSlotQueueStatsProbesTest(), TestCase::Duration::QUICK);
         AddTestCase(new EdgeSlotZeroDelegationParityTest(), TestCase::Duration::QUICK);
+        AddTestCase(new SetAsDiffservComposesEfEdgeTest(), TestCase::Duration::QUICK);
+        AddTestCase(new SetAsDiffservComposesBestEffortEdgeTest(), TestCase::Duration::QUICK);
+        AddTestCase(new SetAsDiffservUsesProvidedSchedulerTest(), TestCase::Duration::QUICK);
         AddTestCase(new L4sFqCoDelAutoDefaultQuantumTest(), TestCase::Duration::QUICK);
 
         // S-17: Across-slot dispatcher + CAKE composition
@@ -12122,6 +12504,7 @@ class DiffServTestSuite : public TestSuite
         AddTestCase(new TinShaperPeekSideEffectFreeWithCapTest(), TestCase::Duration::QUICK);
         AddTestCase(new LlqTinShapingCompositionTest(), TestCase::Duration::QUICK);
         AddTestCase(new EgressDscpWashTest(), TestCase::Duration::QUICK);
+        AddTestCase(new EgressDscpWashIpv6Test(), TestCase::Duration::QUICK);
         AddTestCase(new CakeMemLimitAttributeTest(), TestCase::Duration::QUICK);
         AddTestCase(new CakeOverheadStatisticalRateAdjustmentTest(), TestCase::Duration::QUICK);
         AddTestCase(new CakeRawModeNoRateAdjustmentTest(), TestCase::Duration::QUICK);
@@ -12224,6 +12607,8 @@ class DiffServTestSuite : public TestSuite
         AddTestCase(new TinShaperPerFlowStatsTest(), TestCase::Duration::QUICK);
         AddTestCase(new CakePrintTcStatsStructureTest(), TestCase::Duration::QUICK);
         AddTestCase(new CakeAutorateIngressApiContractTest(), TestCase::Duration::QUICK);
+        AddTestCase(new InstallRootReplacesDefaultTest(), TestCase::Duration::QUICK);
+        AddTestCase(new InstallRootOnBareDeviceTest(), TestCase::Duration::QUICK);
     }
 };
 

@@ -25,6 +25,19 @@ namespace ns3::stratum
 
 /**
  * @ingroup stratum
+ * @brief RED threshold configuration for one (queue, prec) virtual queue.
+ */
+struct RedQueueConfig
+{
+    uint32_t queue; //!< physical queue index
+    uint32_t prec;  //!< drop-precedence level
+    double thMin;   //!< RED minimum threshold (packets)
+    double thMax;   //!< RED maximum threshold (packets)
+    double maxP;    //!< maximum drop probability
+};
+
+/**
+ * @ingroup stratum
  *
  * @brief Classful DiffServ RED queue disc with per-queue MRED and pluggable
  * schedulers.
@@ -99,20 +112,22 @@ class RedQueueDisc : public QueueDisc, public QueueStatsProvider
 
     /**
      * @brief Configure RED thresholds for a (queue, prec) virtual queue.
-     * @param queue physical queue index
-     * @param prec drop precedence level
-     * @param thMin RED minimum threshold (packets)
-     * @param thMax RED maximum threshold (packets)
-     * @param maxP maximum drop probability
+     * @param cfg RED threshold configuration
      */
-    void ConfigQueue(uint32_t queue, uint32_t prec, double thMin, double thMax, double maxP);
+    void ConfigQueue(const RedQueueConfig& cfg);
 
     /**
-     * @brief Set the MRED mode for one or all queues.
+     * @brief Set the MRED mode for one physical queue.
      * @param mode the MRED mode
-     * @param queue queue index, or kMaxQueues to set all queues
+     * @param queue physical queue index
      */
-    void SetMredMode(MredMode mode, uint32_t queue = kMaxQueues);
+    void SetMredMode(MredMode mode, uint32_t queue);
+
+    /**
+     * @brief Set the MRED mode for every physical queue.
+     * @param mode the MRED mode
+     */
+    void SetMredModeAllQueues(MredMode mode);
 
     /**
      * @brief Set the number of precedence levels for a given queue.

@@ -32,6 +32,7 @@
 #include "ns3/stratum-cake-helper.h"
 #include "ns3/stratum-edge-queue-disc.h"
 #include "ns3/stratum-helper.h"
+#include "ns3/stratum-install-helper.h"
 #include "ns3/traffic-control-module.h"
 
 #include <array>
@@ -46,8 +47,6 @@ using namespace ns3;
 namespace cake = ns3::stratum::cake;
 namespace diffserv = ns3::stratum::diffserv;
 using ns3::stratum::EdgeQueueDisc;
-using ns3::stratum::kAnyHost;
-using ns3::stratum::kAnyProtocol;
 
 NS_LOG_COMPONENT_DEFINE("DiffServCake");
 
@@ -148,24 +147,12 @@ main(int argc, char* argv[])
     diffserv::Helper helper;
     for (uint32_t i = 0; i < kTins.size(); ++i)
     {
-        helper.AddMarkRule(edge,
-                           kTins[i].dscp,
-                           static_cast<int32_t>(senderIfs[i].GetAddress(0).Get()),
-                           kAnyHost,
-                           kAnyProtocol,
-                           0);
+        edge->AddMarkRule({.dscp = kTins[i].dscp, .srcAddr = senderIfs[i].GetAddress(0)});
         helper.AddDumbPolicy(edge, kTins[i].dscp);
     }
 
-    TrafficControlHelper tch;
-    tch.SetRootQueueDisc("ns3::stratum::EdgeQueueDisc");
     Ptr<NetDevice> bottleneckEgress = bottleneckDev.Get(0);
-    Ptr<TrafficControlLayer> tcl = bottleneckEgress->GetNode()->GetObject<TrafficControlLayer>();
-    if (tcl->GetRootQueueDiscOnDevice(bottleneckEgress))
-    {
-        tcl->DeleteRootQueueDiscOnDevice(bottleneckEgress);
-    }
-    tcl->SetRootQueueDiscOnDevice(bottleneckEgress, edge);
+    stratum::InstallRoot(bottleneckEgress, edge);
 
     // --- Apps: one CBR per tin, saturating ---
     const uint16_t basePort = 5000;

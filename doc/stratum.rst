@@ -93,16 +93,15 @@ Per-packet metadata is carried via *ns-3* ``Tag`` objects rather than by
 modifying IP header fields during internal processing:
 
 * ``DscpTag`` -- carries the policed DSCP code point
-* ``AppTypeTag`` -- carries an application-type identifier used by
-  the multi-field classifier
 * ``SendTimeTag`` -- records packet send time for OWD/IPDV measurement
 
 Helpers
 =======
 
-* ``diffserv::Helper`` -- fluent configuration API for adding mark rules, policy
+* ``diffserv::Helper`` -- fluent configuration API for adding policy
   entries, policer entries, PHB entries, scheduler assignments, and RED
-  thresholds.  Rates are accepted in bits/s.
+  thresholds.  Rates are accepted in bits/s.  Mark rules are added directly
+  on ``EdgeQueueDisc`` via ``edge->AddMarkRule({.dscp = N, ...})``.
 * ``MonitorHelper`` -- connects ``RedQueueDisc`` trace sources to
   ``Statistics`` and writes periodic metric traces (departure rate,
   queue length) to files.
@@ -247,8 +246,9 @@ Scope and limitations
 
 * **Colour-blind mode only.**  All meters operate in colour-blind mode; there
   is no colour-aware metering path.
-* **IPv4 only.**  The original *ns-2* module supported only IPv4, and this port
-  preserves that limitation.
+* **Address-family agnostic.**  The DS-field and ECN handling is address-family
+  agnostic: DiffServ, L4S, and CAKE operate identically over IPv4 and IPv6
+  (RFC 2474 defines the same DS octet for both).
 * **Structural OWD offset vs. ns-2.**  One-way delay measurements show a
   systematic offset relative to *ns-2* baselines.  This is caused by *ns-3*
   NetDevice queue serialisation delay (absent in *ns-2*) and by differences in
@@ -300,14 +300,14 @@ A typical edge router configuration uses ``diffserv::Helper``:
 
    diffserv::Helper helper;
 
-   // Mark rule: classify EF traffic (DSCP 46) from any source to any destination
-   helper.AddMarkRule(edge, 46, kAnyHost, kAnyHost, 17, 1);
+   // Mark rule: classify EF traffic (DSCP 46) — UDP, any source/destination
+   edge->AddMarkRule({.dscp = 46, .protocol = 17});
 
    // srTCM policy for DSCP 46: CIR=500 kbps, CBS=3000 B, EBS=3000 B
-   helper.AddSrTcmPolicy(edge, 46, 500000.0, 3000.0, 3000.0);
+   helper.AddSrTcmPolicy(edge, {.codePt = 46, .cirBps = 500000.0, .cbsBytes = 3000.0, .ebsBytes = 3000.0});
 
    // Policer: GREEN -> 46, YELLOW -> 0, RED -> 0
-   helper.AddPolicerEntry(edge, PolicerType::SRTCM, 46, 0, 0);
+   helper.AddPolicerEntry(edge, {.policer = PolicerType::SRTCM, .initialCodePt = 46, .downgrade1 = 0, .downgrade2 = 0, .policyIndex = static_cast<uint32_t>(PolicerType::SRTCM)});
 
    // PHB table: DSCP 46 -> queue 0, prec 0
    helper.AddPhbEntry(edge, 46, 0, 0);
@@ -318,7 +318,7 @@ A typical edge router configuration uses ``diffserv::Helper``:
    helper.SetScheduler(edge, pq);
 
    // Configure RED thresholds for queue 0, prec 0
-   helper.ConfigQueue(edge, 0, 0, 5.0, 10.0, 0.02);
+   helper.ConfigQueue(edge, {.queue = 0, .prec = 0, .thMin = 5.0, .thMax = 10.0, .maxP = 0.02});
 
 Configuring a core router
 =========================

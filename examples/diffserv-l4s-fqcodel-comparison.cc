@@ -71,6 +71,7 @@
 #include "ns3/network-module.h"
 #include "ns3/point-to-point-module.h"
 #include "ns3/stratum-helper.h"
+#include "ns3/stratum-install-helper.h"
 #include "ns3/stratum-l4s-coupled-scheduler.h"
 #include "ns3/stratum-l4s-queue-disc.h"
 #include "ns3/stratum-send-time-tag.h"
@@ -275,21 +276,15 @@ InstallSelectedMode(NetDeviceContainer bottleneck, Mode mode)
                                                           UintegerValue(8));
     disc->SetScheduler(sched);
 
-    // Manually attach: ns-3 lets us pre-build a disc and have the
-    // TrafficControlHelper install it as root.
     bottleneck.Get(0)->AggregateObject(disc);
-    Ptr<TrafficControlLayer> tcl = bottleneck.Get(0)->GetNode()->GetObject<TrafficControlLayer>();
-    if (tcl)
-    {
-        tcl->SetRootQueueDiscOnDevice(bottleneck.Get(0), disc);
-    }
+    stratum::InstallRoot(bottleneck.Get(0), disc);
     disc->Initialize();
 
     if (redInner)
     {
         // L4S queue (queue 1) needs RED thresholds wide enough that
         // nothing accidentally fires WRED on the L4S side.
-        disc->ConfigQueue(1, 0, 100.0, 200.0, 0.1);
+        disc->ConfigQueue({.queue = 1, .prec = 0, .thMin = 100.0, .thMax = 200.0, .maxP = 0.1});
 
         // Shape-C calibration: all bulks are ECT(1) and route to the L4S
         // sub-queue. The classic sub-queue carries only sparse TCP control
@@ -303,13 +298,15 @@ InstallSelectedMode(NetDeviceContainer bottleneck, Mode mode)
         {
             // RED is effectively inactive: MinTh ≈ MaxTh = QueueLimit - 1,
             // MaxProb = 0.0 — RED only drops at queue-full (drop-tail).
-            disc->ConfigQueue(0, 0, 1999.0, 1999.0, 0.0);
+            disc->ConfigQueue(
+                {.queue = 0, .prec = 0, .thMin = 1999.0, .thMax = 1999.0, .maxP = 0.0});
         }
         else if (mode == Mode::L4sCoupledOnly)
         {
             // CoupledOnly also needs the relaxed classic-RED so SYN
             // packets aren't pre-dropped before TCP can switch to ECT(1).
-            disc->ConfigQueue(0, 0, 1999.0, 1999.0, 0.0);
+            disc->ConfigQueue(
+                {.queue = 0, .prec = 0, .thMin = 1999.0, .thMax = 1999.0, .maxP = 0.0});
         }
     }
     // For the l4s-fqcodel-classic mode the L4S lane is a FifoQueueDisc

@@ -31,8 +31,6 @@ namespace ns3::stratum
 struct PolicyEntry
 {
     // ---- Flow identification ------------------------------------------------
-    int32_t sourceNode{kAnyHost};           //!< Source node id (kAnyHost = wildcard)
-    int32_t destNode{kAnyHost};             //!< Destination node id (kAnyHost = wildcard)
     uint32_t policyIndex{0};                //!< Policy table index for joining with PolicerEntry
     PolicerType policer{PolicerType::DUMB}; //!< Policer algorithm selector
     MeterType meter{MeterType::DUMB};       //!< Meter algorithm selector

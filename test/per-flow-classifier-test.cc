@@ -2,11 +2,12 @@
  * Copyright (C) 2026 Sergio Andreozzi
  * SPDX-License-Identifier: GPL-2.0-only
  *
- * Unit tests for diffserv::PerFlowPolicyClassifier (S-13.5).
+ * Unit tests for diffserv::PerFlowPolicyClassifier.
  */
 
 #include "ns3/ipv4-header.h"
 #include "ns3/ipv4-queue-disc-item.h"
+#include "ns3/ipv6-address.h"
 #include "ns3/packet.h"
 #include "ns3/simulator.h"
 #include "ns3/stratum-dscp-tag.h"
@@ -25,7 +26,7 @@ using ns3::stratum::PriorityScheduler;
 namespace
 {
 
-/// S-13.5.1: two flows at the same DSCP maintain independent bucket state.
+/// Two flows at the same DSCP maintain independent bucket state.
 class PerFlowIsolationTest : public TestCase
 {
   public:
@@ -66,7 +67,7 @@ class PerFlowIsolationTest : public TestCase
     }
 };
 
-/// S-13.5.2: bucket refill respects CIR.
+/// Bucket refill respects CIR.
 class PerFlowRefillTest : public TestCase
 {
   public:
@@ -97,7 +98,7 @@ class PerFlowRefillTest : public TestCase
     }
 };
 
-/// S-13.5.3: unknown flow -> passthrough (packet's existing DSCP preserved).
+/// Unknown flow passes through with its existing DSCP preserved.
 class PerFlowPassthroughTest : public TestCase
 {
   public:
@@ -151,7 +152,7 @@ MakeTcpItem(Ipv4Address src,
     return Create<Ipv4QueueDiscItem>(portPkt, Address(), 0x0800, hdr);
 }
 
-/// S-13.5.4: edge queue disc dispatches to per-flow classifier when installed.
+/// Edge queue disc dispatches to per-flow classifier when installed.
 /// Registered flow is metered (srTCM -> GREEN on first packet); unregistered
 /// flow passes through with its initial DSCP.
 class EdgeDispatchTest : public TestCase
@@ -246,10 +247,10 @@ class EdgeDispatchTest : public TestCase
     }
 };
 
-/// S-13.5.5: srcPort=0 wildcard rule matches any ephemeral source port.
-/// Scenario 2 (and other TCP workloads) cannot predict client ephemeral
-/// ports at rule-install time; installing a single rule with srcPort=0
-/// must meter all inbound packets that share (srcIp, dstIp, dstPort, proto).
+/// A srcPort=0 wildcard rule matches any ephemeral source port.
+/// TCP workloads cannot predict client ephemeral ports at rule-install time;
+/// installing a single rule with srcPort=0 must meter all inbound packets
+/// that share (srcIp, dstIp, dstPort, proto).
 class PerFlowWildcardTest : public TestCase
 {
   public:
@@ -298,6 +299,81 @@ class PerFlowWildcardTest : public TestCase
     }
 };
 
+/**
+ * @brief FlowKey IPv6 extension tests.
+ *
+ * Covers:
+ * - V6 keys with identical 5-tuples compare equal.
+ * - V6 keys differing in any field compare unequal.
+ * - A V4 FlowKey is NOT equal to a V6 FlowKey even when ports/proto match
+ *   (family discriminator governs).
+ */
+class FlowKeyV6Test : public TestCase
+{
+  public:
+    FlowKeyV6Test()
+        : TestCase("FlowKey IPv6 family extension")
+    {
+    }
+
+    void DoRun() override
+    {
+        // Build two identical V6 keys.
+        FlowKey a;
+        a.family = FlowKey::V6;
+        a.srcIp6 = Ipv6Address("2001:db8::1");
+        a.srcPort = 2000;
+        a.dstIp6 = Ipv6Address("2001:db8::2");
+        a.dstPort = 80;
+        a.proto = 6;
+
+        FlowKey b;
+        b.family = FlowKey::V6;
+        b.srcIp6 = Ipv6Address("2001:db8::1");
+        b.srcPort = 2000;
+        b.dstIp6 = Ipv6Address("2001:db8::2");
+        b.dstPort = 80;
+        b.proto = 6;
+
+        NS_TEST_ASSERT_MSG_EQ((a == b), true, "Identical V6 keys must be equal");
+
+        // Hash must be equal for equal V6 keys.
+        std::hash<FlowKey> hasher;
+        NS_TEST_ASSERT_MSG_EQ(hasher(a), hasher(b), "Identical V6 keys must hash equal");
+
+        // Differ in srcIp6.
+        FlowKey c = a;
+        c.srcIp6 = Ipv6Address("2001:db8::ff");
+        NS_TEST_ASSERT_MSG_EQ((a == c), false, "Different srcIp6 must not be equal");
+        NS_TEST_ASSERT_MSG_NE(hasher(a), hasher(c), "distinct srcIp6 should hash differently");
+
+        // Differ in dstIp6.
+        FlowKey d = a;
+        d.dstIp6 = Ipv6Address("2001:db8::ff");
+        NS_TEST_ASSERT_MSG_EQ((a == d), false, "Different dstIp6 must not be equal");
+
+        // Differ in srcPort.
+        FlowKey e = a;
+        e.srcPort = 3000;
+        NS_TEST_ASSERT_MSG_EQ((a == e), false, "Different srcPort must not be equal");
+
+        // Differ in dstPort.
+        FlowKey f = a;
+        f.dstPort = 443;
+        NS_TEST_ASSERT_MSG_EQ((a == f), false, "Different dstPort must not be equal");
+
+        // Differ in proto.
+        FlowKey g = a;
+        g.proto = 17;
+        NS_TEST_ASSERT_MSG_EQ((a == g), false, "Different proto must not be equal");
+
+        // A V4 FlowKey with same ports/proto must NOT equal the V6 key.
+        FlowKey v4{Ipv4Address("10.0.0.1"), 2000, Ipv4Address("10.0.0.2"), 80, 6};
+        NS_TEST_ASSERT_MSG_EQ((v4 == a), false, "V4 key must not equal V6 key (family differs)");
+        NS_TEST_ASSERT_MSG_EQ((a == v4), false, "V6 key must not equal V4 key (family differs)");
+    }
+};
+
 class PerFlowPolicyClassifierSuite : public TestSuite
 {
   public:
@@ -309,6 +385,7 @@ class PerFlowPolicyClassifierSuite : public TestSuite
         AddTestCase(new PerFlowPassthroughTest, Duration::QUICK);
         AddTestCase(new EdgeDispatchTest, Duration::QUICK);
         AddTestCase(new PerFlowWildcardTest, Duration::QUICK);
+        AddTestCase(new FlowKeyV6Test, Duration::QUICK);
     }
 };
 

@@ -338,6 +338,7 @@ class FlentUdpProbeServer : public Application
     void Receive(Ptr<Socket> socket);
 
     uint16_t m_port{0};
+    Address m_local; //!< local bind address; family selects the bind family (default IPv4 any)
     Ptr<Socket> m_socket;
 };
 

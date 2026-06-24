@@ -37,6 +37,7 @@
 #include "ns3/stratum-constants.h"
 #include "ns3/stratum-edge-queue-disc.h"
 #include "ns3/stratum-helper.h"
+#include "ns3/stratum-install-helper.h"
 #include "ns3/stratum-monitor-helper.h"
 #include "ns3/stratum-red-queue-disc.h"
 #include "ns3/stratum-statistics.h"
@@ -45,9 +46,6 @@
 using namespace ns3;
 namespace diffserv = ns3::stratum::diffserv;
 using ns3::stratum::EdgeQueueDisc;
-using ns3::stratum::kAnyAppType;
-using ns3::stratum::kAnyHost;
-using ns3::stratum::kAnyProtocol;
 using ns3::stratum::MonitorHelper;
 using ns3::stratum::MredMode;
 using ns3::stratum::PolicerType;
@@ -105,26 +103,27 @@ main(int argc, char* argv[])
     //
     // Replace ns-3's default pfifo_fast with EdgeQueueDisc on
     // the sender NIC (n0). The receiver's default disc is left alone.
-    TrafficControlHelper tchUninstall;
-    tchUninstall.Uninstall(devs.Get(0));
-
     Ptr<EdgeQueueDisc> edge = CreateObject<EdgeQueueDisc>();
     auto inner = CreateObject<stratum::RedQueueDisc>();
     edge->SetInnerDisc(inner);
     inner->SetNumQueues(1);
     inner->SetNumPrec(0, 1);
     inner->SetQueueLimit(0, 200);
-    inner->SetMredMode(MredMode::DROP_TAIL);
+    inner->SetMredModeAllQueues(MredMode::DROP_TAIL);
 
     diffserv::Helper helper;
-    // any → DSCP 0 (kAnyAppType = 0 per the helper's doc-comment).
-    helper.AddMarkRule(edge, 0, kAnyHost, kAnyHost, kAnyProtocol, 0);
+    // any → DSCP 0 (catch-all rule).
+    edge->AddMarkRule({.dscp = 0});
     helper.AddDumbPolicy(edge, 0);
-    helper.AddPolicerEntry(edge, PolicerType::DUMB, 0, 0, 0);
+    helper.AddPolicerEntry(edge,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 0,
+                            .downgrade1 = 0,
+                            .downgrade2 = 0,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
     helper.AddPhbEntry(inner, 0, 0, 0); // DSCP 0 → queue 0, prec 0
 
-    Ptr<TrafficControlLayer> tc = nodes.Get(0)->GetObject<TrafficControlLayer>();
-    tc->SetRootQueueDiscOnDevice(devs.Get(0), edge);
+    stratum::InstallRoot(devs.Get(0), edge);
     edge->Initialize();
 
     // --- Monitor: hooks StratumEnqueue/Dequeue/Drop traces and splits per-DSCP

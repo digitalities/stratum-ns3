@@ -29,6 +29,7 @@
 #include "ns3/stratum-edge-queue-disc.h"
 #include "ns3/stratum-flent-csv-sink.h"
 #include "ns3/stratum-helper.h"
+#include "ns3/stratum-install-helper.h"
 #include "ns3/traffic-control-module.h"
 
 #include <cerrno>
@@ -173,18 +174,8 @@ main(int argc, char* argv[])
     Ptr<EdgeQueueDisc> edgeDs = CreateObject<EdgeQueueDisc>();
     cake::Helper::SetAsCakeDiffserv4(edgeDs,
                                      DataRate(bandwidth.GetBitRate()),
-                                     false,  // enableAckFilter
-                                     false,  // enableLlq
-                                     true,   // enableTinShaping
-                                     false,  // enableHostIsolation
-                                     false); // useInnerTbfShaping
-    Ptr<TrafficControlLayer> tc = bottleneckDev.Get(0)->GetNode()->GetObject<TrafficControlLayer>();
-    NS_ASSERT_MSG(tc, "TrafficControlLayer must be installed on the node");
-    if (tc->GetRootQueueDiscOnDevice(bottleneckDev.Get(0)))
-    {
-        tc->DeleteRootQueueDiscOnDevice(bottleneckDev.Get(0));
-    }
-    tc->SetRootQueueDiscOnDevice(bottleneckDev.Get(0), edgeDs);
+                                     {.tinShaping = true});
+    stratum::InstallRoot(bottleneckDev.Get(0), edgeDs);
 
     // --- Workload: 4 TCP down, 4 TCP up, 4 UDP probes, 1 ICMP ping ---
     ApplicationContainer downSinks;

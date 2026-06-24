@@ -8,6 +8,10 @@
 #include "stratum-helper.h"
 
 #include "ns3/abort.h"
+#include "ns3/double.h"
+#include "ns3/object-factory.h"
+#include "ns3/stratum-pq-scheduler.h"
+#include "ns3/uinteger.h"
 
 #include <cerrno>
 #include <cstring>
@@ -90,44 +94,6 @@ Helper::Helper()
 }
 
 void
-Helper::AddMarkRule(Ptr<EdgeQueueDisc> edge,
-                    uint8_t dscp,
-                    int32_t srcAddr,
-                    int32_t dstAddr,
-                    uint8_t protocol,
-                    uint32_t appType)
-{
-    MarkRule rule;
-    rule.dscp = dscp;
-    rule.srcAddr = srcAddr;
-    rule.dstAddr = dstAddr;
-    rule.protocol = protocol;
-    rule.appType = appType;
-    edge->AddMarkRule(rule);
-}
-
-void
-Helper::AddMarkRuleWithPorts(Ptr<EdgeQueueDisc> edge,
-                             uint8_t dscp,
-                             int32_t srcAddr,
-                             int32_t dstAddr,
-                             uint8_t protocol,
-                             uint32_t appType,
-                             uint16_t srcPort,
-                             uint16_t dstPort)
-{
-    MarkRule rule;
-    rule.dscp = dscp;
-    rule.srcAddr = srcAddr;
-    rule.dstAddr = dstAddr;
-    rule.protocol = protocol;
-    rule.appType = appType;
-    rule.srcPort = srcPort;
-    rule.dstPort = dstPort;
-    edge->AddMarkRule(rule);
-}
-
-void
 Helper::AddDumbPolicy(Ptr<EdgeQueueDisc> edge, uint8_t codePt)
 {
     PolicyEntry pe;
@@ -139,55 +105,37 @@ Helper::AddDumbPolicy(Ptr<EdgeQueueDisc> edge, uint8_t codePt)
 }
 
 void
-Helper::AddTokenBucketPolicy(Ptr<EdgeQueueDisc> edge,
-                             uint8_t codePt,
-                             double cirBps,
-                             double cbsBytes)
+Helper::AddTokenBucketPolicy(Ptr<EdgeQueueDisc> edge, const TokenBucketPolicySpec& p)
 {
     PolicyEntry pe;
-    pe.codePoint = codePt;
+    pe.codePoint = p.codePt;
     pe.meter = MeterType::TOKEN_BUCKET;
     pe.policer = PolicerType::TOKEN_BUCKET;
     pe.policyIndex = static_cast<uint32_t>(MeterType::TOKEN_BUCKET);
-    pe.cir = cirBps / 8.0;
-    pe.cbs = cbsBytes;
-    pe.cBucket = cbsBytes;
+    pe.cir = p.cirBps / 8.0;
+    pe.cbs = p.cbsBytes;
+    pe.cBucket = p.cbsBytes;
     edge->GetPolicyClassifier()->AddPolicyEntry(pe);
 }
 
 void
-Helper::AddSrTcmPolicy(Ptr<EdgeQueueDisc> edge,
-                       uint8_t codePt,
-                       double cirBps,
-                       double cbsBytes,
-                       double ebsBytes)
+Helper::AddSrTcmPolicy(Ptr<EdgeQueueDisc> edge, const SrTcmPolicySpec& p)
 {
     PolicyEntry pe;
-    pe.codePoint = codePt;
+    pe.codePoint = p.codePt;
     pe.meter = MeterType::SRTCM;
     pe.policer = PolicerType::SRTCM;
     pe.policyIndex = static_cast<uint32_t>(MeterType::SRTCM);
-    pe.cir = cirBps / 8.0;
-    pe.cbs = cbsBytes;
-    pe.ebs = ebsBytes;
-    pe.cBucket = cbsBytes;
-    pe.eBucket = ebsBytes;
+    pe.cir = p.cirBps / 8.0;
+    pe.cbs = p.cbsBytes;
+    pe.ebs = p.ebsBytes;
+    pe.cBucket = p.cbsBytes;
+    pe.eBucket = p.ebsBytes;
     edge->GetPolicyClassifier()->AddPolicyEntry(pe);
 }
 
 void
-Helper::AddSrTcmMeterRule(Ptr<EdgeQueueDisc> edge,
-                          Ipv4Address srcIp,
-                          uint16_t srcPort,
-                          Ipv4Address dstIp,
-                          uint16_t dstPort,
-                          uint8_t proto,
-                          uint8_t greenDscp,
-                          uint8_t yellowDscp,
-                          uint8_t redDscp,
-                          double cirBps,
-                          double cbsBytes,
-                          double ebsBytes)
+Helper::AddSrTcmMeterRule(Ptr<EdgeQueueDisc> edge, const SrTcmMeterRuleSpec& rule)
 {
     Ptr<PerFlowPolicyClassifier> pf = edge->GetPerFlowClassifier();
     if (!pf)
@@ -196,81 +144,65 @@ Helper::AddSrTcmMeterRule(Ptr<EdgeQueueDisc> edge,
         edge->SetPerFlowClassifier(pf);
     }
 
-    FlowKey key{srcIp, srcPort, dstIp, dstPort, proto};
-    double cirBytesPerSec = cirBps / 8.0;
-    pf->AddSrTcmRule(key, greenDscp, yellowDscp, redDscp, cirBytesPerSec, cbsBytes, ebsBytes);
+    FlowKey key{rule.srcIp, rule.srcPort, rule.dstIp, rule.dstPort, rule.proto};
+    double cirBytesPerSec = rule.cirBps / 8.0;
+    pf->AddSrTcmRule(key,
+                     rule.greenDscp,
+                     rule.yellowDscp,
+                     rule.redDscp,
+                     cirBytesPerSec,
+                     rule.cbsBytes,
+                     rule.ebsBytes);
 }
 
 void
-Helper::AddTrTcmPolicy(Ptr<EdgeQueueDisc> edge,
-                       uint8_t codePt,
-                       double cirBps,
-                       double cbsBytes,
-                       double pirBps,
-                       double pbsBytes)
+Helper::AddTrTcmPolicy(Ptr<EdgeQueueDisc> edge, const TrTcmPolicySpec& p)
 {
     PolicyEntry pe;
-    pe.codePoint = codePt;
+    pe.codePoint = p.codePt;
     pe.meter = MeterType::TRTCM;
     pe.policer = PolicerType::TRTCM;
     pe.policyIndex = static_cast<uint32_t>(MeterType::TRTCM);
-    pe.cir = cirBps / 8.0;
-    pe.pir = pirBps / 8.0;
-    pe.cbs = cbsBytes;
-    pe.pbs = pbsBytes;
-    pe.cBucket = cbsBytes;
-    pe.pBucket = pbsBytes;
+    pe.cir = p.cirBps / 8.0;
+    pe.pir = p.pirBps / 8.0;
+    pe.cbs = p.cbsBytes;
+    pe.pbs = p.pbsBytes;
+    pe.cBucket = p.cbsBytes;
+    pe.pBucket = p.pbsBytes;
     edge->GetPolicyClassifier()->AddPolicyEntry(pe);
 }
 
 void
-Helper::AddTsw2cmPolicy(Ptr<EdgeQueueDisc> edge,
-                        uint8_t codePt,
-                        double cirBps,
-                        double winLenSeconds)
+Helper::AddTsw2cmPolicy(Ptr<EdgeQueueDisc> edge, const Tsw2cmPolicySpec& p)
 {
     PolicyEntry pe;
-    pe.codePoint = codePt;
+    pe.codePoint = p.codePt;
     pe.meter = MeterType::TSW2CM;
     pe.policer = PolicerType::TSW2CM;
     pe.policyIndex = static_cast<uint32_t>(MeterType::TSW2CM);
-    pe.cir = cirBps / 8.0;
-    pe.winLen = winLenSeconds;
+    pe.cir = p.cirBps / 8.0;
+    pe.winLen = p.winLenSeconds;
     edge->GetPolicyClassifier()->AddPolicyEntry(pe);
 }
 
 void
-Helper::AddTsw3cmPolicy(Ptr<EdgeQueueDisc> edge,
-                        uint8_t codePt,
-                        double cirBps,
-                        double pirBps,
-                        double winLenSeconds)
+Helper::AddTsw3cmPolicy(Ptr<EdgeQueueDisc> edge, const Tsw3cmPolicySpec& p)
 {
     PolicyEntry pe;
-    pe.codePoint = codePt;
+    pe.codePoint = p.codePt;
     pe.meter = MeterType::TSW3CM;
     pe.policer = PolicerType::TSW3CM;
     pe.policyIndex = static_cast<uint32_t>(MeterType::TSW3CM);
-    pe.cir = cirBps / 8.0;
-    pe.pir = pirBps / 8.0;
-    pe.winLen = winLenSeconds;
+    pe.cir = p.cirBps / 8.0;
+    pe.pir = p.pirBps / 8.0;
+    pe.winLen = p.winLenSeconds;
     edge->GetPolicyClassifier()->AddPolicyEntry(pe);
 }
 
 void
-Helper::AddPolicerEntry(Ptr<EdgeQueueDisc> edge,
-                        PolicerType policer,
-                        int initialCodePt,
-                        int downgrade1,
-                        int downgrade2)
+Helper::AddPolicerEntry(Ptr<EdgeQueueDisc> edge, const PolicerEntry& entry)
 {
-    PolicerEntry pe;
-    pe.policer = policer;
-    pe.policyIndex = static_cast<uint32_t>(policer);
-    pe.initialCodePt = initialCodePt;
-    pe.downgrade1 = downgrade1;
-    pe.downgrade2 = downgrade2;
-    edge->GetPolicyClassifier()->AddPolicerEntry(pe);
+    edge->GetPolicyClassifier()->AddPolicerEntry(entry);
 }
 
 // Shape-A helpers take `Ptr<RedQueueDisc>` directly. Callers that
@@ -294,20 +226,21 @@ Helper::SetScheduler(Ptr<RedQueueDisc> disc, Ptr<Scheduler> scheduler)
 }
 
 void
-Helper::ConfigQueue(Ptr<RedQueueDisc> disc,
-                    uint32_t queue,
-                    uint32_t prec,
-                    double thMin,
-                    double thMax,
-                    double maxP)
+Helper::ConfigQueue(Ptr<RedQueueDisc> disc, const RedQueueConfig& cfg)
 {
-    disc->ConfigQueue(queue, prec, thMin, thMax, maxP);
+    disc->ConfigQueue(cfg);
 }
 
 void
 Helper::SetMredMode(Ptr<RedQueueDisc> disc, MredMode mode, uint32_t queue)
 {
     disc->SetMredMode(mode, queue);
+}
+
+void
+Helper::SetMredModeAllQueues(Ptr<RedQueueDisc> disc, MredMode mode)
+{
+    disc->SetMredModeAllQueues(mode);
 }
 
 Ptr<RedQueueDisc>
@@ -324,6 +257,41 @@ Helper::InstallRedInner(Ptr<CoreQueueDisc> core)
     Ptr<RedQueueDisc> inner = CreateObject<RedQueueDisc>();
     core->SetInnerDisc(inner);
     return inner;
+}
+
+void
+Helper::SetAsDiffserv(Ptr<EdgeQueueDisc> edge, const DiffservSpec& spec)
+{
+    Helper helper;
+    Ptr<RedQueueDisc> inner = helper.InstallRedInner(edge);
+
+    const uint32_t numQueues = (spec.profile == Profile::ExpeditedForwarding) ? 2u : 1u;
+    inner->SetNumQueues(numQueues);
+    for (uint32_t q = 0; q < numQueues; ++q)
+    {
+        inner->SetNumPrec(q, 1);
+    }
+
+    switch (spec.profile)
+    {
+    case Profile::ExpeditedForwarding:
+        inner->AddPhbEntry(46, 0, 0); // EF -> priority lane (queue 0)
+        inner->AddPhbEntry(0, 1, 0);  // best-effort -> queue 1
+        break;
+    case Profile::BestEffort:
+        inner->AddPhbEntry(0, 0, 0); // best-effort -> the single queue
+        break;
+    }
+
+    Ptr<Scheduler> scheduler = spec.scheduler;
+    if (!scheduler)
+    {
+        scheduler = CreateObjectWithAttributes<PriorityScheduler>("NumQueues",
+                                                                  UintegerValue(numQueues),
+                                                                  "WinLen",
+                                                                  DoubleValue(1.0));
+    }
+    inner->SetScheduler(scheduler);
 }
 
 } // namespace ns3::stratum::diffserv

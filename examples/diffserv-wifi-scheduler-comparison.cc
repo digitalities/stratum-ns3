@@ -77,6 +77,7 @@
 #include "ns3/stratum-constants.h"
 #include "ns3/stratum-edge-queue-disc.h"
 #include "ns3/stratum-helper.h"
+#include "ns3/stratum-install-helper.h"
 #include "ns3/stratum-llq-scheduler.h"
 #include "ns3/stratum-pq-scheduler.h"
 #include "ns3/stratum-red-queue-disc.h"
@@ -104,8 +105,6 @@
 using namespace ns3;
 namespace diffserv = ns3::stratum::diffserv;
 using ns3::stratum::EdgeQueueDisc;
-using ns3::stratum::kAnyHost;
-using ns3::stratum::kAnyProtocol;
 using ns3::stratum::Meter;
 using ns3::stratum::MeterType;
 using ns3::stratum::MredMode;
@@ -483,9 +482,6 @@ main(int argc, char* argv[])
 
     // ---- DiffServ edge on AP downlink ----
     Ptr<NetDevice> apWifi = apDev.Get(0);
-    TrafficControlHelper tchUninstall;
-    tchUninstall.Uninstall(apWifi);
-
     Ptr<EdgeQueueDisc> edge = CreateObject<EdgeQueueDisc>();
     diffserv::Helper helper;
     auto inner = helper.InstallRedInner(edge);
@@ -528,18 +524,37 @@ main(int argc, char* argv[])
     for (uint32_t i = 0; i < kNumQueues; ++i)
     {
         Ipv4Address d = staIf.GetAddress(i);
-        helper
-            .AddMarkRule(edge, dscps[i], kAnyHost, static_cast<int32_t>(d.Get()), kAnyProtocol, 0);
+        edge->AddMarkRule({.dscp = dscps[i], .dstAddr = d});
     }
 
     helper.AddDumbPolicy(edge, kDscpEf);
     helper.AddDumbPolicy(edge, kDscpAf41);
     helper.AddDumbPolicy(edge, kDscpBe);
     helper.AddDumbPolicy(edge, kDscpCs1);
-    helper.AddPolicerEntry(edge, PolicerType::DUMB, kDscpEf, kDscpEf, kDscpEf);
-    helper.AddPolicerEntry(edge, PolicerType::DUMB, kDscpAf41, kDscpAf41, kDscpAf41);
-    helper.AddPolicerEntry(edge, PolicerType::DUMB, kDscpBe, kDscpBe, kDscpBe);
-    helper.AddPolicerEntry(edge, PolicerType::DUMB, kDscpCs1, kDscpCs1, kDscpCs1);
+    helper.AddPolicerEntry(edge,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = kDscpEf,
+                            .downgrade1 = kDscpEf,
+                            .downgrade2 = kDscpEf,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
+    helper.AddPolicerEntry(edge,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = kDscpAf41,
+                            .downgrade1 = kDscpAf41,
+                            .downgrade2 = kDscpAf41,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
+    helper.AddPolicerEntry(edge,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = kDscpBe,
+                            .downgrade1 = kDscpBe,
+                            .downgrade2 = kDscpBe,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
+    helper.AddPolicerEntry(edge,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = kDscpCs1,
+                            .downgrade1 = kDscpCs1,
+                            .downgrade2 = kDscpCs1,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
     if (Ptr<Meter> dm = edge->GetMeter(MeterType::DUMB))
     {
         dm->SetL2OverheadBytes(l2OverheadBytes);
@@ -562,13 +577,13 @@ main(int argc, char* argv[])
         helper.AddPhbEntry(inner, kDscpCs1, 3, 0);
     }
 
-    Ptr<TrafficControlLayer> tc = ap.Get(0)->GetObject<TrafficControlLayer>();
-    tc->SetRootQueueDiscOnDevice(apWifi, edge);
+    stratum::InstallRoot(apWifi, edge);
     edge->Initialize();
-    inner->SetMredMode(MredMode::DROP_TAIL);
+    inner->SetMredModeAllQueues(MredMode::DROP_TAIL);
     for (uint32_t q = 0; q < innerQueues; ++q)
     {
-        helper.ConfigQueue(inner, q, 0, 100.0, 100.0, 1.0);
+        helper.ConfigQueue(inner,
+                           {.queue = q, .prec = 0, .thMin = 100.0, .thMax = 100.0, .maxP = 1.0});
     }
 
     // ---- Traffic per class ----

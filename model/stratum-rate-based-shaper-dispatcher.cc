@@ -7,6 +7,7 @@
 #include "stratum-rate-based-shaper-dispatcher.h"
 
 #include "stratum-cake-linux-autorate-hook.h"
+#include "stratum-ds-field.h"
 
 #include "ns3/drop-tail-queue.h"
 #include "ns3/ipv4-header.h"
@@ -143,12 +144,11 @@ RateBasedShaperDispatcher::SetAutorateHook(std::shared_ptr<LinuxAutorateHook> ho
 int32_t
 RateBasedShaperDispatcher::ClassifyByDscp(Ptr<QueueDiscItem> item) const
 {
-    Ptr<Ipv4QueueDiscItem> ipv4Item = DynamicCast<Ipv4QueueDiscItem>(item);
-    if (!ipv4Item)
+    uint8_t dscp;
+    if (!stratum::GetDscp(item, dscp))
     {
-        return 0; // non-IPv4 item: dispatch to tin 0
+        return 0; // non-IP item: dispatch to tin 0
     }
-    const uint8_t dscp = static_cast<uint8_t>(ipv4Item->GetHeader().GetDscp());
     if (dscp >= 64)
     {
         return 0;

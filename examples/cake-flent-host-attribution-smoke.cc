@@ -26,6 +26,7 @@
 #include "ns3/stratum-cake-helper.h"
 #include "ns3/stratum-edge-queue-disc.h"
 #include "ns3/stratum-flent-csv-sink.h"
+#include "ns3/stratum-install-helper.h"
 #include "ns3/traffic-control-module.h"
 
 #include <filesystem>
@@ -104,20 +105,9 @@ main(int argc, char* argv[])
     Ipv4GlobalRoutingHelper::PopulateRoutingTables();
 
     // ---- CAKE best-effort with triple-isolation on r1's egress toward r2 ----
-    Ptr<TrafficControlLayer> tc = routers.Get(0)->GetObject<TrafficControlLayer>();
-    NS_ABORT_MSG_IF(!tc, "TrafficControlLayer missing on r1");
-    if (tc->GetRootQueueDiscOnDevice(bottleneckDev.Get(0)))
-    {
-        tc->DeleteRootQueueDiscOnDevice(bottleneckDev.Get(0));
-    }
     Ptr<EdgeQueueDisc> edge = CreateObject<EdgeQueueDisc>();
-    cake::Helper::SetAsCakeBestEffort(edge,
-                                      /*totalRate=*/bandwidth,
-                                      /*enableAckFilter=*/false,
-                                      /*enableLlq=*/false,
-                                      /*enableTinShaping=*/false,
-                                      /*enableHostIsolation=*/true);
-    tc->SetRootQueueDiscOnDevice(bottleneckDev.Get(0), edge);
+    cake::Helper::SetAsCakeBestEffort(edge, bandwidth, {.hostIsolation = true});
+    stratum::InstallRoot(bottleneckDev.Get(0), edge);
 
     // ---- 5 TCP uploads: hostA × 4 to sinkA (ports 5100..5103), hostB × 1 to sinkB (5104) ----
     constexpr uint16_t kPortA0 = 5100;

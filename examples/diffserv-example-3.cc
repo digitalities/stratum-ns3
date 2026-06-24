@@ -45,6 +45,7 @@
 #include "ns3/stratum-edge-queue-disc.h"
 #include "ns3/stratum-empirical-cdf-loader.h"
 #include "ns3/stratum-helper.h"
+#include "ns3/stratum-install-helper.h"
 #include "ns3/stratum-llq-scheduler.h"
 #include "ns3/stratum-onoff-application.h"
 #include "ns3/stratum-onoff-helper.h"
@@ -64,10 +65,7 @@ using namespace ns3;
 namespace diffserv = ns3::stratum::diffserv;
 using ns3::stratum::CoreQueueDisc;
 using ns3::stratum::EdgeQueueDisc;
-using ns3::stratum::kAnyAppType;
-using ns3::stratum::kAnyHost;
 using ns3::stratum::kAnyPort;
-using ns3::stratum::kAnyProtocol;
 using ns3::stratum::LlqScheduler;
 using ns3::stratum::LoadEmpiricalCdfFromFile;
 using ns3::stratum::MredMode;
@@ -455,11 +453,6 @@ RunQuickScenario(double simTime, uint32_t seed, const std::string& outputDir)
     // Source/destination addresses for classification
     Ipv4Address srcAddr0 = srcIfs[0].GetAddress(0); // s(0) = VoIP sources
 
-    // ---- Remove default queue discs ----
-    TrafficControlHelper tchUninstall;
-    tchUninstall.Uninstall(devE1Core.Get(0));
-    tchUninstall.Uninstall(devE1Core.Get(1));
-
     // ====================================================================
     // DiffServ Edge: complete service model (thesis Table 4.5)
     //
@@ -509,57 +502,24 @@ RunQuickScenario(double simTime, uint32_t seed, const std::string& outputDir)
 
     // --- Mark rules (port-based classification) ---
     // Rule 1: VoIP from s(0) → DSCP 46 (Premium/EF)
-    helper.AddMarkRule(edgeDisc,
-                       46,
-                       static_cast<int32_t>(srcAddr0.Get()),
-                       kAnyHost,
-                       kAnyProtocol,
-                       kAnyAppType);
+    edgeDisc->AddMarkRule({.dscp = 46, .srcAddr = srcAddr0});
     // Rule 2: Audio streaming (dstPort 5004) → DSCP 10 (Gold/AF11)
-    helper.AddMarkRuleWithPorts(edgeDisc,
-                                10,
-                                kAnyHost,
-                                kAnyHost,
-                                kAnyProtocol,
-                                kAnyAppType,
-                                kAnyPort,
-                                5004);
+    edgeDisc->AddMarkRule({.dscp = 10, .dstPort = 5004});
     // Rule 3: Telnet (dstPort 23) → DSCP 18 (Silver/AF21)
-    helper.AddMarkRuleWithPorts(edgeDisc,
-                                18,
-                                kAnyHost,
-                                kAnyHost,
-                                kAnyProtocol,
-                                kAnyAppType,
-                                kAnyPort,
-                                23);
+    edgeDisc->AddMarkRule({.dscp = 18, .dstPort = 23});
     // Rule 4: FTP (dstPort 21) → DSCP 20 (Silver/AF22)
-    helper.AddMarkRuleWithPorts(edgeDisc,
-                                20,
-                                kAnyHost,
-                                kAnyHost,
-                                kAnyProtocol,
-                                kAnyAppType,
-                                kAnyPort,
-                                21);
+    edgeDisc->AddMarkRule({.dscp = 20, .dstPort = 21});
     // Rule 5: HTTP (dstPort 80) → DSCP 26 (Bronze/AF31)
-    helper.AddMarkRuleWithPorts(edgeDisc,
-                                26,
-                                kAnyHost,
-                                kAnyHost,
-                                kAnyProtocol,
-                                kAnyAppType,
-                                kAnyPort,
-                                80);
+    edgeDisc->AddMarkRule({.dscp = 26, .dstPort = 80});
     // Default: unmatched → DSCP 0 (Best Effort)
 
     // --- Policy entries ---
     // Premium: TokenBucket CIR=500kbps CBS=10KB
-    helper.AddTokenBucketPolicy(edgeDisc, 46, 500000.0, 10000.0);
+    helper.AddTokenBucketPolicy(edgeDisc, {.codePt = 46, .cirBps = 500000.0, .cbsBytes = 10000.0});
     helper.AddDumbPolicy(edgeDisc, 51);
 
     // Gold: TSW2CM CIR=600kbps (thesis: "CIR 600 kbps")
-    helper.AddTsw2cmPolicy(edgeDisc, 10, 600000.0);
+    helper.AddTsw2cmPolicy(edgeDisc, {.codePt = 10, .cirBps = 600000.0});
     helper.AddDumbPolicy(edgeDisc, 12);
 
     // Silver: Dumb (no metering for Telnet or FTP)
@@ -570,28 +530,73 @@ RunQuickScenario(double simTime, uint32_t seed, const std::string& outputDir)
     helper.AddDumbPolicy(edgeDisc, 26);
 
     // Best Effort: TokenBucket CIR=400kbps CBS=2KB
-    helper.AddTokenBucketPolicy(edgeDisc, 0, 400000.0, 2000.0);
+    helper.AddTokenBucketPolicy(edgeDisc, {.codePt = 0, .cirBps = 400000.0, .cbsBytes = 2000.0});
     helper.AddDumbPolicy(edgeDisc, 50);
 
     // --- Policer entries ---
     // Premium: TB 46 → 51 (out-of-profile)
-    helper.AddPolicerEntry(edgeDisc, PolicerType::TOKEN_BUCKET, 46, 51, 51);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 51, 51, 51);
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::TOKEN_BUCKET,
+                            .initialCodePt = 46,
+                            .downgrade1 = 51,
+                            .downgrade2 = 51,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::TOKEN_BUCKET)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 51,
+                            .downgrade1 = 51,
+                            .downgrade2 = 51,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
 
     // Gold: TSW2CM 10 → 12 (downgrade)
-    helper.AddPolicerEntry(edgeDisc, PolicerType::TSW2CM, 10, 12, 12);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 12, 12, 12);
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::TSW2CM,
+                            .initialCodePt = 10,
+                            .downgrade1 = 12,
+                            .downgrade2 = 12,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::TSW2CM)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 12,
+                            .downgrade1 = 12,
+                            .downgrade2 = 12,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
 
     // Silver: Dumb (no downgrade)
-    helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 18, 18, 18);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 20, 20, 20);
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 18,
+                            .downgrade1 = 18,
+                            .downgrade2 = 18,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 20,
+                            .downgrade1 = 20,
+                            .downgrade2 = 20,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
 
     // Bronze: Dumb
-    helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 26, 26, 26);
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 26,
+                            .downgrade1 = 26,
+                            .downgrade2 = 26,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
 
     // Best Effort: TB 0 → 50
-    helper.AddPolicerEntry(edgeDisc, PolicerType::TOKEN_BUCKET, 0, 50, 50);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 50, 50, 50);
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::TOKEN_BUCKET,
+                            .initialCodePt = 0,
+                            .downgrade1 = 50,
+                            .downgrade2 = 50,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::TOKEN_BUCKET)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 50,
+                            .downgrade1 = 50,
+                            .downgrade2 = 50,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
 
     // --- PHB table ---
     helper.AddPhbEntry(edgeInner, 46, 0, 0); // EF in → Q0/P0
@@ -610,8 +615,7 @@ RunQuickScenario(double simTime, uint32_t seed, const std::string& outputDir)
 
     // --- Install edge disc ---
     Ptr<NetDevice> e1Dev = devE1Core.Get(0);
-    Ptr<TrafficControlLayer> tc = e1Dev->GetNode()->GetObject<TrafficControlLayer>();
-    tc->SetRootQueueDiscOnDevice(e1Dev, edgeDisc);
+    stratum::InstallRoot(e1Dev, edgeDisc);
     edgeDisc->Initialize();
 
     // --- MRED modes (per-queue, AFTER Initialize) ---
@@ -629,25 +633,46 @@ RunQuickScenario(double simTime, uint32_t seed, const std::string& outputDir)
 
     // --- RED/DROP thresholds (thesis Table 4.5) ---
     // Q0 Premium: tail-drop
-    helper.ConfigQueue(edgeInner, 0, 0, 20.0, 20.0, 1.0); // accept up to limit
-    helper.ConfigQueue(edgeInner, 0, 1, -1.0, -1.0,
-                       0.0); // drop all out-of-profile
+    helper.ConfigQueue(
+        edgeInner,
+        {.queue = 0, .prec = 0, .thMin = 20.0, .thMax = 20.0, .maxP = 1.0}); // accept up to limit
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 0,
+                        .prec = 1,
+                        .thMin = -1.0,
+                        .thMax = -1.0,
+                        .maxP = 0.0}); // drop all out-of-profile
 
     // Q1 Gold: RIO-C (thesis: "Green: 60,110,0.02 / Yellow: 30,60,0.6")
-    helper.ConfigQueue(edgeInner, 1, 0, 60.0, 110.0, 0.02); // AF11 green
-    helper.ConfigQueue(edgeInner, 1, 1, 30.0, 60.0, 0.6);   // AF12 yellow
+    helper.ConfigQueue(
+        edgeInner,
+        {.queue = 1, .prec = 0, .thMin = 60.0, .thMax = 110.0, .maxP = 0.02}); // AF11 green
+    helper.ConfigQueue(
+        edgeInner,
+        {.queue = 1, .prec = 1, .thMin = 30.0, .thMax = 60.0, .maxP = 0.6}); // AF12 yellow
 
     // Q2 Silver: WRED (thesis: "30,50 / 0.1,0.2")
-    helper.ConfigQueue(edgeInner, 2, 0, 30.0, 50.0, 0.1); // AF21 Telnet
-    helper.ConfigQueue(edgeInner, 2, 1, 30.0, 50.0, 0.2); // AF22 FTP
+    helper.ConfigQueue(
+        edgeInner,
+        {.queue = 2, .prec = 0, .thMin = 30.0, .thMax = 50.0, .maxP = 0.1}); // AF21 Telnet
+    helper.ConfigQueue(
+        edgeInner,
+        {.queue = 2, .prec = 1, .thMin = 30.0, .thMax = 50.0, .maxP = 0.2}); // AF22 FTP
 
     // Q3 Bronze: WRED (thesis: "30,60 / 0.5")
-    helper.ConfigQueue(edgeInner, 3, 0, 30.0, 60.0, 0.5); // AF31 HTTP
+    helper.ConfigQueue(
+        edgeInner,
+        {.queue = 3, .prec = 0, .thMin = 30.0, .thMax = 60.0, .maxP = 0.5}); // AF31 HTTP
 
     // Q4 Best Effort: tail-drop
-    helper.ConfigQueue(edgeInner, 4, 0, 50.0, 50.0, 1.0);
-    helper.ConfigQueue(edgeInner, 4, 1, -1.0, -1.0,
-                       0.0); // drop all out-of-profile
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 4, .prec = 0, .thMin = 50.0, .thMax = 50.0, .maxP = 1.0});
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 4,
+                        .prec = 1,
+                        .thMin = -1.0,
+                        .thMax = -1.0,
+                        .maxP = 0.0}); // drop all out-of-profile
 
     g_edgeDisc = edgeDisc;
 
@@ -667,11 +692,11 @@ RunQuickScenario(double simTime, uint32_t seed, const std::string& outputDir)
     helper.AddPhbEntry(coreInner, 0, 0, 0);
 
     Ptr<NetDevice> coreDev = devE1Core.Get(1);
-    Ptr<TrafficControlLayer> tcCore = coreDev->GetNode()->GetObject<TrafficControlLayer>();
-    tcCore->SetRootQueueDiscOnDevice(coreDev, coreDisc);
+    stratum::InstallRoot(coreDev, coreDisc);
     coreDisc->Initialize();
-    coreInner->SetMredMode(MredMode::DROP_TAIL);
-    helper.ConfigQueue(coreInner, 0, 0, 60.0, 60.0, 1.0);
+    coreInner->SetMredModeAllQueues(MredMode::DROP_TAIL);
+    helper.ConfigQueue(coreInner,
+                       {.queue = 0, .prec = 0, .thMin = 60.0, .thMax = 60.0, .maxP = 1.0});
 
     // ====================================================================
     // Traffic 1: Premium / VoIP (G.723.1 codec)
@@ -927,7 +952,8 @@ RunFullScenario(double simTime,
                 uint32_t seed,
                 const std::string& outputDir,
                 std::string cdfDir,
-                bool realAudioCbr = false)
+                bool realAudioCbr = false,
+                bool deterministicLoad = false)
 {
     if (!cdfDir.empty() && cdfDir.back() != '/')
     {
@@ -1079,11 +1105,6 @@ RunFullScenario(double simTime,
 
     Ipv4GlobalRoutingHelper::PopulateRoutingTables();
 
-    // ---- Remove default queue discs on bottleneck ----
-    TrafficControlHelper tchUninstall;
-    tchUninstall.Uninstall(devBottleneck.Get(0));
-    tchUninstall.Uninstall(devBottleneck.Get(1));
-
     // ====================================================================
     // DiffServ Edge: complete service model (thesis Table 4.5)
     //   Scheduler: LLQ (PQ for Q0, SFQ 3:3:3:1 for Q1-Q4)
@@ -1125,69 +1146,79 @@ RunFullScenario(double simTime,
     edgeInner->SetScheduler(llq);
 
     // --- Mark rules (port-based classification) ---
-    helper.AddMarkRuleWithPorts(edgeDisc,
-                                46,
-                                kAnyHost,
-                                kAnyHost,
-                                kAnyProtocol,
-                                kAnyAppType,
-                                kAnyPort,
-                                5060);
-    helper.AddMarkRuleWithPorts(edgeDisc,
-                                10,
-                                kAnyHost,
-                                kAnyHost,
-                                kAnyProtocol,
-                                kAnyAppType,
-                                kAnyPort,
-                                5004);
-    helper.AddMarkRuleWithPorts(edgeDisc,
-                                18,
-                                kAnyHost,
-                                kAnyHost,
-                                kAnyProtocol,
-                                kAnyAppType,
-                                kAnyPort,
-                                23);
-    helper.AddMarkRuleWithPorts(edgeDisc,
-                                20,
-                                kAnyHost,
-                                kAnyHost,
-                                kAnyProtocol,
-                                kAnyAppType,
-                                kAnyPort,
-                                21);
-    helper.AddMarkRuleWithPorts(edgeDisc,
-                                26,
-                                kAnyHost,
-                                kAnyHost,
-                                kAnyProtocol,
-                                kAnyAppType,
-                                kAnyPort,
-                                80);
+    edgeDisc->AddMarkRule({.dscp = 46, .dstPort = 5060});
+    edgeDisc->AddMarkRule({.dscp = 10, .dstPort = 5004});
+    edgeDisc->AddMarkRule({.dscp = 18, .dstPort = 23});
+    edgeDisc->AddMarkRule({.dscp = 20, .dstPort = 21});
+    edgeDisc->AddMarkRule({.dscp = 26, .dstPort = 80});
     // Default: unmatched -> DSCP 0 (Best Effort)
 
     // --- Policy entries ---
-    helper.AddTokenBucketPolicy(edgeDisc, 46, 500000.0, 10000.0);
+    helper.AddTokenBucketPolicy(edgeDisc, {.codePt = 46, .cirBps = 500000.0, .cbsBytes = 10000.0});
     helper.AddDumbPolicy(edgeDisc, 51);
-    helper.AddTsw2cmPolicy(edgeDisc, 10, 600000.0);
+    helper.AddTsw2cmPolicy(edgeDisc, {.codePt = 10, .cirBps = 600000.0});
     helper.AddDumbPolicy(edgeDisc, 12);
     helper.AddDumbPolicy(edgeDisc, 18);
     helper.AddDumbPolicy(edgeDisc, 20);
     helper.AddDumbPolicy(edgeDisc, 26);
-    helper.AddTokenBucketPolicy(edgeDisc, 0, 400000.0, 2000.0);
+    helper.AddTokenBucketPolicy(edgeDisc, {.codePt = 0, .cirBps = 400000.0, .cbsBytes = 2000.0});
     helper.AddDumbPolicy(edgeDisc, 50);
 
     // --- Policer entries ---
-    helper.AddPolicerEntry(edgeDisc, PolicerType::TOKEN_BUCKET, 46, 51, 51);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 51, 51, 51);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::TSW2CM, 10, 12, 12);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 12, 12, 12);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 18, 18, 18);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 20, 20, 20);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 26, 26, 26);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::TOKEN_BUCKET, 0, 50, 50);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 50, 50, 50);
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::TOKEN_BUCKET,
+                            .initialCodePt = 46,
+                            .downgrade1 = 51,
+                            .downgrade2 = 51,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::TOKEN_BUCKET)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 51,
+                            .downgrade1 = 51,
+                            .downgrade2 = 51,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::TSW2CM,
+                            .initialCodePt = 10,
+                            .downgrade1 = 12,
+                            .downgrade2 = 12,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::TSW2CM)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 12,
+                            .downgrade1 = 12,
+                            .downgrade2 = 12,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 18,
+                            .downgrade1 = 18,
+                            .downgrade2 = 18,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 20,
+                            .downgrade1 = 20,
+                            .downgrade2 = 20,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 26,
+                            .downgrade1 = 26,
+                            .downgrade2 = 26,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::TOKEN_BUCKET,
+                            .initialCodePt = 0,
+                            .downgrade1 = 50,
+                            .downgrade2 = 50,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::TOKEN_BUCKET)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 50,
+                            .downgrade1 = 50,
+                            .downgrade2 = 50,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
 
     // --- PHB table ---
     helper.AddPhbEntry(edgeInner, 46, 0, 0);
@@ -1202,8 +1233,7 @@ RunFullScenario(double simTime,
 
     // --- Install edge disc on n0 -> n466 ---
     Ptr<NetDevice> e1Dev = devBottleneck.Get(0);
-    Ptr<TrafficControlLayer> tc = e1Dev->GetNode()->GetObject<TrafficControlLayer>();
-    tc->SetRootQueueDiscOnDevice(e1Dev, edgeDisc);
+    stratum::InstallRoot(e1Dev, edgeDisc);
     edgeDisc->Initialize();
 
     // --- MRED modes (per-queue, AFTER Initialize) ---
@@ -1220,15 +1250,24 @@ RunFullScenario(double simTime,
     edgeInner->SetQueueBandwidth(3, 810000.0); // Bronze: 30% of 2.7 Mbps
 
     // --- RED/DROP thresholds (thesis Table 4.5) ---
-    helper.ConfigQueue(edgeInner, 0, 0, 20.0, 20.0, 1.0);
-    helper.ConfigQueue(edgeInner, 0, 1, -1.0, -1.0, 0.0);
-    helper.ConfigQueue(edgeInner, 1, 0, 60.0, 110.0, 0.02);
-    helper.ConfigQueue(edgeInner, 1, 1, 30.0, 60.0, 0.6);
-    helper.ConfigQueue(edgeInner, 2, 0, 30.0, 50.0, 0.1);
-    helper.ConfigQueue(edgeInner, 2, 1, 30.0, 50.0, 0.2);
-    helper.ConfigQueue(edgeInner, 3, 0, 30.0, 60.0, 0.5);
-    helper.ConfigQueue(edgeInner, 4, 0, 50.0, 50.0, 1.0);
-    helper.ConfigQueue(edgeInner, 4, 1, -1.0, -1.0, 0.0);
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 0, .prec = 0, .thMin = 20.0, .thMax = 20.0, .maxP = 1.0});
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 0, .prec = 1, .thMin = -1.0, .thMax = -1.0, .maxP = 0.0});
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 1, .prec = 0, .thMin = 60.0, .thMax = 110.0, .maxP = 0.02});
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 1, .prec = 1, .thMin = 30.0, .thMax = 60.0, .maxP = 0.6});
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 2, .prec = 0, .thMin = 30.0, .thMax = 50.0, .maxP = 0.1});
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 2, .prec = 1, .thMin = 30.0, .thMax = 50.0, .maxP = 0.2});
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 3, .prec = 0, .thMin = 30.0, .thMax = 60.0, .maxP = 0.5});
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 4, .prec = 0, .thMin = 50.0, .thMax = 50.0, .maxP = 1.0});
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 4, .prec = 1, .thMin = -1.0, .thMax = -1.0, .maxP = 0.0});
 
     g_edgeDisc = edgeDisc;
 
@@ -1248,11 +1287,11 @@ RunFullScenario(double simTime,
     helper.AddPhbEntry(coreInner, 0, 0, 0);
 
     Ptr<NetDevice> coreDev = devBottleneck.Get(1);
-    Ptr<TrafficControlLayer> tcCore = coreDev->GetNode()->GetObject<TrafficControlLayer>();
-    tcCore->SetRootQueueDiscOnDevice(coreDev, coreDisc);
+    stratum::InstallRoot(coreDev, coreDisc);
     coreDisc->Initialize();
-    coreInner->SetMredMode(MredMode::DROP_TAIL);
-    helper.ConfigQueue(coreInner, 0, 0, 60.0, 60.0, 1.0);
+    coreInner->SetMredModeAllQueues(MredMode::DROP_TAIL);
+    helper.ConfigQueue(coreInner,
+                       {.queue = 0, .prec = 0, .thMin = 60.0, .thMax = 60.0, .maxP = 1.0});
 
     // ====================================================================
     // Resolve destination addresses for sinks
@@ -1278,21 +1317,49 @@ RunFullScenario(double simTime,
         sinkApp->TraceConnectWithoutContext("Rx", MakeCallback(&VoipRxCallback));
     }
 
-    stratum::OnOffHelper voipHelper(InetSocketAddress(addr770, voipPort));
-    voipHelper.SetAttribute("PacketSize", UintegerValue(voipPktSize));
-    voipHelper.SetAttribute("DataRateBps", UintegerValue(6400)); // 6.4 kbps
-    voipHelper.SetAttribute("OnMean", DoubleValue(1.004));       // G.723.1 talk-spurt
-    voipHelper.SetAttribute("OffMean", DoubleValue(1.587));      // G.723.1 silence
-
-    for (uint32_t i = 0; i < numVoip; i++)
+    if (deterministicLoad)
     {
-        ApplicationContainer apps = voipHelper.Install(n(470 + i));
-        apps.Start(Seconds(static_cast<double>(i))); // stagger over 200s
-        apps.Stop(Seconds(simTime));
+        // Deterministic mode: 200 CBR flows, one per source node.
+        // Aggregate = 480 kbps → 480000/200 = 2400 bps per node.
+        // PacketSize = 48 B (G.723.1 frame); UDP; port 5060 → DSCP 46 (EF).
+        constexpr uint32_t kVoipAggBps = 480000;
+        const uint32_t voipPerFlowBps = kVoipAggBps / numVoip;
+        for (uint32_t i = 0; i < numVoip; i++)
+        {
+            OnOffHelper cbrVoip("ns3::UdpSocketFactory",
+                                InetSocketAddress(addr770, voipPort));
+            cbrVoip.SetAttribute("DataRate", DataRateValue(DataRate(voipPerFlowBps)));
+            cbrVoip.SetAttribute("PacketSize", UintegerValue(voipPktSize));
+            cbrVoip.SetAttribute(
+                "OnTime",
+                StringValue("ns3::ConstantRandomVariable[Constant=1000000000]"));
+            cbrVoip.SetAttribute("OffTime",
+                                 StringValue("ns3::ConstantRandomVariable[Constant=0]"));
+            ApplicationContainer apps = cbrVoip.Install(n(470 + i));
+            apps.Start(Seconds(1.0 + i * 0.001));
+            apps.Stop(Seconds(simTime));
+        }
+        std::cout << "VoIP: " << numVoip << " CBR flows (n470-n669 -> n770)"
+                  << " - deterministic " << kVoipAggBps / 1000 << " kbps agg\n";
     }
+    else
+    {
+        stratum::OnOffHelper voipHelper(InetSocketAddress(addr770, voipPort));
+        voipHelper.SetAttribute("PacketSize", UintegerValue(voipPktSize));
+        voipHelper.SetAttribute("DataRateBps", UintegerValue(6400)); // 6.4 kbps
+        voipHelper.SetAttribute("OnMean", DoubleValue(1.004));       // G.723.1 talk-spurt
+        voipHelper.SetAttribute("OffMean", DoubleValue(1.587));      // G.723.1 silence
 
-    std::cout << "VoIP: " << numVoip << " connections (n470-n669 -> n770)"
-              << " - G.723.1 6.4kbps ON/OFF\n";
+        for (uint32_t i = 0; i < numVoip; i++)
+        {
+            ApplicationContainer apps = voipHelper.Install(n(470 + i));
+            apps.Start(Seconds(static_cast<double>(i))); // stagger over 200s
+            apps.Stop(Seconds(simTime));
+        }
+
+        std::cout << "VoIP: " << numVoip << " connections (n470-n669 -> n770)"
+                  << " - G.723.1 6.4kbps ON/OFF\n";
+    }
 
     // ====================================================================
     // Traffic 2: Gold / RealAudio (300 users, variable # sequential flows each)
@@ -1312,85 +1379,118 @@ RunFullScenario(double simTime,
 
     EnsureSink(n(770), streamPort, "ns3::UdpSocketFactory");
 
-    double userStartTime = 0.0;
-    uint64_t totalFlows = 0;
-    for (uint32_t i = 0; i < numUsers; i++)
+    if (deterministicLoad)
     {
-        if (i > 0)
+        // Deterministic mode: 300 CBR flows, one per source node n470–n769.
+        // Aggregate = 900 kbps → 900000/300 = 3000 bps per node.
+        // PacketSize = 245 B; UDP; port 5004 → DSCP 10 (Gold/AF11).
+        constexpr uint32_t kGoldAggBps = 900000;
+        const uint32_t goldPerFlowBps = kGoldAggBps / numUsers;
+        for (uint32_t i = 0; i < numUsers; i++)
         {
-            userStartTime += rvUserInter->GetValue();
+            OnOffHelper cbrGold("ns3::UdpSocketFactory",
+                                InetSocketAddress(addr770, streamPort));
+            cbrGold.SetAttribute("DataRate", DataRateValue(DataRate(goldPerFlowBps)));
+            cbrGold.SetAttribute("PacketSize", UintegerValue(245));
+            cbrGold.SetAttribute(
+                "OnTime",
+                StringValue("ns3::ConstantRandomVariable[Constant=1000000000]"));
+            cbrGold.SetAttribute("OffTime",
+                                 StringValue("ns3::ConstantRandomVariable[Constant=0]"));
+            ApplicationContainer app = cbrGold.Install(n(470 + i));
+            app.Start(Seconds(1.0 + i * 0.001));
+            app.Stop(Seconds(simTime));
         }
-
-        auto numFlows = static_cast<uint32_t>(rvSflow->GetValue());
-        if (numFlows < 1)
-        {
-            numFlows = 1;
-        }
-
-        double flowStart = userStartTime;
-        double dur = rvFlowDur->GetValue() * 60.0; // CDF is in minutes
-
-        for (uint32_t j = 0; j < numFlows; j++)
-        {
-            double flowStop = flowStart + dur;
-            if (flowStop > simTime - 1.0)
-            {
-                flowStop = simTime - 1.0;
-            }
-            if (flowStop <= flowStart)
-            {
-                break; // No room left in the simulation window
-            }
-
-            // ns-2's Application/Traffic/RealAudio emits with session-average
-            // rate ≈ rate_. ns-3's OnOff with OnTime/OffTime duty = 0.5/(0.5+1.8)
-            // = 0.2174 would instead average at DataRate × 0.2174 per session.
-            // Scale DataRate by 1/duty (≈4.6) so the session-average matches
-            // the sampled rate from fratecdf — bursty structure preserved, mean
-            // correct.
-            constexpr double kOnOffDutyCompensation = 1.0 / 0.2174; // 0.5/(0.5+1.8)
-            double rateKbps = rvFrate->GetValue();
-            // CBR-diagnostic mode: in --realAudioCbr mode, emit a
-            // deterministic CBR at the sampled session-average rate
-            // (no duty-cycle compensation, no ON/OFF burstiness).
-            double dataRateBps =
-                realAudioCbr ? (rateKbps * 1000.0) : (rateKbps * 1000.0 * kOnOffDutyCompensation);
-            std::ostringstream rateStr;
-            rateStr << static_cast<uint32_t>(dataRateBps) << "bps";
-
-            OnOffHelper streamOnOff("ns3::UdpSocketFactory",
-                                    InetSocketAddress(addr770, streamPort));
-            streamOnOff.SetAttribute("DataRate", StringValue(rateStr.str()));
-            streamOnOff.SetAttribute("PacketSize", UintegerValue(245));
-            if (realAudioCbr)
-            {
-                // CBR: always-on, no idle interval.
-                streamOnOff.SetAttribute("OnTime",
-                                         StringValue("ns3::ConstantRandomVariable[Constant=1e9]"));
-                streamOnOff.SetAttribute("OffTime",
-                                         StringValue("ns3::ConstantRandomVariable[Constant=0]"));
-            }
-            else
-            {
-                streamOnOff.SetAttribute("OnTime",
-                                         StringValue("ns3::ConstantRandomVariable[Constant=0.5]"));
-                streamOnOff.SetAttribute("OffTime",
-                                         StringValue("ns3::ExponentialRandomVariable[Mean=1.8]"));
-            }
-
-            ApplicationContainer app = streamOnOff.Install(n(470 + i));
-            app.Start(Seconds(flowStart));
-            app.Stop(Seconds(flowStop));
-            totalFlows++;
-
-            // 1 ms gap, then next sequential flow under same user.
-            flowStart = flowStop + 0.001;
-            dur = rvFlowDur->GetValue() * 60.0;
-        }
+        std::cout << "Gold: " << numUsers << " CBR flows (n470-n769 -> n770)"
+                  << " - deterministic " << kGoldAggBps / 1000 << " kbps agg\n";
     }
+    else
+    {
+        double userStartTime = 0.0;
+        uint64_t totalFlows = 0;
+        for (uint32_t i = 0; i < numUsers; i++)
+        {
+            if (i > 0)
+            {
+                userStartTime += rvUserInter->GetValue();
+            }
 
-    std::cout << "RealAudio: " << numUsers << " users -> " << totalFlows
-              << " sequential flows (empirical CDFs, 245B bursty UDP)\n";
+            auto numFlows = static_cast<uint32_t>(rvSflow->GetValue());
+            if (numFlows < 1)
+            {
+                numFlows = 1;
+            }
+
+            double flowStart = userStartTime;
+            double dur = rvFlowDur->GetValue() * 60.0; // CDF is in minutes
+
+            for (uint32_t j = 0; j < numFlows; j++)
+            {
+                double flowStop = flowStart + dur;
+                if (flowStop > simTime - 1.0)
+                {
+                    flowStop = simTime - 1.0;
+                }
+                if (flowStop <= flowStart)
+                {
+                    break; // No room left in the simulation window
+                }
+
+                // ns-2's Application/Traffic/RealAudio emits with session-average
+                // rate ≈ rate_. ns-3's OnOff with OnTime/OffTime duty = 0.5/(0.5+1.8)
+                // = 0.2174 would instead average at DataRate × 0.2174 per session.
+                // Scale DataRate by 1/duty (≈4.6) so the session-average matches
+                // the sampled rate from fratecdf — bursty structure preserved, mean
+                // correct.
+                constexpr double kOnOffDutyCompensation = 1.0 / 0.2174; // 0.5/(0.5+1.8)
+                double rateKbps = rvFrate->GetValue();
+                // CBR-diagnostic mode: in --realAudioCbr mode, emit a
+                // deterministic CBR at the sampled session-average rate
+                // (no duty-cycle compensation, no ON/OFF burstiness).
+                double dataRateBps = realAudioCbr
+                                         ? (rateKbps * 1000.0)
+                                         : (rateKbps * 1000.0 * kOnOffDutyCompensation);
+                std::ostringstream rateStr;
+                rateStr << static_cast<uint32_t>(dataRateBps) << "bps";
+
+                OnOffHelper streamOnOff("ns3::UdpSocketFactory",
+                                        InetSocketAddress(addr770, streamPort));
+                streamOnOff.SetAttribute("DataRate", StringValue(rateStr.str()));
+                streamOnOff.SetAttribute("PacketSize", UintegerValue(245));
+                if (realAudioCbr)
+                {
+                    // CBR: always-on, no idle interval.
+                    streamOnOff.SetAttribute(
+                        "OnTime",
+                        StringValue("ns3::ConstantRandomVariable[Constant=1e9]"));
+                    streamOnOff.SetAttribute(
+                        "OffTime",
+                        StringValue("ns3::ConstantRandomVariable[Constant=0]"));
+                }
+                else
+                {
+                    streamOnOff.SetAttribute(
+                        "OnTime",
+                        StringValue("ns3::ConstantRandomVariable[Constant=0.5]"));
+                    streamOnOff.SetAttribute(
+                        "OffTime",
+                        StringValue("ns3::ExponentialRandomVariable[Mean=1.8]"));
+                }
+
+                ApplicationContainer app = streamOnOff.Install(n(470 + i));
+                app.Start(Seconds(flowStart));
+                app.Stop(Seconds(flowStop));
+                totalFlows++;
+
+                // 1 ms gap, then next sequential flow under same user.
+                flowStart = flowStop + 0.001;
+                dur = rvFlowDur->GetValue() * 60.0;
+            }
+        }
+
+        std::cout << "RealAudio: " << numUsers << " users -> " << totalFlows
+                  << " sequential flows (empirical CDFs, 245B bursty UDP)\n";
+    }
 
     // ====================================================================
     // Traffic 3: Silver / Telnet (50 connections)
@@ -1399,30 +1499,6 @@ RunFullScenario(double simTime,
     uint16_t telnetPort = 23;
     uint32_t numTelnet = 50;
 
-    for (uint32_t i = 0; i < numTelnet; i++)
-    {
-        uint32_t src = (i % 40) + 6;
-        uint32_t dst = (i % 50) + 46;
-        double startTime = static_cast<double>(i) * 1.0;
-
-        Ipv4Address dstAddr = n(dst)->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
-        EnsureSink(n(dst), telnetPort, "ns3::TcpSocketFactory");
-
-        OnOffHelper telnetOnOff("ns3::TcpSocketFactory", InetSocketAddress(dstAddr, telnetPort));
-        telnetOnOff.SetAttribute("DataRate", StringValue("50kbps"));
-        telnetOnOff.SetAttribute("PacketSize", UintegerValue(512));
-        telnetOnOff.SetAttribute("OnTime",
-                                 StringValue("ns3::ConstantRandomVariable[Constant=0.01]"));
-        telnetOnOff.SetAttribute("OffTime",
-                                 StringValue("ns3::ExponentialRandomVariable[Mean=0.5]"));
-
-        ApplicationContainer app = telnetOnOff.Install(n(src));
-        app.Start(Seconds(startTime));
-        app.Stop(Seconds(simTime));
-    }
-
-    std::cout << "Telnet: " << numTelnet << " connections (n6-n45 -> n46-n95)\n";
-
     // ====================================================================
     // Traffic 4: Silver / FTP (50 connections)
     // Source: n6-n45 -> n46-n95 (port 21)
@@ -1430,25 +1506,106 @@ RunFullScenario(double simTime,
     uint16_t ftpPort = 21;
     uint32_t numFtp = 50;
 
-    for (uint32_t i = 0; i < numFtp; i++)
+    if (deterministicLoad)
     {
-        uint32_t src = (i % 40) + 6;
-        uint32_t dst = (i % 50) + 46;
-        double startTime = static_cast<double>(i) * 1.0;
+        // Deterministic mode: Silver aggregate = 900 kbps split equally between
+        // Telnet (port 23 → DSCP 18/AF21) and FTP (port 21 → DSCP 20/AF22).
+        // 40 unique source nodes (n6–n45); one CBR per source per sub-class.
+        // Per-source rate = 450000 / 40 = 11250 bps; PacketSize = 245 B; UDP.
+        constexpr uint32_t kSilverHalfBps = 450000; // 450 kbps per sub-class
+        constexpr uint32_t kSilverSrcCount = 40;
+        const uint32_t silverPerFlowBps = kSilverHalfBps / kSilverSrcCount;
 
-        Ipv4Address dstAddr = n(dst)->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
-        EnsureSink(n(dst), ftpPort, "ns3::TcpSocketFactory");
+        // Telnet sub-class (DSCP 18/AF21): one CBR per unique server node
+        Ipv4Address dstTelnet = n(46)->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
+        EnsureSink(n(46), telnetPort, "ns3::UdpSocketFactory");
+        for (uint32_t i = 0; i < kSilverSrcCount; i++)
+        {
+            OnOffHelper cbrTelnet("ns3::UdpSocketFactory",
+                                  InetSocketAddress(dstTelnet, telnetPort));
+            cbrTelnet.SetAttribute("DataRate", DataRateValue(DataRate(silverPerFlowBps)));
+            cbrTelnet.SetAttribute("PacketSize", UintegerValue(245));
+            cbrTelnet.SetAttribute(
+                "OnTime",
+                StringValue("ns3::ConstantRandomVariable[Constant=1000000000]"));
+            cbrTelnet.SetAttribute("OffTime",
+                                   StringValue("ns3::ConstantRandomVariable[Constant=0]"));
+            ApplicationContainer app = cbrTelnet.Install(n(6 + i));
+            app.Start(Seconds(1.0 + i * 0.001));
+            app.Stop(Seconds(simTime));
+        }
 
-        BulkSendHelper ftpBulk("ns3::TcpSocketFactory", InetSocketAddress(dstAddr, ftpPort));
-        ftpBulk.SetAttribute("MaxBytes", UintegerValue(0));
-        ftpBulk.SetAttribute("SendSize", UintegerValue(1460));
+        // FTP sub-class (DSCP 20/AF22): one CBR per unique server node
+        Ipv4Address dstFtp = n(47)->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
+        EnsureSink(n(47), ftpPort, "ns3::UdpSocketFactory");
+        for (uint32_t i = 0; i < kSilverSrcCount; i++)
+        {
+            OnOffHelper cbrFtp("ns3::UdpSocketFactory",
+                               InetSocketAddress(dstFtp, ftpPort));
+            cbrFtp.SetAttribute("DataRate", DataRateValue(DataRate(silverPerFlowBps)));
+            cbrFtp.SetAttribute("PacketSize", UintegerValue(245));
+            cbrFtp.SetAttribute(
+                "OnTime",
+                StringValue("ns3::ConstantRandomVariable[Constant=1000000000]"));
+            cbrFtp.SetAttribute("OffTime",
+                                StringValue("ns3::ConstantRandomVariable[Constant=0]"));
+            ApplicationContainer app = cbrFtp.Install(n(6 + i));
+            app.Start(Seconds(1.0 + i * 0.001));
+            app.Stop(Seconds(simTime));
+        }
 
-        ApplicationContainer app = ftpBulk.Install(n(src));
-        app.Start(Seconds(startTime));
-        app.Stop(Seconds(simTime));
+        std::cout << "Silver: " << kSilverSrcCount << " CBR flows/sub-class (n6-n45)"
+                  << " - deterministic " << (kSilverHalfBps * 2) / 1000 << " kbps agg\n";
     }
+    else
+    {
+        for (uint32_t i = 0; i < numTelnet; i++)
+        {
+            uint32_t src = (i % 40) + 6;
+            uint32_t dst = (i % 50) + 46;
+            double startTime = static_cast<double>(i) * 1.0;
 
-    std::cout << "FTP: " << numFtp << " connections (n6-n45 -> n46-n95)\n";
+            Ipv4Address dstAddr = n(dst)->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
+            EnsureSink(n(dst), telnetPort, "ns3::TcpSocketFactory");
+
+            OnOffHelper telnetOnOff("ns3::TcpSocketFactory",
+                                    InetSocketAddress(dstAddr, telnetPort));
+            telnetOnOff.SetAttribute("DataRate", StringValue("50kbps"));
+            telnetOnOff.SetAttribute("PacketSize", UintegerValue(512));
+            telnetOnOff.SetAttribute("OnTime",
+                                     StringValue("ns3::ConstantRandomVariable[Constant=0.01]"));
+            telnetOnOff.SetAttribute(
+                "OffTime",
+                StringValue("ns3::ExponentialRandomVariable[Mean=0.5]"));
+
+            ApplicationContainer app = telnetOnOff.Install(n(src));
+            app.Start(Seconds(startTime));
+            app.Stop(Seconds(simTime));
+        }
+
+        std::cout << "Telnet: " << numTelnet << " connections (n6-n45 -> n46-n95)\n";
+
+        for (uint32_t i = 0; i < numFtp; i++)
+        {
+            uint32_t src = (i % 40) + 6;
+            uint32_t dst = (i % 50) + 46;
+            double startTime = static_cast<double>(i) * 1.0;
+
+            Ipv4Address dstAddr = n(dst)->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
+            EnsureSink(n(dst), ftpPort, "ns3::TcpSocketFactory");
+
+            BulkSendHelper ftpBulk("ns3::TcpSocketFactory",
+                                   InetSocketAddress(dstAddr, ftpPort));
+            ftpBulk.SetAttribute("MaxBytes", UintegerValue(0));
+            ftpBulk.SetAttribute("SendSize", UintegerValue(1460));
+
+            ApplicationContainer app = ftpBulk.Install(n(src));
+            app.Start(Seconds(startTime));
+            app.Stop(Seconds(simTime));
+        }
+
+        std::cout << "FTP: " << numFtp << " connections (n6-n45 -> n46-n95)\n";
+    }
 
     // ====================================================================
     // Traffic 5: Bronze / HTTP (50 connections)
@@ -1460,27 +1617,62 @@ RunFullScenario(double simTime,
     uint16_t httpPort = 80;
     uint32_t numHttp = 50;
 
-    for (uint32_t i = 0; i < numHttp; i++)
+    if (deterministicLoad)
     {
-        uint32_t src = (i % 40) + 6;
-        uint32_t dst = (i % 50) + 46;
-        double startTime = static_cast<double>(i) * 1.0;
-
-        Ipv4Address dstAddr = n(dst)->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
-        EnsureSink(n(dst), httpPort, "ns3::TcpSocketFactory");
-
-        OnOffHelper httpOnOff("ns3::TcpSocketFactory", InetSocketAddress(dstAddr, httpPort));
-        httpOnOff.SetAttribute("DataRate", StringValue("500kbps"));
-        httpOnOff.SetAttribute("PacketSize", UintegerValue(1460));
-        httpOnOff.SetAttribute("OnTime", StringValue("ns3::ExponentialRandomVariable[Mean=1.0]"));
-        httpOnOff.SetAttribute("OffTime", StringValue("ns3::ExponentialRandomVariable[Mean=5.0]"));
-
-        ApplicationContainer app = httpOnOff.Install(n(src));
-        app.Start(Seconds(startTime));
-        app.Stop(Seconds(simTime));
+        // Deterministic mode: Bronze aggregate = 900 kbps.
+        // 40 unique source nodes (n6–n45); one CBR per source.
+        // Per-source rate = 900000 / 40 = 22500 bps; PacketSize = 245 B; UDP.
+        // port 80 → DSCP 26 (Bronze/AF31).
+        constexpr uint32_t kBronzeAggBps = 900000;
+        constexpr uint32_t kBronzeSrcCount = 40;
+        const uint32_t bronzePerFlowBps = kBronzeAggBps / kBronzeSrcCount;
+        Ipv4Address dstHttp = n(46)->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
+        EnsureSink(n(46), httpPort, "ns3::UdpSocketFactory");
+        for (uint32_t i = 0; i < kBronzeSrcCount; i++)
+        {
+            OnOffHelper cbrHttp("ns3::UdpSocketFactory",
+                                InetSocketAddress(dstHttp, httpPort));
+            cbrHttp.SetAttribute("DataRate", DataRateValue(DataRate(bronzePerFlowBps)));
+            cbrHttp.SetAttribute("PacketSize", UintegerValue(245));
+            cbrHttp.SetAttribute(
+                "OnTime",
+                StringValue("ns3::ConstantRandomVariable[Constant=1000000000]"));
+            cbrHttp.SetAttribute("OffTime",
+                                 StringValue("ns3::ConstantRandomVariable[Constant=0]"));
+            ApplicationContainer app = cbrHttp.Install(n(6 + i));
+            app.Start(Seconds(1.0 + i * 0.001));
+            app.Stop(Seconds(simTime));
+        }
+        std::cout << "Bronze: " << kBronzeSrcCount << " CBR flows (n6-n45)"
+                  << " - deterministic " << kBronzeAggBps / 1000 << " kbps agg\n";
     }
+    else
+    {
+        for (uint32_t i = 0; i < numHttp; i++)
+        {
+            uint32_t src = (i % 40) + 6;
+            uint32_t dst = (i % 50) + 46;
+            double startTime = static_cast<double>(i) * 1.0;
 
-    std::cout << "HTTP: " << numHttp << " connections (n6-n45 -> n46-n95)\n";
+            Ipv4Address dstAddr = n(dst)->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
+            EnsureSink(n(dst), httpPort, "ns3::TcpSocketFactory");
+
+            OnOffHelper httpOnOff("ns3::TcpSocketFactory",
+                                  InetSocketAddress(dstAddr, httpPort));
+            httpOnOff.SetAttribute("DataRate", StringValue("500kbps"));
+            httpOnOff.SetAttribute("PacketSize", UintegerValue(1460));
+            httpOnOff.SetAttribute("OnTime",
+                                   StringValue("ns3::ExponentialRandomVariable[Mean=1.0]"));
+            httpOnOff.SetAttribute("OffTime",
+                                   StringValue("ns3::ExponentialRandomVariable[Mean=5.0]"));
+
+            ApplicationContainer app = httpOnOff.Install(n(src));
+            app.Start(Seconds(startTime));
+            app.Stop(Seconds(simTime));
+        }
+
+        std::cout << "HTTP: " << numHttp << " connections (n6-n45 -> n46-n95)\n";
+    }
 
     // ====================================================================
     // Traffic 6: Best Effort / Background CBR
@@ -1492,17 +1684,40 @@ RunFullScenario(double simTime,
 
     EnsureSink(n(468), bgPort, "ns3::UdpSocketFactory");
 
-    OnOffHelper bgOnOff("ns3::UdpSocketFactory", InetSocketAddress(addr468, bgPort));
-    bgOnOff.SetAttribute("DataRate", StringValue("500000bps"));
-    bgOnOff.SetAttribute("PacketSize", UintegerValue(512));
-    bgOnOff.SetAttribute("OnTime", StringValue("ns3::ConstantRandomVariable[Constant=1000000]"));
-    bgOnOff.SetAttribute("OffTime", StringValue("ns3::ConstantRandomVariable[Constant=0]"));
+    if (deterministicLoad)
+    {
+        // Deterministic mode: BE aggregate = 600 kbps (1 source node).
+        // PacketSize = 245 B; UDP; port 10000 → unclassified (DSCP 0 / BE).
+        constexpr uint32_t kBeAggBps = 600000;
+        OnOffHelper cbrBg("ns3::UdpSocketFactory", InetSocketAddress(addr468, bgPort));
+        cbrBg.SetAttribute("DataRate", DataRateValue(DataRate(kBeAggBps)));
+        cbrBg.SetAttribute("PacketSize", UintegerValue(245));
+        cbrBg.SetAttribute("OnTime",
+                           StringValue("ns3::ConstantRandomVariable[Constant=1000000000]"));
+        cbrBg.SetAttribute("OffTime",
+                           StringValue("ns3::ConstantRandomVariable[Constant=0]"));
+        ApplicationContainer bgApp = cbrBg.Install(n(467));
+        bgApp.Start(Seconds(1.0 + 0 * 0.001));
+        bgApp.Stop(Seconds(simTime));
+        std::cout << "BE: 1 CBR flow (n467 -> n468)"
+                  << " - deterministic " << kBeAggBps / 1000 << " kbps\n";
+    }
+    else
+    {
+        OnOffHelper bgOnOff("ns3::UdpSocketFactory", InetSocketAddress(addr468, bgPort));
+        bgOnOff.SetAttribute("DataRate", StringValue("500000bps"));
+        bgOnOff.SetAttribute("PacketSize", UintegerValue(512));
+        bgOnOff.SetAttribute("OnTime",
+                             StringValue("ns3::ConstantRandomVariable[Constant=1000000]"));
+        bgOnOff.SetAttribute("OffTime",
+                             StringValue("ns3::ConstantRandomVariable[Constant=0]"));
 
-    ApplicationContainer bgApp = bgOnOff.Install(n(467));
-    bgApp.Start(Seconds(0.0));
-    bgApp.Stop(Seconds(simTime));
+        ApplicationContainer bgApp = bgOnOff.Install(n(467));
+        bgApp.Start(Seconds(0.0));
+        bgApp.Stop(Seconds(simTime));
 
-    std::cout << "BG: 1 CBR flow (n467 -> n468) - 500 kbps, 512B\n";
+        std::cout << "BG: 1 CBR flow (n467 -> n468) - 500 kbps, 512B\n";
+    }
 
     // ====================================================================
     // Trace files and metric recording
@@ -1594,6 +1809,7 @@ main(int argc, char* argv[])
     // to characterise generator-variance contribution to the
     // ns-3 vs ns-2 Gold-class throughput delta.
     bool realAudioCbr = false;
+    bool deterministicLoad = false;
 
     CommandLine cmd(__FILE__);
     cmd.AddValue("scale", "Scenario scale: 'quick' (default) or 'full'", scale);
@@ -1605,10 +1821,17 @@ main(int argc, char* argv[])
                  "Substitute deterministic CBR at session-average rate for the "
                  "Gold-class RealAudio generator (generator-variance diagnostic)",
                  realAudioCbr);
+    cmd.AddValue("deterministicLoad",
+                 "Replace all Scenario-3 class generators with fixed deterministic "
+                 "CBR (identical across simulators) for cross-generation convergence",
+                 deterministicLoad);
     cmd.Parse(argc, argv);
 
     NS_ABORT_MSG_IF(scale != "quick" && scale != "full",
                     "scale must be 'quick' or 'full' (got '" << scale << "')");
+
+    NS_ABORT_MSG_IF(deterministicLoad && scale != "full",
+                    "--deterministicLoad is only available with --scale=full");
 
     if (scale == "full")
     {
@@ -1618,7 +1841,8 @@ main(int argc, char* argv[])
         std::string effOutputDir =
             (outputDir == "output/ns3/example-3") ? outputDirFull : outputDir;
 
-        return RunFullScenario(effSimTime, seed, effOutputDir, cdfDir, realAudioCbr);
+        return RunFullScenario(effSimTime, seed, effOutputDir, cdfDir, realAudioCbr,
+                               deterministicLoad);
     }
 
     return RunQuickScenario(simTime, seed, outputDir);

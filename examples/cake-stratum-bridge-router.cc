@@ -209,22 +209,14 @@ main(int argc, char* argv[])
     // DiffServ4 with host-isolation enabled).
     Ptr<TrafficControlLayer> tc = nodeA->GetObject<TrafficControlLayer>();
     NS_ABORT_MSG_IF(!tc, "TrafficControlLayer missing");
-    if (tc->GetRootQueueDiscOnDevice(txDevs.Get(0)))
-    {
-        tc->DeleteRootQueueDiscOnDevice(txDevs.Get(0));
-    }
     DataRate bw(bandwidth);
     Ptr<EdgeQueueDisc> edge = CreateObject<EdgeQueueDisc>();
     cake::Helper::SetAsCakeDiffserv4(edge,
                                      bw,
-                                     /*enableAckFilter=*/false,
-                                     /*enableLlq=*/false,
-                                     /*enableTinShaping=*/true,
-                                     /*enableHostIsolation=*/enableHostIsolation,
-                                     /*useInnerTbfShaping=*/false,
-                                     /*enableAckFilterAggressive=*/false,
-                                     /*useDualPi2Inner=*/useDualPi2Inner);
-    tc->SetRootQueueDiscOnDevice(txDevs.Get(0), edge);
+                                     {.tinShaping = true,
+                                      .hostIsolation = enableHostIsolation,
+                                      .dualPi2Inner = useDualPi2Inner});
+    stratum::InstallRoot(txDevs.Get(0), edge);
 
     // No-op FifoQueueDisc on RX egress (reverse-direction ACKs path).
     if (tc->GetRootQueueDiscOnDevice(rxDevs.Get(0)))

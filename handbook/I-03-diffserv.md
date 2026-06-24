@@ -29,9 +29,14 @@ cd ns-3  # or your ns-3 tree (standalone flow)
 ```cpp
 // Slot 1+2: meter + classifier. CIR 300 kbps, CBS 4687 B; out-of-profile
 // EF is recoloured to DSCP 48 (Cisco MQC violate-action).
-helper.AddTokenBucketPolicy(edgeDisc, 46, /*cir*/ 300000.0, /*cbs*/ 4687.0);
-helper.AddPolicerEntry(edgeDisc, PolicerType::TOKEN_BUCKET, 46, 48, 48);
-helper.AddMarkRule(edgeDisc, /*dscp*/ 46, kAnyHost, destAddr0.Get(), kAnyProtocol, 0);
+helper.AddTokenBucketPolicy(edgeDisc, {.codePt = 46, .cirBps = 300000.0, .cbsBytes = 4687.0});
+helper.AddPolicerEntry(edgeDisc,
+                       {.policer = PolicerType::TOKEN_BUCKET,
+                        .initialCodePt = 46,
+                        .downgrade1 = 48,
+                        .downgrade2 = 48,
+                        .policyIndex = static_cast<uint32_t>(PolicerType::TOKEN_BUCKET)});
+edgeDisc->AddMarkRule({.dscp = 46, .dstAddr = destAddr0});
 ```
 
 ```cpp
@@ -136,21 +141,24 @@ edgeInner->SetNumPrec(2, 2); // BE:      in/out-profile
 ```cpp
 // Port-based classification: dstPort 23 -> AF11 (Telnet), dstPort 21 -> AF12 (FTP).
 // TSW2CM (RFC 2859) polices FTP at 500 kbps; over-rate FTP is recoloured AF13.
-helper.AddMarkRuleWithPorts(edgeDisc, 10, kAnyHost, kAnyHost, kAnyProtocol,
-                            kAnyAppType, kAnyPort, 23); // Telnet
-helper.AddMarkRuleWithPorts(edgeDisc, 12, kAnyHost, kAnyHost, kAnyProtocol,
-                            kAnyAppType, kAnyPort, 21); // FTP
-helper.AddTsw2cmPolicy(edgeDisc, /*dscp*/ 12, /*cir*/ 500000.0);
-helper.AddPolicerEntry(edgeDisc, PolicerType::TSW2CM, 12, 14, 14);
+edgeDisc->AddMarkRule({.dscp = 10, .dstPort = 23}); // Telnet
+edgeDisc->AddMarkRule({.dscp = 12, .dstPort = 21}); // FTP
+helper.AddTsw2cmPolicy(edgeDisc, {.codePt = 12, .cirBps = 500000.0});
+helper.AddPolicerEntry(edgeDisc,
+                       {.policer = PolicerType::TSW2CM,
+                        .initialCodePt = 12,
+                        .downgrade1 = 14,
+                        .downgrade2 = 14,
+                        .policyIndex = static_cast<uint32_t>(PolicerType::TSW2CM)});
 ```
 
 ```cpp
 // RIO-C: per-precedence WRED thresholds inside the Gold queue.
 // AF13 (over-rate FTP) drops aggressively; AF11 (Telnet) gently.
 edgeInner->SetMredMode(MredMode::RIO_C, /*queueIdx*/ 1);
-helper.ConfigQueue(edgeInner, 1, 0, 60.0, 110.0, 0.02); // AF11 gentle
-helper.ConfigQueue(edgeInner, 1, 1, 30.0,  60.0, 0.60); // AF12 moderate
-helper.ConfigQueue(edgeInner, 1, 2,  5.0,  10.0, 0.80); // AF13 aggressive
+helper.ConfigQueue(edgeInner, {.queue = 1, .prec = 0, .thMin = 60.0, .thMax = 110.0, .maxP = 0.02}); // AF11 gentle
+helper.ConfigQueue(edgeInner, {.queue = 1, .prec = 1, .thMin = 30.0, .thMax = 60.0, .maxP = 0.60}); // AF12 moderate
+helper.ConfigQueue(edgeInner, {.queue = 1, .prec = 2, .thMin = 5.0, .thMax = 10.0, .maxP = 0.80}); // AF13 aggressive
 ```
 
 ### How to read the results
@@ -258,9 +266,9 @@ llq->SetParam(3, 3.0); llq->SetParam(4, 1.0);
 
 ```cpp
 // Mixed meters: TokenBucket for Premium and BE, TSW2CM for Gold AF.
-helper.AddTokenBucketPolicy(edgeDisc, 46, /*cir*/ 500000.0, /*cbs*/ 100000.0); // Premium
-helper.AddTsw2cmPolicy(edgeDisc, 10, /*cir*/ 600000.0);                        // Gold
-helper.AddTokenBucketPolicy(edgeDisc,  0, /*cir*/ 400000.0, /*cbs*/ 100000.0); // BE
+helper.AddTokenBucketPolicy(edgeDisc, {.codePt = 46, .cirBps = 500000.0, .cbsBytes = 100000.0}); // Premium
+helper.AddTsw2cmPolicy(edgeDisc, {.codePt = 10, .cirBps = 600000.0}); // Gold
+helper.AddTokenBucketPolicy(edgeDisc, {.codePt = 0, .cirBps = 400000.0, .cbsBytes = 100000.0}); // BE
 ```
 
 ### How to read the results
@@ -397,3 +405,20 @@ See also: [the traffic management chapter](II-03-traffic-management.md) (DiffSer
 ### Found a problem?
 
 [File a recipe issue](https://github.com/digitalities/stratum-ns3/issues/new?template=recipe-request.yml)
+
+## Over IPv6
+
+The DiffServ client is address-family agnostic. The DS field occupies the IPv6
+Traffic Class byte at the same position RFC 2474 defines for IPv4, so every edge
+configuration in this chapter runs unchanged over IPv6 — only the network layer
+differs (`InternetStackHelper` + `Ipv6AddressHelper` in place of
+`Ipv4AddressHelper`). A minimal worked example, `diffserv-ipv6-recipe`, drives
+EF / AF21 / BE strict-priority ordering over a pure-IPv6 dumbbell:
+
+```bash
+./ns3 run "diffserv-ipv6-recipe"
+```
+
+EF and AF21 each receive their full offered load while BE absorbs the remainder —
+the same priority ordering as over IPv4. Full capture and the shared dual-stack
+mechanism: [Appendix D — IPv6 dual-stack](appendix-D-ipv6-dual-stack.md).

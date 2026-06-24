@@ -11,9 +11,12 @@
 #include "ns3/fq-codel-queue-disc.h"
 #include "ns3/ipv4-header.h"
 #include "ns3/ipv4-queue-disc-item.h"
+#include "ns3/ipv6-header.h"
+#include "ns3/ipv6-queue-disc-item.h"
 #include "ns3/packet.h"
 #include "ns3/simulator.h"
 #include "ns3/stratum-l4s-coupled-scheduler.h"
+#include "ns3/stratum-l4s-helper.h"
 #include "ns3/stratum-l4s-queue-disc.h"
 #include "ns3/stratum-pq-scheduler.h"
 #include "ns3/test.h"
@@ -21,8 +24,8 @@
 
 #include <cmath>
 #include <iostream>
-#include <sstream>
 #include <set>
+#include <sstream>
 #include <utility>
 #include <vector>
 
@@ -63,6 +66,23 @@ MakeItem(Ipv4Header::DscpType dscp, Ipv4Header::EcnType ecn, uint32_t payloadSiz
     return Create<Ipv4QueueDiscItem>(pkt, Address(), 0x0800, hdr);
 }
 
+/// Build a minimal Ipv6QueueDiscItem with the given DSCP and ECN.
+/// Mirrors MakeItem; v6 uses SetNextHeader/SetPayloadLength and EtherType 0x86DD.
+Ptr<Ipv6QueueDiscItem>
+MakeItemV6(Ipv6Header::DscpType dscp, Ipv6Header::EcnType ecn, uint32_t payloadSize = 500)
+{
+    Ipv6Header hdr;
+    hdr.SetSource(Ipv6Address("2001:db8::1"));
+    hdr.SetDestination(Ipv6Address("2001:db8::2"));
+    hdr.SetNextHeader(17); // UDP
+    hdr.SetDscp(dscp);
+    hdr.SetEcn(ecn);
+    hdr.SetPayloadLength(payloadSize);
+
+    Ptr<Packet> pkt = Create<Packet>(payloadSize);
+    return Create<Ipv6QueueDiscItem>(pkt, Address(), 0x86DD, hdr);
+}
+
 /// Build and initialize a 2-queue L4S disc with WRED thresholds wide
 /// enough that the parent's WRED never force-drops. Returns the disc
 /// with classic at idx 0 and L4S at idx 1.
@@ -87,8 +107,8 @@ MakeL4sDisc(uint32_t classicQlim = 10000, uint32_t l4sQlim = 10000)
     // Generous WRED thresholds keep the parent's RIO machinery inert
     // throughout the coupling-invariant tests; only the L4S coupling
     // logic should drive drops/marks.
-    disc->ConfigQueue(0, 0, 5000.0, 10000.0, 0.1);
-    disc->ConfigQueue(1, 0, 5000.0, 10000.0, 0.1);
+    disc->ConfigQueue({.queue = 0, .prec = 0, .thMin = 5000.0, .thMax = 10000.0, .maxP = 0.1});
+    disc->ConfigQueue({.queue = 1, .prec = 0, .thMin = 5000.0, .thMax = 10000.0, .maxP = 0.1});
     return disc;
 }
 
@@ -123,8 +143,8 @@ class DsL4sRoutingTest : public TestCase
         // Set MRED thresholds large enough that WRED never force-drops
         // within this test. Default thMin=thMax=0 triggers "above thMax"
         // forced drop on the first packet that raises vAve > 0.
-        disc->ConfigQueue(0, 0, 100.0, 200.0, 0.1);
-        disc->ConfigQueue(1, 0, 100.0, 200.0, 0.1);
+        disc->ConfigQueue({.queue = 0, .prec = 0, .thMin = 100.0, .thMax = 200.0, .maxP = 0.1});
+        disc->ConfigQueue({.queue = 1, .prec = 0, .thMin = 100.0, .thMax = 200.0, .maxP = 0.1});
 
         // Packet 1: NotECT with DSCP 0 — classic path, goes to queue 0.
         Ptr<Ipv4QueueDiscItem> classicPkt =
@@ -174,6 +194,150 @@ class DsL4sRoutingTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(l4sQ->GetNPackets(),
                               2U,
                               "L4S sub-queue should still hold 2 packets after ECT(0) enqueue");
+    }
+};
+
+/// Q-18.3: IPv6 ECT(1)/CE route to the L4S sub-queue; NotECT/ECT(0) route to
+/// classic. Exercises the already-family-agnostic IsL4sPacket seam over v6.
+class TestQ18v3L4sEctClassifyIPv6 : public TestCase
+{
+  public:
+    TestQ18v3L4sEctClassifyIPv6()
+        : TestCase("L4S enqueue-side routing by ECN codepoint over IPv6")
+    {
+    }
+
+    void DoRun() override
+    {
+        auto disc = MakeL4sDisc();
+        Ptr<QueueDisc> classicQ = disc->GetClassicAqmDisc();
+        Ptr<QueueDisc> l4sQ = disc->GetL4sQueueDisc();
+
+        // NotECT, DSCP 0 -> classic.
+        NS_TEST_ASSERT_MSG_EQ(
+            disc->Enqueue(MakeItemV6(Ipv6Header::DscpDefault, Ipv6Header::ECN_NotECT)),
+            true,
+            "v6 NotECT must enqueue");
+        NS_TEST_ASSERT_MSG_EQ(classicQ->GetNPackets(), 1U, "v6 NotECT -> classic");
+        NS_TEST_ASSERT_MSG_EQ(l4sQ->GetNPackets(), 0U, "v6 NotECT not on L4S");
+
+        // ECT(1) -> L4S.
+        NS_TEST_ASSERT_MSG_EQ(
+            disc->Enqueue(MakeItemV6(Ipv6Header::DscpDefault, Ipv6Header::ECN_ECT1)),
+            true,
+            "v6 ECT(1) must enqueue");
+        NS_TEST_ASSERT_MSG_EQ(l4sQ->GetNPackets(), 1U, "v6 ECT(1) -> L4S");
+
+        // CE -> L4S.
+        NS_TEST_ASSERT_MSG_EQ(
+            disc->Enqueue(MakeItemV6(Ipv6Header::DscpDefault, Ipv6Header::ECN_CE)),
+            true,
+            "v6 CE must enqueue");
+        NS_TEST_ASSERT_MSG_EQ(l4sQ->GetNPackets(), 2U, "v6 CE -> L4S");
+
+        // ECT(0) -> classic (RFC 9331 reserves ECT(1) for L4S).
+        NS_TEST_ASSERT_MSG_EQ(
+            disc->Enqueue(MakeItemV6(Ipv6Header::DscpDefault, Ipv6Header::ECN_ECT0)),
+            true,
+            "v6 ECT(0) must enqueue");
+        NS_TEST_ASSERT_MSG_EQ(classicQ->GetNPackets(), 2U, "v6 ECT(0) -> classic");
+        NS_TEST_ASSERT_MSG_EQ(l4sQ->GetNPackets(), 2U, "v6 ECT(0) not on L4S");
+    }
+};
+
+/// Q-18.3 (S-L4S.5 over v6): an already-CE IPv6 packet must not be re-marked.
+/// RED before the fix — the v4-only DynamicCast skips the guard for v6,
+/// and Ipv6QueueDiscItem::Mark() returns true for already-CE, so the mark
+/// counter double-counts.
+class TestQ18v3L4sCeIdempotenceIPv6 : public TestCase
+{
+  public:
+    TestQ18v3L4sCeIdempotenceIPv6()
+        : TestCase("CE-marked IPv6 packet stays CE without double-marking")
+    {
+    }
+
+    void DoRun() override
+    {
+        auto disc = MakeL4sDisc();
+        disc->AssignStreams(11);
+        disc->SetL4sTargetSojournMs(1e6); // disable the step branch
+        disc->ForceBaseProbForTest(
+            0.5); // p_L = min(2*0.5,1) = 1: every above-floor dequeue draws "mark"
+
+        uint64_t marksBefore = disc->GetStats().nTotalMarkedPackets;
+
+        constexpr uint32_t kN = 100;
+        for (uint32_t i = 0; i < kN; ++i)
+        {
+            NS_TEST_ASSERT_MSG_EQ(
+                disc->Enqueue(MakeItemV6(Ipv6Header::DscpDefault, Ipv6Header::ECN_CE)),
+                true,
+                "v6 CE-marked packet must enqueue");
+        }
+        Ptr<QueueDisc> l4sQ = disc->GetL4sQueueDisc();
+        NS_TEST_ASSERT_MSG_EQ(l4sQ->GetNPackets(), kN, "all v6 CE packets on the L4S sub-queue");
+
+        for (uint32_t i = 0; i < kN; ++i)
+        {
+            NS_TEST_ASSERT_MSG_NE(disc->Dequeue(), nullptr, "v6 CE packet should dequeue");
+        }
+        uint64_t marksAfter = disc->GetStats().nTotalMarkedPackets;
+        NS_TEST_ASSERT_MSG_EQ(marksAfter - marksBefore,
+                              0U,
+                              "Mark counter must not increment for already-CE IPv6 packets "
+                              "(RFC 9331 §5 idempotence)");
+    }
+};
+
+/// Q-18.3 (e2e proof): IPv6 ECT(1) flows through the coupled-mark path get
+/// CE-marked. At p_L = 1 every above-floor dequeue marks, and the dequeued
+/// item must come out CE — proving Ipv6QueueDiscItem::Mark() does the
+/// ECN-preserving CE write end-to-end.
+class TestQ18v3L4sMarkingIPv6 : public TestCase
+{
+  public:
+    TestQ18v3L4sMarkingIPv6()
+        : TestCase("L4S coupled marking writes CE on IPv6 ECT(1) flows")
+    {
+    }
+
+    void DoRun() override
+    {
+        auto disc = MakeL4sDisc();
+        disc->AssignStreams(11);
+        disc->SetL4sTargetSojournMs(1e6); // disable the step branch
+        disc->ForceBaseProbForTest(0.5);  // p_L = 1
+
+        constexpr uint32_t kM = 100;
+        constexpr uint32_t kBacklog = 50; // keeps every measured dequeue above the 2-MTU floor
+        for (uint32_t i = 0; i < kM + kBacklog; ++i)
+        {
+            NS_TEST_ASSERT_MSG_EQ(
+                disc->Enqueue(MakeItemV6(Ipv6Header::DscpDefault, Ipv6Header::ECN_ECT1)),
+                true,
+                "v6 ECT(1) packet must enqueue");
+        }
+
+        uint64_t marksBefore = disc->GetStats().nTotalMarkedPackets;
+        uint32_t ceOut = 0;
+        for (uint32_t i = 0; i < kM; ++i)
+        {
+            Ptr<QueueDiscItem> out = disc->Dequeue();
+            NS_TEST_ASSERT_MSG_NE(out, nullptr, "v6 ECT(1) packet should dequeue");
+            Ptr<Ipv6QueueDiscItem> ip = DynamicCast<Ipv6QueueDiscItem>(out);
+            NS_TEST_ASSERT_MSG_NE(ip, nullptr, "dequeued item must be Ipv6QueueDiscItem");
+            if (ip->GetHeader().GetEcn() == Ipv6Header::ECN_CE)
+            {
+                ++ceOut;
+            }
+        }
+        uint64_t marksAfter = disc->GetStats().nTotalMarkedPackets;
+
+        NS_TEST_ASSERT_MSG_EQ(marksAfter - marksBefore,
+                              kM,
+                              "Mark counter must increment by kM for v6 ECT(1) inputs at p_L = 1");
+        NS_TEST_ASSERT_MSG_EQ(ceOut, kM, "every dequeued v6 ECT(1) packet must come out CE-marked");
     }
 };
 
@@ -626,7 +790,7 @@ class DsL4sCoupledOnlyBypassWredTest : public TestCase
 
         // L4S queue still needs explicit thresholds (it's not classic
         // and InitializeParams doesn't touch it).
-        disc->ConfigQueue(1, 0, 100.0, 200.0, 0.1);
+        disc->ConfigQueue({.queue = 1, .prec = 0, .thMin = 100.0, .thMax = 200.0, .maxP = 0.1});
 
         disc->AssignStreams(23);
         disc->ForceBaseProbForTest(0.0); // no coupled drops
@@ -1530,6 +1694,37 @@ class TestSL4s17CoupledFloorTwoMtu : public TestCase
     }
 };
 
+// Verifies the one-call L4S composer reproduces the native two-lane L4S edge.
+class SetAsL4sComposesEdgeTest : public TestCase
+{
+  public:
+    SetAsL4sComposesEdgeTest()
+        : TestCase("SetAsL4s composes the native two-lane L4S edge")
+    {
+    }
+
+    void DoRun() override
+    {
+        Ptr<ns3::stratum::l4s::QueueDisc> disc = CreateObject<ns3::stratum::l4s::QueueDisc>();
+        ns3::stratum::l4s::Helper::SetAsL4s(disc);
+
+        NS_TEST_ASSERT_MSG_EQ(disc->GetNumQueues(), 2u, "L4S edge must have 2 lanes");
+        uint8_t q = 0xFF;
+        uint8_t p = 0xFF;
+        NS_TEST_ASSERT_MSG_EQ(disc->LookupPhb(46, q, p), true, "EF fallback must be mapped");
+        NS_TEST_ASSERT_MSG_EQ(q, 0, "EF -> L4S lane (idx 0)");
+        NS_TEST_ASSERT_MSG_EQ(disc->LookupPhb(0, q, p), true, "BE must be mapped");
+        NS_TEST_ASSERT_MSG_EQ(q, 1, "BE -> classic lane (idx 1)");
+        NS_TEST_ASSERT_MSG_NE(disc->GetScheduler(), nullptr, "coupled scheduler must be set");
+        Ptr<ns3::stratum::l4s::CoupledScheduler> sched =
+            DynamicCast<ns3::stratum::l4s::CoupledScheduler>(disc->GetScheduler());
+        NS_TEST_ASSERT_MSG_NE(sched, nullptr, "scheduler must be the L4S CoupledScheduler");
+        UintegerValue nq;
+        sched->GetAttribute("NumQueues", nq);
+        NS_TEST_ASSERT_MSG_EQ(nq.Get(), 2u, "coupled scheduler must serve 2 lanes");
+    }
+};
+
 class DsL4sQueueDiscSuite : public TestSuite
 {
   public:
@@ -1554,6 +1749,10 @@ class DsL4sQueueDiscSuite : public TestSuite
         AddTestCase(new TestSL4s15DscpPreservation, Duration::QUICK);
         AddTestCase(new TestSL4s16DequeueTimeStepMark, Duration::QUICK);
         AddTestCase(new TestSL4s17CoupledFloorTwoMtu, Duration::QUICK);
+        AddTestCase(new TestQ18v3L4sEctClassifyIPv6, Duration::QUICK);
+        AddTestCase(new TestQ18v3L4sCeIdempotenceIPv6, Duration::QUICK);
+        AddTestCase(new TestQ18v3L4sMarkingIPv6, Duration::QUICK);
+        AddTestCase(new SetAsL4sComposesEdgeTest(), TestCase::Duration::QUICK);
         AddTestCase(new DsL4sScenarioPiControlFiresTest, Duration::EXTENSIVE);
         AddTestCase(new DsL4sScenarioS1LatencyDifferentiationTest, Duration::EXTENSIVE);
         AddTestCase(new DsL4sScenarioS2CoexistenceThroughputEquivalenceTest, Duration::EXTENSIVE);

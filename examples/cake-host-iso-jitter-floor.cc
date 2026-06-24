@@ -53,6 +53,7 @@
 #include "ns3/point-to-point-module.h"
 #include "ns3/stratum-cake-helper.h"
 #include "ns3/stratum-edge-queue-disc.h"
+#include "ns3/stratum-install-helper.h"
 #include "ns3/traffic-control-module.h"
 
 #include <iomanip>
@@ -243,19 +244,9 @@ main(int argc, char* argv[])
     Ptr<EdgeQueueDisc> edge = CreateObject<EdgeQueueDisc>();
     cake::Helper::SetAsCakeDiffserv4(edge,
                                      DataRate(kBandwidthBps),
-                                     /*enableAckFilter=*/false,
-                                     /*enableLlq=*/false,
-                                     /*enableTinShaping=*/true,
-                                     /*enableHostIsolation=*/hostIso,
-                                     /*useInnerTbfShaping=*/false);
+                                     {.tinShaping = true, .hostIsolation = hostIso});
 
-    Ptr<TrafficControlLayer> tc = dBN.Get(0)->GetNode()->GetObject<TrafficControlLayer>();
-    NS_ASSERT_MSG(tc, "TrafficControlLayer must be installed on routerA");
-    if (tc->GetRootQueueDiscOnDevice(dBN.Get(0)))
-    {
-        tc->DeleteRootQueueDiscOnDevice(dBN.Get(0));
-    }
-    tc->SetRootQueueDiscOnDevice(dBN.Get(0), edge);
+    stratum::InstallRoot(dBN.Get(0), edge);
 
     edge->TraceConnectWithoutContext("Enqueue", MakeCallback(&EnqCb));
     edge->TraceConnectWithoutContext("Dequeue", MakeCallback(&DeqCb));

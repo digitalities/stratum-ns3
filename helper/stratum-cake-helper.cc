@@ -11,6 +11,7 @@
 #include "../model/stratum-cake-live-bulk-counter.h"
 #include "../model/stratum-rate-based-shaper-dispatcher.h"
 #include "stratum-cake-stats-formatter.h"
+#include "stratum-install-helper.h"
 
 #include "ns3/boolean.h"
 #include "ns3/data-rate.h"
@@ -28,7 +29,6 @@
 #include "ns3/stratum-tin-shaper-dispatcher.h"
 #include "ns3/string.h"
 #include "ns3/tbf-queue-disc.h"
-#include "ns3/traffic-control-layer.h"
 #include "ns3/uinteger.h"
 
 #include <algorithm>
@@ -207,11 +207,7 @@ Helper::BuildDispatcher()
         const bool useInnerTbf = (m_shaperMode == ShaperMode::TbfInner);
         Helper::SetAsCakeDiffserv4(edge,
                                    DataRate(m_globalRateBps),
-                                   /*enableAckFilter=*/false,
-                                   /*enableLlq=*/false,
-                                   /*enableTinShaping=*/useInnerTbf,
-                                   /*enableHostIsolation=*/false,
-                                   /*useInnerTbfShaping=*/useInnerTbf);
+                                   {.tinShaping = useInnerTbf, .innerTbfShaping = useInnerTbf});
         return edge;
     }
     case ShaperMode::RateBased: {
@@ -290,20 +286,7 @@ Helper::BuildDispatcher()
 Ptr<QueueDisc>
 Helper::BuildAndInstall(Ptr<NetDevice> device)
 {
-    Ptr<QueueDisc> qdisc = BuildDispatcher();
-    Ptr<TrafficControlLayer> tc = device->GetNode()->GetObject<TrafficControlLayer>();
-    NS_ASSERT_MSG(tc, "TrafficControlLayer must be installed on the node");
-    // InternetStackHelper::Install attaches a default root qdisc per
-    // device; remove it before installing the CAKE dispatcher so the
-    // install does not collide with the existing root qdisc.  The Get
-    // probe is required because DeleteRootQueueDiscOnDevice asserts
-    // when no root qdisc is present on the device.
-    if (tc->GetRootQueueDiscOnDevice(device))
-    {
-        tc->DeleteRootQueueDiscOnDevice(device);
-    }
-    tc->SetRootQueueDiscOnDevice(device, qdisc);
-    return qdisc;
+    return stratum::InstallRoot(device, BuildDispatcher());
 }
 
 namespace
@@ -554,16 +537,15 @@ InstallTins(Ptr<EdgeQueueDisc> edge,
 } // namespace
 
 void
-Helper::SetAsCakeDiffserv4(Ptr<EdgeQueueDisc> edge,
-                           DataRate totalRate,
-                           bool enableAckFilter,
-                           bool enableLlq,
-                           bool enableTinShaping,
-                           bool enableHostIsolation,
-                           bool useInnerTbfShaping,
-                           bool enableAckFilterAggressive,
-                           bool useDualPi2Inner)
+Helper::SetAsCakeDiffserv4(Ptr<EdgeQueueDisc> edge, DataRate totalRate, const CakeOptions& opts)
 {
+    const bool enableAckFilter = opts.ackFilter;
+    const bool enableLlq = opts.llq;
+    const bool enableTinShaping = opts.tinShaping;
+    const bool enableHostIsolation = opts.hostIsolation;
+    const bool useInnerTbfShaping = opts.innerTbfShaping;
+    const bool enableAckFilterAggressive = opts.ackFilterAggressive;
+    const bool useDualPi2Inner = opts.dualPi2Inner;
     NS_LOG_FUNCTION(edge << totalRate << enableAckFilter << enableLlq << enableTinShaping
                          << enableHostIsolation << useInnerTbfShaping << enableAckFilterAggressive
                          << useDualPi2Inner);
@@ -613,15 +595,14 @@ Helper::SetAsCakeDiffserv4(Ptr<EdgeQueueDisc> edge,
 }
 
 void
-Helper::SetAsCakeDiffserv3(Ptr<EdgeQueueDisc> edge,
-                           DataRate totalRate,
-                           bool enableAckFilter,
-                           bool enableLlq,
-                           bool enableTinShaping,
-                           bool enableHostIsolation,
-                           bool useInnerTbfShaping,
-                           bool enableAckFilterAggressive)
+Helper::SetAsCakeDiffserv3(Ptr<EdgeQueueDisc> edge, DataRate totalRate, const CakeOptions& opts)
 {
+    const bool enableAckFilter = opts.ackFilter;
+    const bool enableLlq = opts.llq;
+    const bool enableTinShaping = opts.tinShaping;
+    const bool enableHostIsolation = opts.hostIsolation;
+    const bool useInnerTbfShaping = opts.innerTbfShaping;
+    const bool enableAckFilterAggressive = opts.ackFilterAggressive;
     NS_LOG_FUNCTION(edge << totalRate << enableAckFilter << enableLlq << enableTinShaping
                          << enableHostIsolation << useInnerTbfShaping << enableAckFilterAggressive);
 
@@ -673,15 +654,14 @@ Helper::SetAsCakeDiffserv3(Ptr<EdgeQueueDisc> edge,
 }
 
 void
-Helper::SetAsCakeDiffserv8(Ptr<EdgeQueueDisc> edge,
-                           DataRate totalRate,
-                           bool enableAckFilter,
-                           bool enableLlq,
-                           bool enableTinShaping,
-                           bool enableHostIsolation,
-                           bool useInnerTbfShaping,
-                           bool enableAckFilterAggressive)
+Helper::SetAsCakeDiffserv8(Ptr<EdgeQueueDisc> edge, DataRate totalRate, const CakeOptions& opts)
 {
+    const bool enableAckFilter = opts.ackFilter;
+    const bool enableLlq = opts.llq;
+    const bool enableTinShaping = opts.tinShaping;
+    const bool enableHostIsolation = opts.hostIsolation;
+    const bool useInnerTbfShaping = opts.innerTbfShaping;
+    const bool enableAckFilterAggressive = opts.ackFilterAggressive;
     NS_LOG_FUNCTION(edge << totalRate << enableAckFilter << enableLlq << enableTinShaping
                          << enableHostIsolation << useInnerTbfShaping << enableAckFilterAggressive);
 
@@ -739,15 +719,14 @@ Helper::SetAsCakeDiffserv8(Ptr<EdgeQueueDisc> edge,
 }
 
 void
-Helper::SetAsCakeBestEffort(Ptr<EdgeQueueDisc> edge,
-                            DataRate totalRate,
-                            bool enableAckFilter,
-                            bool enableLlq,
-                            bool enableTinShaping,
-                            bool enableHostIsolation,
-                            bool useInnerTbfShaping,
-                            bool enableAckFilterAggressive)
+Helper::SetAsCakeBestEffort(Ptr<EdgeQueueDisc> edge, DataRate totalRate, const CakeOptions& opts)
 {
+    const bool enableAckFilter = opts.ackFilter;
+    const bool enableLlq = opts.llq;
+    const bool enableTinShaping = opts.tinShaping;
+    const bool enableHostIsolation = opts.hostIsolation;
+    const bool useInnerTbfShaping = opts.innerTbfShaping;
+    const bool enableAckFilterAggressive = opts.ackFilterAggressive;
     NS_LOG_FUNCTION(edge << totalRate << enableAckFilter << enableLlq << enableTinShaping
                          << enableHostIsolation << useInnerTbfShaping << enableAckFilterAggressive);
 
@@ -774,15 +753,14 @@ Helper::SetAsCakeBestEffort(Ptr<EdgeQueueDisc> edge,
 }
 
 void
-Helper::SetAsCakePrecedence(Ptr<EdgeQueueDisc> edge,
-                            DataRate totalRate,
-                            bool enableAckFilter,
-                            bool enableLlq,
-                            bool enableTinShaping,
-                            bool enableHostIsolation,
-                            bool useInnerTbfShaping,
-                            bool enableAckFilterAggressive)
+Helper::SetAsCakePrecedence(Ptr<EdgeQueueDisc> edge, DataRate totalRate, const CakeOptions& opts)
 {
+    const bool enableAckFilter = opts.ackFilter;
+    const bool enableLlq = opts.llq;
+    const bool enableTinShaping = opts.tinShaping;
+    const bool enableHostIsolation = opts.hostIsolation;
+    const bool useInnerTbfShaping = opts.innerTbfShaping;
+    const bool enableAckFilterAggressive = opts.ackFilterAggressive;
     NS_LOG_FUNCTION(edge << totalRate << enableAckFilter << enableLlq << enableTinShaping
                          << enableHostIsolation << useInnerTbfShaping << enableAckFilterAggressive);
 
@@ -959,11 +937,12 @@ ResolveRttPreset(Helper::RttPreset preset)
 void
 Helper::SetAsCakeAlphaTinShaped(Ptr<EdgeQueueDisc> edge,
                                 DataRate totalRate,
-                                bool enableAckFilter,
-                                bool enableLlq,
-                                bool enableHostIsolation,
-                                bool enableAckFilterAggressive)
+                                const CakeOptions& opts)
 {
+    const bool enableAckFilter = opts.ackFilter;
+    const bool enableLlq = opts.llq;
+    const bool enableHostIsolation = opts.hostIsolation;
+    const bool enableAckFilterAggressive = opts.ackFilterAggressive;
     NS_LOG_FUNCTION(edge << totalRate << enableAckFilter << enableLlq << enableHostIsolation
                          << enableAckFilterAggressive);
     NS_ASSERT_MSG(edge, "SetAsCakeAlphaTinShaped requires non-null edge");
@@ -974,12 +953,11 @@ Helper::SetAsCakeAlphaTinShaped(Ptr<EdgeQueueDisc> edge,
     // composition lets traffic through at link rate.
     Helper::SetAsCakeDiffserv4(edge,
                                totalRate,
-                               enableAckFilter,
-                               enableLlq,
-                               /*enableTinShaping=*/true,
-                               enableHostIsolation,
-                               /*useInnerTbfShaping=*/false,
-                               enableAckFilterAggressive);
+                               {.ackFilter = enableAckFilter,
+                                .llq = enableLlq,
+                                .tinShaping = true,
+                                .hostIsolation = enableHostIsolation,
+                                .ackFilterAggressive = enableAckFilterAggressive});
 }
 
 void

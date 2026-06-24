@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: GPL-2.0-only
  *
  * Trace-replay application: feeds a QueueDisc with synthesized
- * Ipv4QueueDiscItem instances reconstructed from packet headers
+ * QueueDiscItem instances (IPv4 or IPv6) reconstructed from packet headers
  * recorded in one or more pcap files.
  */
 
@@ -14,9 +14,11 @@
 #include "ns3/application.h"
 #include "ns3/event-id.h"
 #include "ns3/ipv4-queue-disc-item.h"
+#include "ns3/ipv6-queue-disc-item.h"
 #include "ns3/nstime.h"
 #include "ns3/ptr.h"
 #include "ns3/queue-disc.h"
+#include "ns3/queue-item.h"
 
 #include <cstdint>
 #include <string>
@@ -31,17 +33,28 @@ namespace ns3::stratum
  * @brief Application that replays a captured packet stream into a QueueDisc.
  *
  * Reads one or more pcap files, sorts records by capture timestamp, and
- * synthesizes Ipv4QueueDiscItem instances that are enqueued at their
- * original relative inter-arrival timing. The application bypasses the
- * TCP/UDP/IP socket layers and holds a Ptr<QueueDisc> directly, invoking
- * Enqueue() via scheduled events.
+ * synthesizes QueueDiscItem instances that are enqueued at their original
+ * relative inter-arrival timing. The application bypasses the TCP/UDP/IP
+ * socket layers and holds a Ptr<QueueDisc> directly, invoking Enqueue()
+ * via scheduled events.
  *
  * Pcap link-layer type DLT_EN10MB (Ethernet, value 1) is supported; the
- * 14-byte Ethernet header is skipped and the next 20+ bytes are parsed as
- * an Ipv4Header. Non-IPv4 frames (e.g. ARP, IPv6) are silently dropped
- * with a warning log entry. Both microsecond-precision and
- * nanosecond-precision pcap magic numbers are accepted; the file's
+ * 14-byte Ethernet header is skipped. IPv4 (`0x0800`) frames are parsed
+ * as Ipv4Header; IPv6 (`0x86DD`) frames are parsed as Ipv6Header (fixed
+ * 40-byte header, no extension-header walk). Other EtherTypes (e.g. ARP)
+ * are silently dropped with a warning log entry. Both microsecond-precision
+ * and nanosecond-precision pcap magic numbers are accepted; the file's
  * internal nanosecond flag is consulted via PcapFile::IsNanoSecMode().
+ *
+ * Synthesized items reproduce the layer-3 header (addresses, DS field, and
+ * length) and the original inter-arrival timing, but carry a zero-filled
+ * payload with no transport header. Replayed flows therefore preserve
+ * address- and DSCP-level distinctness (host isolation, tin/PHB selection)
+ * but not transport ports: any consumer that hashes on the full 5-tuple
+ * (per-flow fairness, bulk-flow counting) reads a zero source/destination
+ * port for every replayed packet, so flows that differ only in port collapse
+ * to one hash bucket. Use captured traffic to drive aggregate DS-field
+ * behaviour, not per-flow port distinctness.
  */
 class TraceReplayApplication : public Application
 {
@@ -72,8 +85,8 @@ class TraceReplayApplication : public Application
     /// One replay record materialized from the pcap stream.
     struct Record
     {
-        Time relativeOffset;         //!< offset from the earliest packet across all pcaps
-        Ptr<Ipv4QueueDiscItem> item; //!< synthesized item ready to Enqueue
+        Time relativeOffset;     //!< offset from the earliest packet across all pcaps
+        Ptr<QueueDiscItem> item; //!< synthesized item (IPv4 or IPv6) ready to Enqueue
     };
 
     /**

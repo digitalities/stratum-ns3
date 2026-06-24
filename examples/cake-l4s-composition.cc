@@ -164,6 +164,11 @@ main(int argc, char* argv[])
     NetDeviceContainer dRB_SinkB = accessLink.Install(routerB.Get(0), sinkB.Get(0));
 
     InternetStackHelper internet;
+    // This example stays IPv4-only on purpose: installing the IPv6 stack
+    // registers per-node random variables (link-local autoconfiguration and
+    // duplicate-address detection) that draw from the global random-number
+    // stream and shift this example's committed output. The dual-stack
+    // composition is demonstrated separately by cake-l4s-composition-ipv6.
     internet.SetIpv6StackInstall(false);
     internet.Install(srcA);
     internet.Install(srcB);
@@ -187,21 +192,8 @@ main(int argc, char* argv[])
 
     DataRate bw(bandwidth);
     Ptr<EdgeQueueDisc> edge = CreateObject<EdgeQueueDisc>();
-    cake::Helper::SetAsCakeDiffserv4(edge,
-                                     bw,
-                                     /*enableAckFilter=*/false,
-                                     /*enableLlq=*/false,
-                                     /*enableTinShaping=*/true,
-                                     /*enableHostIsolation=*/false,
-                                     /*useInnerTbfShaping=*/false,
-                                     /*enableAckFilterAggressive=*/false,
-                                     /*useDualPi2Inner=*/true);
-    Ptr<TrafficControlLayer> tc = routerA.Get(0)->GetObject<TrafficControlLayer>();
-    if (tc->GetRootQueueDiscOnDevice(dRA_RB.Get(0)))
-    {
-        tc->DeleteRootQueueDiscOnDevice(dRA_RB.Get(0));
-    }
-    tc->SetRootQueueDiscOnDevice(dRA_RB.Get(0), edge);
+    cake::Helper::SetAsCakeDiffserv4(edge, bw, {.tinShaping = true, .dualPi2Inner = true});
+    stratum::InstallRoot(dRA_RB.Get(0), edge);
 
     ApplicationContainer sinkApps, srcApps;
     InstallFlows(srcA.Get(0),

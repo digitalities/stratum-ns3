@@ -54,6 +54,7 @@
 #include "ns3/stratum-aqm-registry.h"
 #include "ns3/stratum-edge-queue-disc.h"
 #include "ns3/stratum-helper.h"
+#include "ns3/stratum-install-helper.h"
 #include "ns3/stratum-scheduler-registry.h"
 #include "ns3/tcp-header.h"
 #include "ns3/tcp-retransmit-tag.h"
@@ -75,8 +76,6 @@ using namespace ns3;
 namespace aqm_eval = ns3::stratum::aqm_eval;
 namespace diffserv = ns3::stratum::diffserv;
 using ns3::stratum::EdgeQueueDisc;
-using ns3::stratum::kAnyHost;
-using ns3::stratum::kAnyProtocol;
 using ns3::stratum::SchedulerRegistry;
 using ns3::stratum::SerialiseSchedulerEntry;
 
@@ -351,12 +350,7 @@ WireDsCakeDscp(Ptr<EdgeQueueDisc> edge,
     for (uint32_t i = 0; i < flows.size(); ++i)
     {
         const uint8_t dscp = flows[i].tos >> 2;
-        helper.AddMarkRule(edge,
-                           dscp,
-                           static_cast<int32_t>(senderIfs[i].GetAddress(0).Get()),
-                           kAnyHost,
-                           kAnyProtocol,
-                           0);
+        edge->AddMarkRule({.dscp = dscp, .srcAddr = senderIfs[i].GetAddress(0)});
         helper.AddDumbPolicy(edge, dscp);
     }
 }
@@ -687,8 +681,7 @@ main(int argc, char* argv[])
     accessLink.SetChannelAttribute("Delay", StringValue("1ms"));
     PointToPointHelper bottleneck;
     bottleneck.SetDeviceAttribute("DataRate", DataRateValue(DataRate(totalRateBps)));
-    bottleneck.SetChannelAttribute("Delay",
-                                   StringValue(rttFairnessMode ? "1ms" : "5ms"));
+    bottleneck.SetChannelAttribute("Delay", StringValue(rttFairnessMode ? "1ms" : "5ms"));
     PointToPointHelper sinkLink;
     sinkLink.SetDeviceAttribute("DataRate", StringValue("100Mbps"));
     sinkLink.SetChannelAttribute("Delay", StringValue("1ms"));
@@ -763,12 +756,7 @@ main(int argc, char* argv[])
     }
 
     Ptr<NetDevice> egress = bottleneckDev.Get(0);
-    Ptr<TrafficControlLayer> tcl = egress->GetNode()->GetObject<TrafficControlLayer>();
-    if (tcl->GetRootQueueDiscOnDevice(egress))
-    {
-        tcl->DeleteRootQueueDiscOnDevice(egress);
-    }
-    tcl->SetRootQueueDiscOnDevice(egress, qdisc);
+    stratum::InstallRoot(egress, qdisc);
 
     // ----- Apps + side-channel sink-byte counter --------------------------
     const uint16_t basePort = 5000;
@@ -915,20 +903,18 @@ main(int argc, char* argv[])
             {
                 const double ratio =
                     (cat1->rxRateBps > 0.0) ? (cat2->rxRateBps / cat1->rxRateBps) : 0.0;
-                const double drop1 =
-                    (cat1->txPackets > 0)
-                        ? static_cast<double>(cat1->lostPackets) / cat1->txPackets
-                        : 0.0;
-                const double drop2 =
-                    (cat2->txPackets > 0)
-                        ? static_cast<double>(cat2->lostPackets) / cat2->txPackets
-                        : 0.0;
-                sm << "goodput_cat1_bps=" << std::fixed << std::setprecision(0)
-                   << cat1->rxRateBps << "\n"
-                   << "goodput_cat2_bps=" << std::fixed << std::setprecision(0)
-                   << cat2->rxRateBps << "\n"
-                   << "goodput_ratio_cat2_over_cat1=" << std::fixed << std::setprecision(6)
-                   << ratio << "\n"
+                const double drop1 = (cat1->txPackets > 0)
+                                         ? static_cast<double>(cat1->lostPackets) / cat1->txPackets
+                                         : 0.0;
+                const double drop2 = (cat2->txPackets > 0)
+                                         ? static_cast<double>(cat2->lostPackets) / cat2->txPackets
+                                         : 0.0;
+                sm << "goodput_cat1_bps=" << std::fixed << std::setprecision(0) << cat1->rxRateBps
+                   << "\n"
+                   << "goodput_cat2_bps=" << std::fixed << std::setprecision(0) << cat2->rxRateBps
+                   << "\n"
+                   << "goodput_ratio_cat2_over_cat1=" << std::fixed << std::setprecision(6) << ratio
+                   << "\n"
                    << "drop_rate_cat1=" << std::fixed << std::setprecision(6) << drop1 << "\n"
                    << "drop_rate_cat2=" << std::fixed << std::setprecision(6) << drop2 << "\n";
             }

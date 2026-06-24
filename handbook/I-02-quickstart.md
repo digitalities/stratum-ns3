@@ -131,9 +131,12 @@ You've now run all three substrate clients and modified one. Go deeper:
 - **[DiffServ recipes](I-03-diffserv.md)** — sr-TCM vs tr-TCM, schedulers (PQ/WFQ/WF2Q+/LLQ), Lower-Effort PHB, AQM choice under the pipeline
 - **[L4S recipes](I-04-l4s.md)** — coupling formula validation, FqCoDel head-to-head, mixed-flow scenarios
 - **[CAKE recipes](I-05-cake.md)** — RRUL benchmark, host-pair isolation, square-wave fairness, tin modes
+- **[IPv6 dual-stack](appendix-D-ipv6-dual-stack.md)** — every client recipe runs over IPv6 unchanged; each client chapter has an "Over IPv6" section, and Appendix D collects the mechanism and worked examples (the DS field is address-family agnostic)
 - **[Wireless recipes](I-07-wireless.md)** — Stratum attached to an 802.11ax AP
 - **[AQM-eval](I-06-aqm-eval.md)** — characterise 13 AQMs in 30 seconds (ellipse diagram)
 - **[Extending](I-09-extending.md)** — add your own AQM or scheduler to the registry
+- **[Command-line reference](appendix-E-cli-reference.md)** — every example's options; or run `./ns3 run "<example> --PrintHelp"` for the live list
+- **[The C++ API](I-08-examples-catalog.md#the-c-api-reference)** — the helper classes and configuration structs you build simulations with; full reference via `./ns3 docs doxygen`
 
 > [!TIP]
 > Each recipe ends with a "Found a problem?" link. If a recipe doesn't run cleanly, file an issue — that's the most useful feedback you can give us.

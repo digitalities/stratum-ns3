@@ -684,6 +684,107 @@ The asymmetric regime (`φ = {1, 2}`) is run for all three schedulers and report
 - The "Choice B" loosening is documented in the file header. If a Theorem-1-strict regression test is later wanted, drop the `2.0 *` factor in the gate; the strict-violation counter already exposes that signal.
 - Reference: Parekh & Gallager, IEEE/ACM Trans. Networking 1(3), June 1993, copy at `paper/related-papers/parekh1993.pdf`.
 
+## Q-18: IPv6 dual-stack scenarios (address-family agnostic; intent: I-17)
+
+Three independent dual-stack scenarios — one per Stratum client — confirm that
+the DS-field read/mark and flow-id seams work correctly over IPv6.  All three
+run at QUICK duration (≤ 30 s simulated time) unless noted.  They are the
+minimum observable evidence required before any Increment-2/3/4 code lands.
+
+### Q-18.1: DiffServ edge DSCP mark over IPv6
+
+**Scenario.** A single-hop topology: one `Node` sourcing IPv6 UDP packets
+toward a second `Node` through a `PointToPoint` link at 10 Mbit/s / 10 ms RTT.
+An `EdgeQueueDisc` is installed on the bottleneck egress with one mark rule
+targeting the IPv6 source address and assigning DSCP EF (46).  A second flow
+from a different IPv6 source receives DSCP CS0.  Both flows are sourced as
+`Ipv6QueueDiscItem` objects.
+
+**Reference.** RFC 2474 §2: the DS field in the IPv6 Traffic Class octet is
+structurally identical to the IPv4 TOS byte; the top six bits carry DSCP.
+The read/mark path is address-family agnostic: the DS field is read via
+`GetUint8Value(IP_DSFIELD)` and rewritten via `SetDscpPreservingEcn`
+(ECN-preserving), giving IPv6 the same DSCP handling as IPv4.
+
+**Gate.**
+- The EF-flow packets dequeued from the `EdgeQueueDisc` shall carry DSCP 46 in
+  the IPv6 Traffic Class byte (verified by reading `Ipv6Header::GetTrafficClass() >> 2`).
+- The CS0-flow packets shall carry DSCP 0.
+- ECN bits (low two bits of Traffic Class) shall be byte-identical before and
+  after the mark (no ECN clobber).
+- The non-IP item no-op: a bare `QueueDiscItem` (not v4 or v6) enqueued into
+  the same disc shall dequeue with its payload unmodified.
+
+**Output artefact.** None — unit-style in-process test.
+Verified by: `TestQ18v1DiffServEdgeMarkIPv6` in `diffserv-test-suite.cc`.
+
+### Q-18.2: CAKE tin assignment and host isolation over IPv6
+
+**Scenario.** Two parts, both unit-style and in-process.  Part 1 (tin
+selection) drives a standalone `RateBasedShaperDispatcher` configured with four
+diffserv4 tins; `Ipv6QueueDiscItem` objects carrying one representative DSCP per
+tin in their Traffic Class byte are enqueued and their landing tin is read back.
+Part 2 (bulk-flow counting + work conservation) installs a CAKE `EdgeQueueDisc`
+configured `diffserv4` + `Triple` host isolation at 10 Mbit/s; two IPv6 source
+hosts (A and B) each contribute four distinct flows (varying source port) into
+the Bulk tin.
+
+**Reference.** CAKE paper §III-A and §III-B: tin assignment is by DSCP
+(address-family independent); host isolation tracks per-`src` / per-`dst`
+counts.  The Linux mechanism is `cake_handle_diffserv()`
+(`provenance/linux-sch-cake-67dc6c56b871/sch_cake.c:1622`), which reads
+`ipv4_get_dsfield`/`ipv6_get_dsfield` shifted right by two identically across
+families.  `item->Hash()` (`Ipv6QueueDiscItem::Hash`) provides the per-flow
+bucket index used by the bulk-flow counter (S-17.33v6).
+
+**Gate.**
+- IPv6 packets marked with distinct DSCPs shall be classified to distinct
+  diffserv4 tins by their Traffic Class byte: CS1 (8) → Bulk (slot 0), CS0 (0) →
+  Best-Effort (slot 1), AF21 (18) → Video (slot 2), EF (46) → Voice (slot 3) —
+  confirming that `GetUint8Value(IP_DSFIELD) >> 2` drives CAKE tin selection for
+  IPv6 items.  (diffserv4 slot order: Bulk 0 / BE 1 / Video 2 / Voice 3.)
+- The per-tin bulk-flow counter (`LiveBulkCounter`) shall reach four after host
+  A's four distinct IPv6 flows and eight after host B's four, confirming that
+  `item->Hash()` distinguishes IPv6 flows across two source hosts (S-17.33v6).
+- Every IPv6 flow shall enqueue and remain resident in the Bulk tin (no spurious
+  drops from a v6 classification fault — work conservation).
+
+**Output artefact.** None — unit-style in-process test.
+Verified by: `TestQ18v2CakeTinHostIsoIPv6` in `diffserv-cake-q15-test-suite.cc`.
+
+### Q-18.3: L4S ECT(1) classification over IPv6
+
+**Scenario.** A `stratum::l4s::QueueDisc` is installed at a bottleneck.
+Packets are synthesised as `Ipv6QueueDiscItem` objects with Traffic Class bytes
+encoding ECT(1) (0x01 in the low two bits), ECT(0) (0x02), CE (0x03), and
+NotECT (0x00).
+
+**Reference.** RFC 9331 §5.1: ECT(1) and CE packets belong to the L4S
+sub-queue; NotECT and ECT(0) belong to the classic sub-queue.  The ECN values
+are identical in `Ipv4Header::EcnType` and `Ipv6Header::EcnType`
+(`ECN_NotECT=0x00`, `ECN_ECT1=0x01`, `ECN_ECT0=0x02`, `ECN_CE=0x03`).
+`GetUint8Value(IP_DSFIELD) & 0x3` extracts the ECN field for both families.
+
+**Gate.**
+- IPv6 packets with ECT(1) Traffic Class bits shall route to the L4S
+  sub-queue (`L4sQueueIdx`); CE packets likewise.
+- IPv6 packets with NotECT and ECT(0) Traffic Class bits shall route to the
+  classic sub-queue.
+- The CE-mark idempotence contract (S-L4S.5) holds for IPv6: an already-CE
+  IPv6 packet is not re-marked and does not double-count the mark counter.
+  `Ipv6QueueDiscItem::Mark()` is RFC 9331-conformant (ECN-preserving CE set);
+  this scenario confirms the integration path, not the base-class contract.
+- The PI² controller `p'` and coupling maps are unaffected by address family:
+  the same `p_C = p'²`, `p_L = min(k·p', 1)` cascade applies regardless of
+  whether the items are v4 or v6.
+
+**Output artefact.** None — unit-style in-process test.
+Verified by (`l4s-routing-test.cc`): `TestQ18v3L4sEctClassifyIPv6` (ECT(1)/CE→L4S,
+NotECT/ECT(0)→classic over v6), `TestQ18v3L4sCeIdempotenceIPv6` (already-CE v6 packet
+not re-marked), `TestQ18v3L4sMarkingIPv6` (v6 ECT(1) coupled-marking writes CE).
+The PI² controller is address-family-independent; the existing IPv4
+`DsL4sScenarioDualPi2GprtParityTest` gate confirms the cascade and is held (not widened).
+
 ## Acceptance gates by phase
 
 The phase plan in `PORTING_MAP.md` defines six phases. The acceptance gate for each:

@@ -256,11 +256,12 @@ code.
 
 ## Scope boundaries
 
-The substrate targets intra-domain DiffServ forwarding over IPv4 unicast,
-the data plane of RFC 2475 §2.3. Several things are deliberately outside
-that boundary:
+The substrate targets intra-domain DiffServ forwarding, the data plane of
+RFC 2475 §2.3. The DS-field read/mark seam is address-family agnostic:
+DiffServ, L4S, and CAKE operate identically over IPv4 and IPv6. Several
+things are deliberately outside that boundary:
 
-- IPv6 and MPLS.
+- MPLS.
 - Inter-domain traffic-conditioning agreements.
 - Control-plane mechanisms: RSVP, NSIS, and admission control.
 

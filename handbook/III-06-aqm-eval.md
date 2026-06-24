@@ -244,7 +244,7 @@ What Stratum *does* do at the traffic-control boundary:
 
 | Action | Outcome |
 |---|---|
-| **Discovers quirks** in mainline AQMs while running the matrix (e.g. `FqPie` RNG-bistable lock, `FqCobalt` sojourn × DRR coupling, the `Fq*` outer-class attribute override pattern, `Ipv4QueueDiscItem::Mark` non-idempotency). | Documented as characterisation findings (see [Findings](#findings)) and worked around in Stratum code where it matters. **Mainline is left untouched.** |
+| **Discovers quirks** in mainline AQMs while running the matrix (e.g. `FqPie` RNG-bistable lock, the `Fq*` outer-class attribute override pattern, `Ipv4QueueDiscItem::Mark` non-idempotency). | Documented as characterisation findings (see [Findings](#findings)) and worked around in Stratum code where it matters. **Mainline is left untouched.** |
 | **Identifies additive feature wishes** for the upstream-MR dual-track (paper §10): `EnableAckFilter` attribute on mainline `FqCobaltQueueDisc`, virtual `NetDevice::GetL2OverheadBytes()`. | Recorded as v1.1 work. Both are *additions* Stratum's CAKE composition would benefit from, not bug fixes; deferred. |
 | **Reuses mainline AQMs structurally** (`StratumCake` instantiates four `FqCobaltQueueDisc` per tin; `stratum::RedQueueDisc` is the in-tree Stratum reimplementation of a 2001-thesis design, unrelated to mainline). | Public-API only. No private symbols, no header modifications. |
 
@@ -520,9 +520,9 @@ causes).
 
 What it adds beyond the cluster summaries:
 
-- **The FqPie RNG-bistable, FqCobalt sojourn × DRR, and StratumCake hash-FQ findings** appear as isolated red cells in Panel
-  A, separable from the broader patterns the ellipse panels
-  smooth into the AQM cluster mean.
+- **The FqPie RNG-bistable and StratumCake hash-FQ findings** appear
+  as isolated low-Jain cells in Panel A, separable from the broader
+  patterns the ellipse panels smooth into the AQM cluster mean.
 - **Heavy-congestion late-flow starvation** (Pie 0.50, CoDel
   0.68, PfifoFast 0.57) is visible as the red-clustered
   rightmost UDP column — RFC-7928-§8.2.4-expected behaviour the
@@ -533,23 +533,31 @@ What it adds beyond the cluster summaries:
   sustained unresponsive overload) sheds classic load
   probabilistically across flows, breaking the incumbency-driven
   late-flow disadvantage that a bare FIFO exhibits.
-- **StratumL4s appears as two adjacent rows** that delineate the
-  trade-off between DualPI2's two classic-AQM modes. Under
-  sustained UDP overload the two modes now nearly coincide
-  (steady 0.83 / 0.83, rt-bulk 0.87 / 0.87, medium 0.83 / 0.83,
-  heavy 0.91 / 0.90 for CoupledOnly / Wred) — coupled drop
-  dominates both. The modes separate on the TCP scenarios:
-  - `StratumL4sCoupledOnly` (canonical: coupled p_C is sole AQM,
-    classic queue is pass-through FIFO) holds Jain 0.98 on
-    `tcp-friendly` (the coupled drop is flow-blind, adding no
-    asymmetric signal) but 0.76 on `tcp-aggressive`.
-  - `StratumL4sWred` (classic queue runs WRED with early drop)
-    flips the trade-off: 0.84 on `tcp-friendly` (WRED's
-    per-packet probabilistic drop produces TCP cwnd asymmetry,
-    similar to AdaptiveRed 0.88) but 0.88 on `tcp-aggressive`.
-  Showing both rows demonstrates that DualPI2's observable
-  fairness depends on its classic-AQM mode, not just on traffic
-  mix or scenario.
+- **StratumL4s appears as two adjacent rows** for DualPI2's two
+  classic-AQM modes. Under sustained UDP overload the two modes
+  nearly coincide (steady 0.83 / 0.83, rt-bulk 0.87 / 0.87, medium
+  0.83 / 0.83, heavy 0.91 / 0.90 for CoupledOnly / Wred) — the
+  coupled drop dominates both. On the symmetric two-NewReno
+  `tcp-friendly` scenario the modes are not separable: both land
+  near 0.83–0.84 at the matrix seed (CoupledOnly 0.83, Wred 0.84)
+  and both move with the seed.
+  - `StratumL4sCoupledOnly` (coupled p_C is the sole AQM; the
+    classic queue is a pass-through FIFO) is RNG-bistable on
+    `tcp-friendly`: across RngRun 1–5 its Jain spans 0.80–1.00 with
+    an opposite-winner flip, meeting all three
+    [bistable-signature](#bistable-verification-protocol-fqpie-class)
+    criteria. The coupled drop is flow-blind and adds no asymmetric
+    signal, so the per-seed winner is set by TCP phase effects
+    rather than the AQM — the single-seed cell value (0.83) is one
+    draw, not a stable point.
+  - `StratumL4sWred` (the classic queue runs WRED with early drop)
+    lands at 0.84 on `tcp-friendly` — also seed-variable (0.84–1.00),
+    but with a consistent leader, since WRED's per-packet drop holds
+    one flow ahead.
+  The classic-AQM mode is most distinguishable on `tcp-aggressive`
+  (at the matrix seed, CoupledOnly 0.78 vs Wred 0.88): CoupledOnly's
+  flow-blind drop leaves the more aggressive HighSpeed flow ahead,
+  while WRED's per-packet early drop is more equalising.
 - **Goodput parity** in Panel B confirms link utilisation
   (~9.0–9.9 Mbps) across every cell except the deliberately
   unsaturated `mild-congestion` and `mixed` scenarios.
@@ -576,13 +584,13 @@ across vanilla and DiffServ-aware queue discs; and a
 re-implementation that supports Stratum composite class-discs the
 upstream `aqm-evaluation-suite`'s TypeId-factory dispatch cannot
 parameterise (see [What the suite is](#what-the-suite-is) — "Mainline AQMs vs Stratum substrate clients"
-for the configuration constraint). The four findings in [Findings](#findings)
+for the configuration constraint). The findings in [Findings](#findings)
 are surfaced by this extended methodology, not by the
 upstream-suite scenarios alone.
 
 ## Findings
 
-The harness surfaced four characterisation findings, all
+The harness surfaced three characterisation findings, all
 root-cause-verified against the pinned ns-3-dev revision. The
 operational summary is below. Spec-ID citations below (Q-15.x) refer to
 quality-tier assertions in [`specs/03-quality.md`](../specs/03-quality.md).
@@ -640,24 +648,6 @@ Linux's `sch_fq_pie`** — both implementations use per-flow
 Severity: **algorithmic property of PI-controlled FQ AQMs, not an
 implementation defect**. Status: no upstream MR; documented as a
 characterisation finding in paper §5.4.
-
-### `FqCobaltQueueDisc` tcp-unresponsive sojourn × DRR coupling
-
-Under `tcp-unresponsive` (1 NewReno + 1 UDP-CBR at 9 Mbps offered on
-10 Mbps), FqCobalt yields Jain 0.67 — TCP throttled to 1.40 Mbps,
-UDP at 7.76 Mbps. FqCoDel on the same scenario yields Jain 0.92.
-
-Mechanism: Cobalt's per-flow CoDel-style sojourn dropping contains
-the unresponsive flow's queue at ~195 ms — non-empty when its DRR
-quantum fires every round. The TCP flow's per-flow queue drains to
-empty between drops, so it loses DRR rounds. Verified by setting
-`Target=Interval=999s` (disables sojourn dropping): TCP recovers to
-4.55 Mbps, UDP throttled by parent overflow to 5.41 Mbps, Jain
-restored to 0.99.
-
-Severity: **algorithmic property** matching Linux `sch_fq_cobalt`
-+ COBALT IETF draft. Status: paper-reportable characterisation
-finding, not a bug.
 
 ### A3-StratumCake — `StratumCake` tcp-friendly low-flow-count hash-FQ artefact
 
@@ -752,7 +742,7 @@ Median goodput ratios at three anchor points:
 | Cobalt | 1.8 | 1.96 | 0.93 |
 | FqCoDel / FqPie / FqCobalt | 1.5 / 2.2 / 1.4 | 1.00 / 1.42 / 1.08 | 0.25 / 0.18 / 0.32 |
 | StratumRed | 7.3 | 0.93 | 0.02 |
-| StratumL4sCoupledOnly | 4.8 | 0.86 | 0.02 |
+| StratumL4sCoupledOnly | 5.0 | 0.84 | 0.02 |
 | StratumCake | 1.4 | 0.99 | 0.32 |
 | StratumL4sWred | 8.8 | 0.92 | 0.37 |
 

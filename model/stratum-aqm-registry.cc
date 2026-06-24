@@ -57,9 +57,9 @@ MakeStratumRed()
     // bulk DSCPs.
     Ptr<RedQueueDisc> q = CreateObject<RedQueueDisc>();
     q->Initialize();
-    q->SetMredMode(MredMode::WRED);
+    q->SetMredModeAllQueues(MredMode::WRED);
     q->SetQueueLimit(0, 25);
-    q->ConfigQueue(0, 0, 5.0, 15.0, 0.1);
+    q->ConfigQueue({.queue = 0, .prec = 0, .thMin = 5.0, .thMax = 15.0, .maxP = 0.1});
     q->AddPhbEntry(0, 0, 0);
     q->AddPhbEntry(46, 0, 0);
     return q;

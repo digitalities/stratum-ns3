@@ -24,6 +24,7 @@
 #include "ns3/stratum-core-queue-disc.h"
 #include "ns3/stratum-edge-queue-disc.h"
 #include "ns3/stratum-helper.h"
+#include "ns3/stratum-install-helper.h"
 #include "ns3/stratum-llq-scheduler.h"
 #include "ns3/stratum-meter.h"
 #include "ns3/stratum-pq-scheduler.h"
@@ -45,8 +46,6 @@ using namespace ns3;
 namespace diffserv = ns3::stratum::diffserv;
 using ns3::stratum::CoreQueueDisc;
 using ns3::stratum::EdgeQueueDisc;
-using ns3::stratum::kAnyHost;
-using ns3::stratum::kAnyProtocol;
 using ns3::stratum::LlqScheduler;
 using ns3::stratum::Meter;
 using ns3::stratum::MeterType;
@@ -638,11 +637,6 @@ main(int argc, char* argv[])
     Ipv4Address destAddr0 = dstIfs[0].GetAddress(1); // d0 — EF destination
     Ipv4Address destAddr1 = dstIfs[1].GetAddress(1); // d1 — BE destination
 
-    // ---- Remove default queue discs on bottleneck link ----
-    TrafficControlHelper tchUninstall;
-    tchUninstall.Uninstall(devE1Core.Get(0)); // e1 -> core direction
-    tchUninstall.Uninstall(devE1Core.Get(1)); // core -> e1 direction
-
     // ====================================================================
     // DiffServ Edge configuration (e1 -> core)
     //
@@ -750,21 +744,12 @@ main(int argc, char* argv[])
     sched->SetL2OverheadBytes(l2OverheadBytes);
     edgeInner->SetScheduler(sched);
 
-    // Debug: print destination addresses
     // Mark rules: classify by destination IP address.
-    // ns-2 uses node IDs for address matching; ns-3 uses raw IPv4 address bits.
-    // The Classify() method compares rule.dstAddr against
-    // hdr.GetDestination().Get(), so we must pass the raw uint32_t of the
-    // destination IP. EF: packets to d0 -> DSCP 46
-    helper.AddMarkRule(edgeDisc,
-                       46,
-                       kAnyHost,
-                       static_cast<int32_t>(destAddr0.Get()),
-                       kAnyProtocol,
-                       0);
+    // Pass an Ipv4Address directly; {} means wildcard (any address).
+    // EF: packets to d0 -> DSCP 46
+    edgeDisc->AddMarkRule({.dscp = 46, .dstAddr = destAddr0});
     // BE: packets to d1 -> DSCP 0
-    helper
-        .AddMarkRule(edgeDisc, 0, kAnyHost, static_cast<int32_t>(destAddr1.Get()), kAnyProtocol, 0);
+    edgeDisc->AddMarkRule({.dscp = 0, .dstAddr = destAddr1});
 
     // Policy entries.
     // CBS = 4687 B = Cisco IOS MQC default (Bc = CIR * 125 ms = 300 kbps / 8 *
@@ -772,7 +757,8 @@ main(int argc, char* argv[])
     // reference testbed used; the +5 % EF over-rate observed under
     // work-conserving schedulers is the textbook signature of this CBS.
     double cbsEfBytes = 4687.0;
-    helper.AddTokenBucketPolicy(edgeDisc, 46, cirEfBps, cbsEfBytes);
+    helper.AddTokenBucketPolicy(edgeDisc,
+                                {.codePt = 46, .cirBps = cirEfBps, .cbsBytes = cbsEfBytes});
     helper.AddDumbPolicy(edgeDisc, 48);
     helper.AddDumbPolicy(edgeDisc, 0);
 
@@ -780,8 +766,18 @@ main(int argc, char* argv[])
     // TokenBucket is a two-colour meter (GREEN/RED, no YELLOW).
     // GREEN -> initialCodePt (46), RED -> downgrade2 (48).
     // downgrade1 is unused but set to 48 for safety.
-    helper.AddPolicerEntry(edgeDisc, PolicerType::TOKEN_BUCKET, 46, 48, 48);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 0, 0, 0);
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::TOKEN_BUCKET,
+                            .initialCodePt = 46,
+                            .downgrade1 = 48,
+                            .downgrade2 = 48,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::TOKEN_BUCKET)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 0,
+                            .downgrade1 = 0,
+                            .downgrade2 = 0,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
 
     // L2 framing overhead on the meters used by the edge. Must come
     // AFTER AddPolicerEntry so the meters have been lazy-instantiated
@@ -805,8 +801,7 @@ main(int argc, char* argv[])
     // TrafficControlLayer. PointToPointHelper does NOT install a default
     // queue disc, so there's nothing to Uninstall.
     Ptr<NetDevice> e1Dev = devE1Core.Get(0);
-    Ptr<TrafficControlLayer> tc = e1Dev->GetNode()->GetObject<TrafficControlLayer>();
-    tc->SetRootQueueDiscOnDevice(e1Dev, edgeDisc);
+    stratum::InstallRoot(e1Dev, edgeDisc);
     edgeDisc->Initialize();
 
     // MRED mode + RED thresholds — AFTER Initialize (sub-queues now exist).
@@ -818,10 +813,13 @@ main(int argc, char* argv[])
     // force-drop sentinel both ns-2 and ns-3 honour under DROP_TAIL
     // (thMin < 0 → PKT_EDROPPED). Matches the thesis Tcl
     // `configQ 0 1 -1` and Cisco MQC `violate-action drop`.
-    edgeInner->SetMredMode(MredMode::DROP_TAIL);
-    helper.ConfigQueue(edgeInner, 0, 0, 30.0, 30.0, 1.0);
-    helper.ConfigQueue(edgeInner, 0, 1, -1.0, -1.0, 0.0);
-    helper.ConfigQueue(edgeInner, 1, 0, 50.0, 50.0, 1.0);
+    edgeInner->SetMredModeAllQueues(MredMode::DROP_TAIL);
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 0, .prec = 0, .thMin = 30.0, .thMax = 30.0, .maxP = 1.0});
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 0, .prec = 1, .thMin = -1.0, .thMax = -1.0, .maxP = 0.0});
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 1, .prec = 0, .thMin = 50.0, .thMax = 50.0, .maxP = 1.0});
 
     // Store global reference for metric recording
     g_edgeDisc = edgeDisc;
@@ -845,11 +843,11 @@ main(int argc, char* argv[])
 
     // Install on core->e1 device
     Ptr<NetDevice> coreDev = devE1Core.Get(1);
-    Ptr<TrafficControlLayer> tcCore = coreDev->GetNode()->GetObject<TrafficControlLayer>();
-    tcCore->SetRootQueueDiscOnDevice(coreDev, coreDisc);
+    stratum::InstallRoot(coreDev, coreDisc);
     coreDisc->Initialize();
-    coreInner->SetMredMode(MredMode::DROP_TAIL);
-    helper.ConfigQueue(coreInner, 0, 0, 50.0, 50.0, 1.0);
+    coreInner->SetMredModeAllQueues(MredMode::DROP_TAIL);
+    helper.ConfigQueue(coreInner,
+                       {.queue = 0, .prec = 0, .thMin = 50.0, .thMax = 50.0, .maxP = 1.0});
 
     // ====================================================================
     // Traffic: EF flow (1 CBR, 300 kbps)

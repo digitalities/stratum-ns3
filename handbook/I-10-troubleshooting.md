@@ -47,6 +47,10 @@ Set `QosSupported=false` on the `WifiMac`. When QoS is true at the WiFi MAC, EDC
 
 `diffserv-cake.cc` does not accept a `--tin-mode` flag: `SetAsCakeDiffserv4` is hardcoded as the default. Available CLI flags: `--outDir`, `--simTime`, `--totalRateBps`, `--flowRateBps`. For other tin modes (besteffort / precedence / diffserv3 / diffserv8), use the helper directly in a custom scenario.
 
+### IPv6 example runs but no packets arrive at the sink
+
+Confirm that `InternetStackHelper::Install` was called on all nodes **before** `Ipv6AddressHelper::Assign`. If you see a call to `internet.SetIpv6StackInstall(false)` anywhere in the example, remove it — that flag suppresses the IPv6 stack and leaves nodes unable to route IPv6 traffic. Also verify that `SetForwarding(true)` and `SetDefaultRouteInAllNodes` were called on the router interfaces so that forwarding and the default route are in place before the simulation starts.
+
 ## Found a gotcha not listed here?
 
 [File a bug](https://github.com/digitalities/stratum-ns3/issues/new?template=bug.yml). If it's reproducible across a clean clone, we'll add it here.

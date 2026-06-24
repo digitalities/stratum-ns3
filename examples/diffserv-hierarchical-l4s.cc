@@ -46,6 +46,7 @@
 #include "ns3/point-to-point-module.h"
 #include "ns3/stratum-constants.h"
 #include "ns3/stratum-edge-queue-disc.h"
+#include "ns3/stratum-install-helper.h"
 #include "ns3/stratum-l4s-coupled-scheduler.h"
 #include "ns3/stratum-l4s-queue-disc.h"
 #include "ns3/stratum-mark-rule.h"
@@ -351,12 +352,7 @@ main(int argc, char* argv[])
     // Install edge on the bottleneck egress.
     Ptr<EdgeQueueDisc> edge = BuildEdge();
     bottleneckDev.Get(0)->AggregateObject(edge);
-    Ptr<TrafficControlLayer> tcl =
-        bottleneckDev.Get(0)->GetNode()->GetObject<TrafficControlLayer>();
-    if (tcl)
-    {
-        tcl->SetRootQueueDiscOnDevice(bottleneckDev.Get(0), edge);
-    }
+    stratum::InstallRoot(bottleneckDev.Get(0), edge);
     edge->Initialize();
     g_edge = edge;
 
@@ -368,14 +364,19 @@ main(int argc, char* argv[])
     Ptr<l4s::QueueDisc> l4s = DynamicCast<l4s::QueueDisc>(edge->GetInnerDiscAt(0));
     if (l4s)
     {
-        l4s->ConfigQueue(0, 0, 100.0, 200.0, 0.1); // L-queue
-        l4s->ConfigQueue(1, 0, 30.0, 80.0, 0.1);   // classic sub-queue
+        l4s->ConfigQueue(
+            {.queue = 0, .prec = 0, .thMin = 100.0, .thMax = 200.0, .maxP = 0.1}); // L-queue
+        l4s->ConfigQueue({.queue = 1,
+                          .prec = 0,
+                          .thMin = 30.0,
+                          .thMax = 80.0,
+                          .maxP = 0.1}); // classic sub-queue
     }
     Ptr<stratum::RedQueueDisc> red = DynamicCast<stratum::RedQueueDisc>(edge->GetInnerDiscAt(1));
     if (red)
     {
         red->SetMredMode(MredMode::DROP_TAIL, 0);
-        red->ConfigQueue(0, 0, 1000.0, 2000.0, 0.1);
+        red->ConfigQueue({.queue = 0, .prec = 0, .thMin = 1000.0, .thMax = 2000.0, .maxP = 0.1});
     }
 
     Ipv4AddressHelper ip;

@@ -47,9 +47,6 @@
 using namespace ns3;
 namespace diffserv = ns3::stratum::diffserv;
 using ns3::stratum::EdgeQueueDisc;
-using ns3::stratum::kAnyHost;
-using ns3::stratum::kAnyProtocol;
-using ns3::stratum::MarkRule;
 using ns3::stratum::PolicerType;
 using ns3::stratum::ScfqScheduler;
 using ns3::stratum::SfqScheduler;
@@ -159,25 +156,24 @@ RunChangScenario(const std::string& scheduler)
     disc->SetInnerDisc(discInner);
     discInner->SetNumQueues(2);
 
-    MarkRule rule0;
-    rule0.dscp = 10;
-    rule0.srcAddr = static_cast<int32_t>(Ipv4Address("10.1.1.1").Get());
-    rule0.dstAddr = kAnyHost;
-    rule0.protocol = kAnyProtocol;
-    disc->AddMarkRule(rule0);
-
-    MarkRule rule1;
-    rule1.dscp = 20;
-    rule1.srcAddr = static_cast<int32_t>(Ipv4Address("10.1.2.1").Get());
-    rule1.dstAddr = kAnyHost;
-    rule1.protocol = kAnyProtocol;
-    disc->AddMarkRule(rule1);
+    disc->AddMarkRule({.dscp = 10, .srcAddr = Ipv4Address("10.1.1.1")});
+    disc->AddMarkRule({.dscp = 20, .srcAddr = Ipv4Address("10.1.2.1")});
 
     diffserv::Helper helper;
     helper.AddDumbPolicy(disc, 10);
     helper.AddDumbPolicy(disc, 20);
-    helper.AddPolicerEntry(disc, PolicerType::DUMB, 10, 10, 10);
-    helper.AddPolicerEntry(disc, PolicerType::DUMB, 20, 20, 20);
+    helper.AddPolicerEntry(disc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 10,
+                            .downgrade1 = 10,
+                            .downgrade2 = 10,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
+    helper.AddPolicerEntry(disc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 20,
+                            .downgrade1 = 20,
+                            .downgrade2 = 20,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
     helper.AddPhbEntry(discInner, 10, 0, 0);
     helper.AddPhbEntry(discInner, 20, 1, 0);
 
@@ -245,8 +241,10 @@ RunChangScenario(const std::string& scheduler)
 
     discInner->SetQueueLimit(0, kQueueLimitPackets);
     discInner->SetQueueLimit(1, kQueueLimitPackets);
-    discInner->ConfigQueue(0, 0, 50000.0, 100000.0, 0.1);
-    discInner->ConfigQueue(1, 0, 50000.0, 100000.0, 0.1);
+    discInner->ConfigQueue(
+        {.queue = 0, .prec = 0, .thMin = 50000.0, .thMax = 100000.0, .maxP = 0.1});
+    discInner->ConfigQueue(
+        {.queue = 1, .prec = 0, .thMin = 50000.0, .thMax = 100000.0, .maxP = 0.1});
 
     const uint16_t kPort0 = 5000;
     const uint16_t kPort1 = 5001;

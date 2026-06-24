@@ -21,6 +21,7 @@
 #include "stratum-sr-tcm-meter.h"
 
 #include "ns3/ipv4-address.h"
+#include "ns3/ipv6-address.h"
 #include "ns3/object.h"
 #include "ns3/ptr.h"
 
@@ -39,21 +40,60 @@ namespace ns3::stratum
  */
 struct FlowKey
 {
-    Ipv4Address srcIp; //!< Source IPv4 address
+    // --- existing five fields (kept first, in the same order) ---
+    // All positional-init sites ({Ipv4Address, port, Ipv4Address, port, proto})
+    // leave the appended members at their defaults and build V4 keys unchanged.
+    Ipv4Address srcIp; //!< Source IPv4 address (V4 path)
     uint16_t srcPort;  //!< Source transport port
-    Ipv4Address dstIp; //!< Destination IPv4 address
+    Ipv4Address dstIp; //!< Destination IPv4 address (V4 path)
     uint16_t dstPort;  //!< Destination transport port
     uint8_t proto;     //!< IP protocol number (6 = TCP, 17 = UDP)
 
+    // --- extended fields (appended; defaults preserve V4 behaviour) ---
+    //
+    // Reserved groundwork: the equality and hash machinery below is fully
+    // V6-capable, but no production path builds a V6 key today. The edge disc
+    // gates per-flow metering on an IPv4 item, so these fields are exercised
+    // only by unit tests. Enabling V6 per-flow metering means wiring the edge
+    // to build V6 keys and adding a V6 rule API in lockstep.
+
+    /** Address family tag. */
+    enum Family
+    {
+        V4, //!< IPv4 — uses srcIp / dstIp
+        V6  //!< IPv6 — uses srcIp6 / dstIp6
+    };
+
+    Family family{V4};  //!< Defaults to V4; positional-init sites unchanged
+    Ipv6Address srcIp6; //!< Source IPv6 address (V6 path; unused when family == V4)
+    Ipv6Address dstIp6; //!< Destination IPv6 address (V6 path; unused when family == V4)
+
     /**
-     * @brief Equality comparison across all five tuple fields.
+     * @brief Family-aware equality comparison.
+     *
+     * The V4 path (family == V4) is value-equivalent to the original
+     * five-field comparison, preserving byte-identical metering for all
+     * existing V4 flows.
+     *
      * @param o the other FlowKey
-     * @return true iff all five fields match
+     * @return true iff all discriminating fields match
      */
     bool operator==(const FlowKey& o) const
     {
-        return srcIp == o.srcIp && srcPort == o.srcPort && dstIp == o.dstIp &&
-               dstPort == o.dstPort && proto == o.proto;
+        if (family != o.family)
+        {
+            return false;
+        }
+        if (srcPort != o.srcPort || dstPort != o.dstPort || proto != o.proto)
+        {
+            return false;
+        }
+        if (family == V4)
+        {
+            return srcIp == o.srcIp && dstIp == o.dstIp;
+        }
+        // V6
+        return srcIp6 == o.srcIp6 && dstIp6 == o.dstIp6;
     }
 };
 
@@ -66,10 +106,32 @@ struct hash<ns3::stratum::FlowKey>
 {
     size_t operator()(const ns3::stratum::FlowKey& k) const noexcept
     {
-        // Cheap mix: XOR+shift. Collisions are acceptable (we compare on equality).
-        size_t h = std::hash<uint32_t>()(k.srcIp.Get());
+        if (k.family == ns3::stratum::FlowKey::V4)
+        {
+            // V4 branch: BYTE-IDENTICAL to the original formula — do NOT
+            // fold family / srcIp6 / dstIp6 into this path.  Any change
+            // here reshuffles unordered_map buckets and breaks the
+            // byte-replay regression oracle.
+            size_t h = std::hash<uint32_t>()(k.srcIp.Get());
+            h ^= std::hash<uint16_t>()(k.srcPort) << 1;
+            h ^= std::hash<uint32_t>()(k.dstIp.Get()) << 2;
+            h ^= std::hash<uint16_t>()(k.dstPort) << 3;
+            h ^= std::hash<uint8_t>()(k.proto) << 4;
+            return h;
+        }
+        // V6 branch: new behaviour — mix 16-byte src + 16-byte dst + ports + proto.
+        // Collisions are acceptable (equality check governs correctness).
+        uint8_t srcBuf[16];
+        uint8_t dstBuf[16];
+        k.srcIp6.GetBytes(srcBuf);
+        k.dstIp6.GetBytes(dstBuf);
+        size_t h = 0;
+        for (int i = 0; i < 16; ++i)
+        {
+            h ^= std::hash<uint8_t>()(srcBuf[i]) << (i & 0xF);
+            h ^= std::hash<uint8_t>()(dstBuf[i]) << ((i + 8) & 0xF);
+        }
         h ^= std::hash<uint16_t>()(k.srcPort) << 1;
-        h ^= std::hash<uint32_t>()(k.dstIp.Get()) << 2;
         h ^= std::hash<uint16_t>()(k.dstPort) << 3;
         h ^= std::hash<uint8_t>()(k.proto) << 4;
         return h;

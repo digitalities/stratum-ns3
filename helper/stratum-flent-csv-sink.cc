@@ -8,7 +8,9 @@
 #include "stratum-flent-csv-sink.h"
 
 #include "ns3/inet-socket-address.h"
+#include "ns3/inet6-socket-address.h"
 #include "ns3/ipv4-address.h"
+#include "ns3/ipv6-address.h"
 #include "ns3/log.h"
 #include "ns3/packet-sink.h"
 #include "ns3/packet.h"
@@ -464,12 +466,25 @@ FlentUdpProbeClient::StartApplication()
     {
         TypeId tid = TypeId::LookupByName("ns3::UdpSocketFactory");
         m_socket = Socket::CreateSocket(GetNode(), tid);
-        if (m_socket->Bind() == -1)
+        Address remote;
+        if (Ipv4Address::IsMatchingType(m_remoteAddress))
         {
-            NS_FATAL_ERROR("FlentUdpProbeClient: bind failed");
+            if (m_socket->Bind() == -1)
+            {
+                NS_FATAL_ERROR("FlentUdpProbeClient: bind failed");
+            }
+            m_socket->SetIpTos(m_tos);
+            remote = InetSocketAddress(Ipv4Address::ConvertFrom(m_remoteAddress), m_remotePort);
         }
-        m_socket->SetIpTos(m_tos);
-        Address remote = InetSocketAddress(Ipv4Address::ConvertFrom(m_remoteAddress), m_remotePort);
+        else
+        {
+            if (m_socket->Bind6() == -1)
+            {
+                NS_FATAL_ERROR("FlentUdpProbeClient: bind6 failed");
+            }
+            m_socket->SetIpv6Tclass(m_tos);
+            remote = Inet6SocketAddress(Ipv6Address::ConvertFrom(m_remoteAddress), m_remotePort);
+        }
         m_socket->Connect(remote);
         m_socket->SetRecvCallback(MakeCallback(&FlentUdpProbeClient::Receive, this));
     }
@@ -536,7 +551,13 @@ FlentUdpProbeServer::GetTypeId()
                                           "UDP port to bind on.",
                                           UintegerValue(0),
                                           MakeUintegerAccessor(&FlentUdpProbeServer::m_port),
-                                          MakeUintegerChecker<uint16_t>());
+                                          MakeUintegerChecker<uint16_t>())
+                            .AddAttribute("Local",
+                                          "Local address to bind; its family selects the bind "
+                                          "family (default: IPv4 any).",
+                                          AddressValue(Ipv4Address::GetAny()),
+                                          MakeAddressAccessor(&FlentUdpProbeServer::m_local),
+                                          MakeAddressChecker());
     return tid;
 }
 
@@ -558,7 +579,15 @@ FlentUdpProbeServer::StartApplication()
     {
         TypeId tid = TypeId::LookupByName("ns3::UdpSocketFactory");
         m_socket = Socket::CreateSocket(GetNode(), tid);
-        InetSocketAddress local(Ipv4Address::GetAny(), m_port);
+        Address local;
+        if (Ipv4Address::IsMatchingType(m_local))
+        {
+            local = InetSocketAddress(Ipv4Address::ConvertFrom(m_local), m_port);
+        }
+        else
+        {
+            local = Inet6SocketAddress(Ipv6Address::ConvertFrom(m_local), m_port);
+        }
         if (m_socket->Bind(local) == -1)
         {
             NS_FATAL_ERROR("FlentUdpProbeServer: bind failed");

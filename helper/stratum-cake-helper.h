@@ -108,7 +108,7 @@ class NoOpAutorateHook : public AutorateIngressHook
  *      default; matches Linux `tc-cake` work-conserving semantics.
  *   - `HybridLlqDispatcher` (strict-priority on the latency-
  *      sensitive tin, DRR over the rest) — opt-in via
- *      `enableLlq=true`; delivers sub-30 ms p99 RRUL latency
+ *      `opts.llq=true`; delivers sub-30 ms p99 RRUL latency
  *      matching CAKE paper Fig. 4 at the cost of starving lower-
  *      priority tins under SP saturation.
  *
@@ -119,6 +119,20 @@ class NoOpAutorateHook : public AutorateIngressHook
  * `TrafficControlHelper` path.
  *
  */
+
+/// Optional CAKE composition toggles. All default off; each SetAsCake* composer
+/// reads the fields meaningful to its profile (documented no-ops noted per composer).
+struct CakeOptions
+{
+    bool ackFilter = false;           //!< TCP ACK filter on each tin.
+    bool llq = false;                 //!< Hybrid LLQ-across-tins dispatcher.
+    bool tinShaping = false;          //!< Hard per-tin rate caps.
+    bool hostIsolation = false;       //!< tc-cake(8) triple-isolate.
+    bool innerTbfShaping = false;     //!< Inner TBF shaper on each tin.
+    bool ackFilterAggressive = false; //!< Aggressive ACK-filter variant.
+    bool dualPi2Inner = false;        //!< DualPi2 inner queue. Diffserv4 only; no-op elsewhere.
+};
+
 class Helper
 {
   public:
@@ -128,7 +142,7 @@ class Helper
      * - TokenBucket (default): per-tin TinTokenBucket POD shared across
      *   work-conserving and LLQ dispatchers.
      * - TbfInner: mainline TbfQueueDisc as per-tin inner via patch 0004.
-     *   Aliased by the legacy useInnerTbfShaping=true bool.
+     *   Selected by `CakeOptions::innerTbfShaping=true`.
      * - RateBased: virtual-clock shaper per Linux sch_cake.c
      *   (67dc6c56b871, cake_advance_shaper @ line 1533;
      *   provenance/linux-sch-cake-67dc6c56b871/sch_cake.c).
@@ -201,7 +215,7 @@ class Helper
      * Under host-isolation, each tin's `FqCobaltQueueDisc` IS visited by
      * `SetRttPreset` (the patched-mainline disc is a direct inner, no
      * nesting). Apply RTT tuning after or before calling `SetAsCake*` with
-     * `enableHostIsolation=true`; both orderings are safe.
+     * `opts.hostIsolation=true`; both orderings are safe.
      *
      * @see provenance/iproute2-q-cake-62d47c2dbc0eaecdd20c0e19406067488025e92e/q_cake.c presets[]
      * @see RFC 8289 Section 4.2 (CoDel defaults)
@@ -380,46 +394,45 @@ class Helper
      *
      * @param edge fresh `EdgeQueueDisc`; must be pre-Initialize
      * @param totalRate aggregate rate driving per-tin TBF caps
-     * @param enableAckFilter opt-in TCP ACK filter on each tin
+     * @param opts CAKE composition toggles; see CakeOptions.
+     *        `opts.ackFilter` — opt-in TCP ACK filter on each tin
      *        (default false; v1 contract is no-op until upstream MR
-     *         lands)
-     * @param enableLlq opt-in hybrid LLQ-across-tins dispatcher; when
-     *        true, the Voice tin (slot 3, EF/CS5/CS4/CS6/CS7/VA) is
-     *        served strict-priority and other tins remain DRR (default
-     *        false — pure DRR per Linux `tc-cake` work-conserving)
-     * @param enableTinShaping opt-in hard per-tin rate caps; when true,
-     *        each tin's serve rate is capped at `share × totalRate` — a
-     *        hard-ceiling contract distinct from Linux shaped mode,
-     *        which demotes a tin behind its schedule without capping it
-     *        (for the bandwidth-faithful stack, compose with
-     *        `SetBandwidth`). Composes orthogonally with
-     *        @p enableLlq — `enableLlq && enableTinShaping` produces
-     *        the Cisco MQC LLQ pattern (priority class with hard cap).
+     *         lands).
+     *        `opts.llq` — opt-in hybrid LLQ-across-tins dispatcher;
+     *        when true, the Voice tin (slot 3, EF/CS5/CS4/CS6/CS7/VA)
+     *        is served strict-priority and other tins remain DRR
+     *        (default false — pure DRR per Linux `tc-cake`
+     *        work-conserving).
+     *        `opts.tinShaping` — opt-in hard per-tin rate caps; when
+     *        true, each tin's serve rate is capped at
+     *        `share × totalRate` — a hard-ceiling contract distinct
+     *        from Linux shaped mode, which demotes a tin behind its
+     *        schedule without capping it (for the bandwidth-faithful
+     *        stack, compose with `SetBandwidth`). Composes
+     *        orthogonally with `opts.llq` — both true produces the
+     *        Cisco MQC LLQ pattern (priority class with hard cap).
      *        Default false → no per-tin rate cap (DRR-only behaviour).
-     * @param enableHostIsolation opt-in Linux `tc-cake(8)` triple-isolate
-     *        semantics: each per-tin inner is a patched-mainline
-     *        `FqCobaltQueueDisc` with `EnableHostIsolation=true` and
+     *        `opts.hostIsolation` — opt-in Linux `tc-cake(8)`
+     *        triple-isolate semantics: each per-tin inner is a
+     *        patched-mainline `FqCobaltQueueDisc` with
+     *        `EnableHostIsolation=true` and
      *        `HostIsolationMode=Triple` (attributes from
      *        `patches/ns3/0016-fq-cobalt-host-isolation.patch`).
      *        A single host with N concurrent flows receives the same
      *        total share as a host with one flow, mirroring
      *        `sch_cake.c` (67dc6c56b871, per-side-max keying).
-     *        Composes orthogonally with @p enableLlq and
-     *        @p enableTinShaping (the across-tin layer is unchanged).
+     *        Composes orthogonally with `opts.llq` and
+     *        `opts.tinShaping` (the across-tin layer is unchanged).
      *        ACK-filter knobs are forwarded to the mainline disc's
-     *        `EnableAckFilter` / `EnableAckFilterAggressive` attributes.
-     *        Default false → no host-pair isolation on top of the
-     *        per-tin FQ.
+     *        `EnableAckFilter` / `EnableAckFilterAggressive`
+     *        attributes. Default false → no host-pair isolation on
+     *        top of the per-tin FQ.
+     *        `opts.dualPi2Inner` — DualPi2 inner queue (Diffserv4
+     *        only; no-op for other profiles). Default false.
      */
     static void SetAsCakeDiffserv4(Ptr<EdgeQueueDisc> edge,
                                    DataRate totalRate,
-                                   bool enableAckFilter = false,
-                                   bool enableLlq = false,
-                                   bool enableTinShaping = false,
-                                   bool enableHostIsolation = false,
-                                   bool useInnerTbfShaping = false,
-                                   bool enableAckFilterAggressive = false,
-                                   bool useDualPi2Inner = false);
+                                   const CakeOptions& opts = {});
 
     /**
      * @brief Compose CAKE diffserv3 (3 tins: Bulk, Latency-Sensitive, BE)
@@ -433,42 +446,29 @@ class Helper
      *
      * @param edge fresh `EdgeQueueDisc`; must be pre-Initialize
      * @param totalRate aggregate rate driving per-tin TBF caps
-     * @param enableAckFilter opt-in TCP ACK filter on each tin
-     * @param enableLlq opt-in hybrid LLQ-across-tins dispatcher; when
-     *        true, the Latency-Sensitive tin (slot 1) is served
-     *        strict-priority and other tins remain DRR
-     * @param enableTinShaping opt-in hard per-tin rate caps; when true,
-     *        each tin's serve rate is capped at `share × totalRate` — a
-     *        hard-ceiling contract distinct from Linux shaped mode,
-     *        which demotes a tin behind its schedule without capping it
-     *        (for the bandwidth-faithful stack, compose with
-     *        `SetBandwidth`). Composes orthogonally with
-     *        @p enableLlq — `enableLlq && enableTinShaping` produces
-     *        the Cisco MQC LLQ pattern (priority class with hard cap).
-     *        Default false → no per-tin rate cap (DRR-only behaviour).
-     * @param enableHostIsolation opt-in Linux `tc-cake(8)` triple-isolate
-     *        semantics: each per-tin inner is a patched-mainline
-     *        `FqCobaltQueueDisc` with `EnableHostIsolation=true` and
-     *        `HostIsolationMode=Triple` (attributes from
-     *        `patches/ns3/0016-fq-cobalt-host-isolation.patch`).
-     *        A single host with N concurrent flows receives the same
-     *        total share as a host with one flow, mirroring
-     *        `sch_cake.c` (67dc6c56b871, per-side-max keying).
-     *        Composes orthogonally with @p enableLlq and
-     *        @p enableTinShaping (the across-tin layer is unchanged).
-     *        ACK-filter knobs are forwarded to the mainline disc's
-     *        `EnableAckFilter` / `EnableAckFilterAggressive` attributes.
-     *        Default false → no host-pair isolation on top of the
-     *        per-tin FQ.
+     * @param opts CAKE composition toggles; see CakeOptions.
+     *        `opts.ackFilter` — opt-in TCP ACK filter on each tin.
+     *        `opts.llq` — opt-in hybrid LLQ-across-tins dispatcher;
+     *        when true, the Latency-Sensitive tin (slot 1) is served
+     *        strict-priority and other tins remain DRR.
+     *        `opts.tinShaping` — opt-in hard per-tin rate caps; when
+     *        true, each tin's serve rate is capped at
+     *        `share × totalRate`. Composes orthogonally with
+     *        `opts.llq`. Default false → DRR-only behaviour.
+     *        `opts.hostIsolation` — opt-in Linux `tc-cake(8)`
+     *        triple-isolate semantics per tin; composes orthogonally
+     *        with `opts.llq` and `opts.tinShaping`.
+     *        `opts.innerTbfShaping` — replace the in-dispatcher
+     *        `TinTokenBucket` gate with a mainline `TbfQueueDisc` as a
+     *        per-tin inner shaper (patch 0004).
+     *        `opts.ackFilterAggressive` — enable the aggressive
+     *        ACK-filter variant on each tin (only meaningful when
+     *        `opts.ackFilter` is also true).
+     *        `opts.dualPi2Inner` — no-op for this profile.
      */
     static void SetAsCakeDiffserv3(Ptr<EdgeQueueDisc> edge,
                                    DataRate totalRate,
-                                   bool enableAckFilter = false,
-                                   bool enableLlq = false,
-                                   bool enableTinShaping = false,
-                                   bool enableHostIsolation = false,
-                                   bool useInnerTbfShaping = false,
-                                   bool enableAckFilterAggressive = false);
+                                   const CakeOptions& opts = {});
 
     /**
      * @brief Compose CAKE diffserv8 (8 tins, full DS class hierarchy)
@@ -486,42 +486,29 @@ class Helper
      *
      * @param edge fresh `EdgeQueueDisc`; must be pre-Initialize
      * @param totalRate aggregate rate driving per-tin TBF caps
-     * @param enableAckFilter opt-in TCP ACK filter on each tin
-     * @param enableLlq opt-in hybrid LLQ-across-tins dispatcher; when
-     *        true, Tin 6 (CS6/EF/VA) is served strict-priority and
-     *        other tins remain DRR
-     * @param enableTinShaping opt-in hard per-tin rate caps; when true,
-     *        each tin's serve rate is capped at `share × totalRate` — a
-     *        hard-ceiling contract distinct from Linux shaped mode,
-     *        which demotes a tin behind its schedule without capping it
-     *        (for the bandwidth-faithful stack, compose with
-     *        `SetBandwidth`). Composes orthogonally with
-     *        @p enableLlq — `enableLlq && enableTinShaping` produces
-     *        the Cisco MQC LLQ pattern (priority class with hard cap).
-     *        Default false → no per-tin rate cap (DRR-only behaviour).
-     * @param enableHostIsolation opt-in Linux `tc-cake(8)` triple-isolate
-     *        semantics: each per-tin inner is a patched-mainline
-     *        `FqCobaltQueueDisc` with `EnableHostIsolation=true` and
-     *        `HostIsolationMode=Triple` (attributes from
-     *        `patches/ns3/0016-fq-cobalt-host-isolation.patch`).
-     *        A single host with N concurrent flows receives the same
-     *        total share as a host with one flow, mirroring
-     *        `sch_cake.c` (67dc6c56b871, per-side-max keying).
-     *        Composes orthogonally with @p enableLlq and
-     *        @p enableTinShaping (the across-tin layer is unchanged).
-     *        ACK-filter knobs are forwarded to the mainline disc's
-     *        `EnableAckFilter` / `EnableAckFilterAggressive` attributes.
-     *        Default false → no host-pair isolation on top of the
-     *        per-tin FQ.
+     * @param opts CAKE composition toggles; see CakeOptions.
+     *        `opts.ackFilter` — opt-in TCP ACK filter on each tin.
+     *        `opts.llq` — opt-in hybrid LLQ-across-tins dispatcher;
+     *        when true, Tin 6 (CS6/EF/VA) is served strict-priority
+     *        and other tins remain DRR.
+     *        `opts.tinShaping` — opt-in hard per-tin rate caps; when
+     *        true, each tin's serve rate is capped at
+     *        `share × totalRate`. Composes orthogonally with
+     *        `opts.llq`. Default false → DRR-only behaviour.
+     *        `opts.hostIsolation` — opt-in Linux `tc-cake(8)`
+     *        triple-isolate semantics per tin; composes orthogonally
+     *        with `opts.llq` and `opts.tinShaping`.
+     *        `opts.innerTbfShaping` — replace the in-dispatcher
+     *        `TinTokenBucket` gate with a mainline `TbfQueueDisc` as a
+     *        per-tin inner shaper (patch 0004).
+     *        `opts.ackFilterAggressive` — enable the aggressive
+     *        ACK-filter variant on each tin (only meaningful when
+     *        `opts.ackFilter` is also true).
+     *        `opts.dualPi2Inner` — no-op for this profile.
      */
     static void SetAsCakeDiffserv8(Ptr<EdgeQueueDisc> edge,
                                    DataRate totalRate,
-                                   bool enableAckFilter = false,
-                                   bool enableLlq = false,
-                                   bool enableTinShaping = false,
-                                   bool enableHostIsolation = false,
-                                   bool useInnerTbfShaping = false,
-                                   bool enableAckFilterAggressive = false);
+                                   const CakeOptions& opts = {});
 
     /**
      * @brief Compose CAKE besteffort (single tin, no DiffServ
@@ -529,30 +516,31 @@ class Helper
      *
      * All DSCP code points map to tin 0; share is 1.0; the across-tin
      * dispatcher serves the lone tin. Matches Linux `tc-cake besteffort`
-     * which disables tin classification entirely. The flag arguments
-     * compose orthogonally: @p enableAckFilter, @p enableTinShaping,
-     * @p enableHostIsolation, and @p useInnerTbfShaping affect the per-
-     * tin inner queue disc; @p enableLlq is a no-op (only one tin).
+     * which disables tin classification entirely. The option fields
+     * compose orthogonally: `opts.ackFilter`, `opts.tinShaping`,
+     * `opts.hostIsolation`, `opts.innerTbfShaping`, and
+     * `opts.ackFilterAggressive` affect the per-tin inner queue disc;
+     * `opts.llq` is a no-op (only one tin).
      *
      * @param edge fresh `EdgeQueueDisc`; must be pre-Initialize
      * @param totalRate aggregate rate driving the per-tin TBF cap
-     * @param enableAckFilter opt-in TCP ACK filter on the lone tin
-     * @param enableLlq ignored (silently); kept in the signature for
-     *        orthogonality with the multi-tin presets
-     * @param enableTinShaping opt-in hard rate cap on the lone tin
-     * @param enableHostIsolation opt-in patched-mainline
-     *        `FqCobaltQueueDisc` with host-isolation on the lone tin
-     * @param useInnerTbfShaping opt-in mainline `TbfQueueDisc` as the
-     *        per-tin shaper (token-bucket-on-each-tin composition)
+     * @param opts CAKE composition toggles; see CakeOptions.
+     *        `opts.ackFilter` — opt-in TCP ACK filter on the lone tin.
+     *        `opts.llq` — ignored (single tin; no cross-tin priority).
+     *        `opts.tinShaping` — opt-in hard rate cap on the lone tin.
+     *        `opts.hostIsolation` — opt-in patched-mainline
+     *        `FqCobaltQueueDisc` with host-isolation on the lone tin.
+     *        `opts.innerTbfShaping` — replace the in-dispatcher
+     *        `TinTokenBucket` gate with a mainline `TbfQueueDisc` as the
+     *        per-tin inner shaper (patch 0004).
+     *        `opts.ackFilterAggressive` — enable the aggressive
+     *        ACK-filter variant (only meaningful when `opts.ackFilter`
+     *        is also true).
+     *        `opts.dualPi2Inner` — no-op for this profile.
      */
     static void SetAsCakeBestEffort(Ptr<EdgeQueueDisc> edge,
                                     DataRate totalRate,
-                                    bool enableAckFilter = false,
-                                    bool enableLlq = false,
-                                    bool enableTinShaping = false,
-                                    bool enableHostIsolation = false,
-                                    bool useInnerTbfShaping = false,
-                                    bool enableAckFilterAggressive = false);
+                                    const CakeOptions& opts = {});
 
     /**
      * @brief Compose CAKE precedence (8 tins keyed on the top three bits
@@ -563,42 +551,43 @@ class Helper
      * Linux `tc-cake precedence` which disables fine-grained AFxx
      * classification and falls back to the legacy IP-precedence model.
      *
-     * Tin shares scale linearly with precedence (tin 0 = 0.125, tin 7
-     * = 1.0), mirroring the relative ordering of Linux's
-     * `cake_class_quanta_precedence` table. The exact share scaling is
-     * a v1 calibration choice — verify against the current Linux
-     * `iproute2` master before relying on absolute share ratios.
+     * Tin shares follow Linux's `cake_config_precedence` quantum ladder
+     * (a base quantum decayed geometrically, `quantum *= 7; quantum >>= 3`),
+     * so tin 0 (best effort) carries the largest bandwidth-sharing weight
+     * (share 1.0) and tin 7 the smallest (≈0.393); higher tins rely on
+     * selection priority instead.
      *
      * The LLQ slot defaults to tin 7 (CS7, network control / signalling)
-     * when @p enableLlq is true — the same convention CAKE uses to
+     * when `opts.llq` is true — the same convention CAKE uses to
      * elevate network-control traffic above bulk under hybrid SP+DRR.
      *
      * @param edge fresh `EdgeQueueDisc`; must be pre-Initialize
      * @param totalRate aggregate rate driving per-tin TBF caps
-     * @param enableAckFilter opt-in TCP ACK filter on each tin
-     * @param enableLlq opt-in hybrid LLQ-across-tins; tin 7 (CS7) is
-     *        served strict-priority when true
-     * @param enableTinShaping opt-in hard per-tin rate caps
-     * @param enableHostIsolation opt-in patched-mainline
-     *        `FqCobaltQueueDisc` with host-isolation on each tin
-     * @param useInnerTbfShaping opt-in mainline `TbfQueueDisc` as the
-     *        per-tin shaper (token-bucket-on-each-tin composition)
+     * @param opts CAKE composition toggles; see CakeOptions.
+     *        `opts.ackFilter` — opt-in TCP ACK filter on each tin.
+     *        `opts.llq` — opt-in hybrid LLQ-across-tins; tin 7 (CS7)
+     *        is served strict-priority when true.
+     *        `opts.tinShaping` — opt-in hard per-tin rate caps.
+     *        `opts.hostIsolation` — opt-in patched-mainline
+     *        `FqCobaltQueueDisc` with host-isolation on each tin.
+     *        `opts.innerTbfShaping` — replace the in-dispatcher
+     *        `TinTokenBucket` gate with a mainline `TbfQueueDisc` as a
+     *        per-tin inner shaper (patch 0004).
+     *        `opts.ackFilterAggressive` — enable the aggressive
+     *        ACK-filter variant on each tin (only meaningful when
+     *        `opts.ackFilter` is also true).
+     *        `opts.dualPi2Inner` — no-op for this profile.
      */
     static void SetAsCakePrecedence(Ptr<EdgeQueueDisc> edge,
                                     DataRate totalRate,
-                                    bool enableAckFilter = false,
-                                    bool enableLlq = false,
-                                    bool enableTinShaping = false,
-                                    bool enableHostIsolation = false,
-                                    bool useInnerTbfShaping = false,
-                                    bool enableAckFilterAggressive = false);
+                                    const CakeOptions& opts = {});
 
     /**
      * @brief Compose path-α (in-dispatcher TokenBucket) on @p edge with
      *        per-tin shaping enabled.
      *
      * Default α composition (e.g. via `SetAsCakeDiffserv4` with
-     * `enableTinShaping=false` — the wiring used by `BuildDispatcher` in
+     * `opts.tinShaping=false` — the wiring used by `BuildDispatcher` in
      * `ShaperMode::TokenBucket`) does NOT cap aggregate or per-tin rates;
      * this preset turns on per-tin caps so α matches the cap-enforcing
      * behaviour of β (rate-based shaper) and γ (inner-TBF) compositions.
@@ -608,24 +597,23 @@ class Helper
      * inner-TBF) and hard per-tin caps inside each tin via the in-
      * dispatcher `TinTokenBucket` gate.
      *
-     * Equivalent to `SetAsCakeDiffserv4(edge, totalRate, ...,
-     *                                   enableTinShaping=true,
-     *                                   ...,
-     *                                   useInnerTbfShaping=false)`.
+     * Equivalent to
+     * `SetAsCakeDiffserv4(edge, totalRate, {.tinShaping = true, .innerTbfShaping = false})`.
      *
      * @param edge fresh `EdgeQueueDisc`; must be pre-Initialize
      * @param totalRate aggregate rate driving per-tin token-bucket caps
-     * @param enableAckFilter opt-in TCP ACK filter on each tin
-     * @param enableLlq opt-in hybrid LLQ-across-tins dispatcher
-     * @param enableHostIsolation opt-in patched-mainline
-     *        `FqCobaltQueueDisc` with host-isolation per tin
+     * @param opts CAKE composition toggles; see CakeOptions.
+     *        `opts.ackFilter` — opt-in TCP ACK filter on each tin.
+     *        `opts.llq` — opt-in hybrid LLQ-across-tins dispatcher.
+     *        `opts.hostIsolation` — opt-in patched-mainline
+     *        `FqCobaltQueueDisc` with host-isolation per tin.
+     *        `opts.tinShaping` — always enabled by this preset;
+     *        the value in `opts` is ignored.
+     *        `opts.dualPi2Inner` — no-op for this profile.
      */
     static void SetAsCakeAlphaTinShaped(Ptr<EdgeQueueDisc> edge,
                                         DataRate totalRate,
-                                        bool enableAckFilter = false,
-                                        bool enableLlq = false,
-                                        bool enableHostIsolation = false,
-                                        bool enableAckFilterAggressive = false);
+                                        const CakeOptions& opts = {});
 
     /**
      * @brief Apply the Linux `tc-cake(8)` `conservative` preset to @p edge.
@@ -644,7 +632,7 @@ class Helper
      * `ConfigureLinkLayerOverhead`.
      *
      * @param edge edge previously composed by `SetAsCake*` with
-     *        `useInnerTbfShaping=true`.
+     *        `opts.innerTbfShaping=true`.
      */
     static void SetAsCakeConservative(Ptr<EdgeQueueDisc> edge);
 

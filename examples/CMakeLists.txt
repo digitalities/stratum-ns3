@@ -299,8 +299,54 @@ if(FD_NET_DEVICE_MODULE_H)
 endif()
 
 build_lib_example(
+  NAME diffserv-ipv6-recipe
+  SOURCE_FILES diffserv-ipv6-recipe.cc
+  LIBRARIES_TO_LINK
+    ${libpoint-to-point}
+    ${libinternet}
+    ${libapplications}
+    ${libtraffic-control}
+    ${libstratum}
+)
+
+build_lib_example(
+  NAME l4s-ipv6-recipe
+  SOURCE_FILES l4s-ipv6-recipe.cc
+  LIBRARIES_TO_LINK
+    ${libpoint-to-point}
+    ${libinternet}
+    ${libapplications}
+    ${libtraffic-control}
+    ${libstratum}
+)
+
+build_lib_example(
+  NAME cake-ipv6-recipe
+  SOURCE_FILES cake-ipv6-recipe.cc
+  LIBRARIES_TO_LINK
+    ${libpoint-to-point}
+    ${libinternet}
+    ${libapplications}
+    ${libtraffic-control}
+    ${libstratum}
+)
+
+build_lib_example(
   NAME cake-l4s-composition
   SOURCE_FILES cake-l4s-composition.cc
+  LIBRARIES_TO_LINK
+    ${libcore}
+    ${libnetwork}
+    ${libinternet}
+    ${libtraffic-control}
+    ${libpoint-to-point}
+    ${libapplications}
+    ${libstratum}
+)
+
+build_lib_example(
+  NAME cake-l4s-composition-ipv6
+  SOURCE_FILES cake-l4s-composition-ipv6.cc
   LIBRARIES_TO_LINK
     ${libcore}
     ${libnetwork}

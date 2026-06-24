@@ -47,31 +47,31 @@ setter; they are not attribute-driven.
 | `$qE1C set numQueues_ 2` | `disc->SetNumQueues(2)` | |
 | `$qE1C setNumPrec 0 2` | `disc->SetNumPrec(0, 2)` | |
 | `$qE1C setQSize 0 30` | `disc->SetQueueLimit(0, 30)` | |
-| `$qE1C setMREDMode DROP` | `disc->SetMredMode(MredMode::DROP_TAIL)` | Enum instead of string |
-| `$qE1C addMarkRule 46 -1 [$dest(0) id] any any` | `helper.AddMarkRule(disc, 46, kAnyHost, dstAddr, kAnyProtocol, 0)` | Addresses are `int32_t` (raw IPv4 bits), not node IDs |
-| `$qE1C addPolicyEntry 46 TokenBucket $cir $cbs` | `helper.AddTokenBucketPolicy(disc, 46, cirBps, cbsBytes)` | Rates in bits/s; one method per meter type |
-| `$qE1C addPolicyEntry 46 srTCM $cir $cbs $ebs` | `helper.AddSrTcmPolicy(disc, 46, cirBps, cbsBytes, ebsBytes)` | |
-| `$qE1C addPolicyEntry 46 trTCM $cir $cbs $pir $pbs` | `helper.AddTrTcmPolicy(disc, 46, cirBps, cbsBytes, pirBps, pbsBytes)` | |
-| `$qE1C addPolicyEntry 46 TSW2CM $cir` | `helper.AddTsw2cmPolicy(disc, 46, cirBps)` | |
-| `$qE1C addPolicyEntry 46 TSW3CM $cir $pir` | `helper.AddTsw3cmPolicy(disc, 46, cirBps, pirBps)` | |
+| `$qE1C setMREDMode DROP` | `disc->SetMredModeAllQueues(MredMode::DROP_TAIL)` | Enum instead of string |
+| `$qE1C addMarkRule 46 -1 [$dest(0) id] any any` | `disc->AddMarkRule({.dscp = 46, .dstAddr = dstAddr})` | Only non-default fields appear; `AddrMatch` converts implicitly from `Ipv4Address`/`Ipv6Address` |
+| `$qE1C addPolicyEntry 46 TokenBucket $cir $cbs` | `helper.AddTokenBucketPolicy(disc, {.codePt = 46, .cirBps = cirBps, .cbsBytes = cbsBytes})` | Rates in bits/s; one method per meter type |
+| `$qE1C addPolicyEntry 46 srTCM $cir $cbs $ebs` | `helper.AddSrTcmPolicy(disc, {.codePt = 46, .cirBps = cirBps, .cbsBytes = cbsBytes, .ebsBytes = ebsBytes})` | |
+| `$qE1C addPolicyEntry 46 trTCM $cir $cbs $pir $pbs` | `helper.AddTrTcmPolicy(disc, {.codePt = 46, .cirBps = cirBps, .cbsBytes = cbsBytes, .pirBps = pirBps, .pbsBytes = pbsBytes})` | |
+| `$qE1C addPolicyEntry 46 TSW2CM $cir` | `helper.AddTsw2cmPolicy(disc, {.codePt = 46, .cirBps = cirBps})` | |
+| `$qE1C addPolicyEntry 46 TSW3CM $cir $pir` | `helper.AddTsw3cmPolicy(disc, {.codePt = 46, .cirBps = cirBps, .pirBps = pirBps})` | |
 | `$qE1C addPolicyEntry 0 Dumb` | `helper.AddDumbPolicy(disc, 0)` | |
-| `$qE1C addPolicerEntry TokenBucket 46 48` | `helper.AddPolicerEntry(disc, PolicerType::TOKEN_BUCKET, 46, 48, 48)` | Explicit 3-colour args (initial, downgrade1, downgrade2) |
-| `$qE1C addPolicerEntry Dumb 0 0` | `helper.AddPolicerEntry(disc, PolicerType::DUMB, 0, 0, 0)` | |
+| `$qE1C addPolicerEntry TokenBucket 46 48` | `helper.AddPolicerEntry(disc, {.policer = PolicerType::TOKEN_BUCKET, .initialCodePt = 46, .downgrade1 = 48, .downgrade2 = 48, .policyIndex = static_cast<uint32_t>(PolicerType::TOKEN_BUCKET)})` | Designated-init aggregate; field order: policer, initialCodePt, downgrade1, downgrade2, policyIndex |
+| `$qE1C addPolicerEntry Dumb 0 0` | `helper.AddPolicerEntry(disc, {.policer = PolicerType::DUMB, .initialCodePt = 0, .downgrade1 = 0, .downgrade2 = 0, .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)})` | |
 | `$qE1C addPHBEntry 46 0 0` | `helper.AddPhbEntry(disc, 46, 0, 0)` | Works on edge or core disc |
-| `$qE1C configQ 0 0 30` | `helper.ConfigQueue(disc, 0, 0, 30.0, 30.0, 1.0)` | Explicit (thMin, thMax, maxP); tail-drop = thMin==thMax, maxP=1.0 |
-| `$qE1C configQ 0 1 -1` | `helper.ConfigQueue(disc, 0, 1, 0.0, 0.0, 0.0)` | -1 becomes (0, 0, 0) = always drop out-of-profile |
+| `$qE1C configQ 0 0 30` | `helper.ConfigQueue(disc, {.queue = 0, .prec = 0, .thMin = 30.0, .thMax = 30.0, .maxP = 1.0})` | Designated-init struct; tail-drop = thMin==thMax, maxP=1.0 |
+| `$qE1C configQ 0 1 -1` | `helper.ConfigQueue(disc, {.queue = 0, .prec = 1, .thMin = 0.0, .thMax = 0.0, .maxP = 0.0})` | -1 becomes (0, 0, 0) = always drop out-of-profile |
 | `$qE1C setSchedularMode PRI` | `disc->SetScheduler(CreateObjectWithAttributes<PriorityScheduler>("NumQueues", UintegerValue(n)))` | Scheduler is a separate object (see below); WinLen defaults to 1.0 |
 | `$qE1C setSchedularMode WFQ` | `disc->SetScheduler(CreateObjectWithAttributes<WfqScheduler>("NumQueues", UintegerValue(n), "LinkBandwidth", DoubleValue(bw)))` | |
 | `$qE1C addQueueWeight 0 3` | `scheduler->SetParam(0, 3.0)` | Call on the scheduler before installing |
 | `$qE1C printStats` | `disc->PrintStats()` | |
 | `$qE1C printPolicyTable` | `disc->PrintPolicyTable()` (edge only) | |
-| `$qE1C setMREDMode RIO-C 1` | `disc->SetMredMode(MredMode::RIO_C, 1)` | Per-queue mode; omit queue index to set all |
+| `$qE1C setMREDMode RIO-C 1` | `disc->SetMredMode(MredMode::RIO_C, 1)` | Per-queue mode; use `SetMredModeAllQueues` to set all queues at once |
 | `$qE1C meanPktSize 1300` | `disc->SetMeanPacketSize(1300)` | Applies to all sub-queues |
 | `$qE1C setQueueBW 1 1000000` | `disc->SetQueueBandwidth(1, 1000000.0)` | Per-queue link bandwidth for RED ptc |
 | `$qE1C getVirtQueueLen 1 0` | `disc->GetVirtualQueueLen(1, 0)` | (queue, prec) → virtual queue packet count |
 | `$qE1C getDepartureRate 0` | `disc->GetScheduler()->GetDepartureRate(0, -1)` | Returns bits/s |
 | `$qE1C getQueueLen 0` | `disc->GetQueueDiscClass(0)->GetQueueDisc()->GetNPackets()` | Via ns-3 QueueDisc API |
-| `$qE1C addMarkRule 10 -1 -1 any telnet` | `helper.AddMarkRuleWithPorts(disc, 10, kAnyHost, kAnyHost, kAnyProtocol, kAnyAppType, kAnyPort, 23)` | App-type → port-based classification |
+| `$qE1C addMarkRule 10 -1 -1 any telnet` | `disc->AddMarkRule({.dscp = 10, .dstPort = 23})` | ns-2 app-type → port-based matching; Telnet = TCP port 23 |
 
 ## 2. Key differences
 
@@ -141,22 +141,21 @@ send-time metadata. ns-3 uses packet tags:
 
 | ns-2 | ns-3 |
 |---|---|
-| `hdr_flags::fid_` / `class_` | `AppTypeTag` (for app-type classification) |
+| `hdr_flags::fid_` / `class_` | port-based matching (`.dstPort = 23`) in `MarkRule` |
 | (no equivalent) | `SendTimeTag` (for OWD measurement) |
 | `hdr_ip::flowid()` | `DscpTag` (carries DSCP through the disc pipeline) |
 
-### Addresses are IPv4, not node IDs
+### Addresses are `Ipv4Address`/`Ipv6Address`, not node IDs
 
 ns-2 mark rules used integer node IDs for address matching (`[$dest(0) id]`).
-ns-3 uses raw IPv4 address bits (`destAddr.Get()` returns `uint32_t`):
+ns-3 uses typed address objects. Pass an `Ipv4Address` or `Ipv6Address` for
+an exact-host match; use a default-constructed `AddrMatch` (`{}`) for wildcard:
 
 ```cpp
 // ns-2: $qE1C addMarkRule 46 -1 [$dest(0) id] any any
-// ns-3:
+// ns-3: only the non-default fields appear:
 Ipv4Address destAddr = dstIfs[0].GetAddress(1);
-helper.AddMarkRule(edgeDisc, 46, kAnyHost,
-                   static_cast<int32_t>(destAddr.Get()),
-                   kAnyProtocol, 0);
+edgeDisc->AddMarkRule({.dscp = 46, .dstAddr = destAddr});
 ```
 
 ### Packet size includes headers (ADR-0019)
@@ -266,7 +265,7 @@ edgeDisc->SetNumPrec(0, 2);       // EF: 2 precedence levels
 edgeDisc->SetNumPrec(1, 1);       // BE: 1 precedence level
 edgeDisc->SetQueueLimit(0, 30);   // EF queue: 30 packets
 edgeDisc->SetQueueLimit(1, 50);   // BE queue: 50 packets
-edgeDisc->SetMredMode(MredMode::DROP_TAIL);
+edgeDisc->SetMredModeAllQueues(MredMode::DROP_TAIL);
 
 // Scheduler
 Ptr<PriorityScheduler> pq = CreateObjectWithAttributes<PriorityScheduler>(
@@ -274,22 +273,20 @@ Ptr<PriorityScheduler> pq = CreateObjectWithAttributes<PriorityScheduler>(
     "WinLen",    DoubleValue(1.0));
 edgeDisc->SetScheduler(pq);
 
-// Mark rules (note: IPv4 address bits, not node IDs)
+// Mark rules: only non-default fields appear; Ipv4Address converts to AddrMatch
 Ipv4Address destAddr0 = dstIfs[0].GetAddress(1);
 Ipv4Address destAddr1 = dstIfs[1].GetAddress(1);
-helper.AddMarkRule(edgeDisc, 46, kAnyHost,
-                   static_cast<int32_t>(destAddr0.Get()), kAnyProtocol, 0);
-helper.AddMarkRule(edgeDisc, 0, kAnyHost,
-                   static_cast<int32_t>(destAddr1.Get()), kAnyProtocol, 0);
+edgeDisc->AddMarkRule({.dscp = 46, .dstAddr = destAddr0});
+edgeDisc->AddMarkRule({.dscp = 0, .dstAddr = destAddr1});
 
 // Policy entries (rates in bits/s)
-helper.AddTokenBucketPolicy(edgeDisc, 46, 300000.0, 513.0);
+helper.AddTokenBucketPolicy(edgeDisc, {.codePt = 46, .cirBps = 300000.0, .cbsBytes = 513.0});
 helper.AddDumbPolicy(edgeDisc, 48);
 helper.AddDumbPolicy(edgeDisc, 0);
 
 // Policer entries
-helper.AddPolicerEntry(edgeDisc, PolicerType::TOKEN_BUCKET, 46, 48, 48);
-helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 0, 0, 0);
+helper.AddPolicerEntry(edgeDisc, {.policer = PolicerType::TOKEN_BUCKET, .initialCodePt = 46, .downgrade1 = 48, .downgrade2 = 48, .policyIndex = static_cast<uint32_t>(PolicerType::TOKEN_BUCKET)});
+helper.AddPolicerEntry(edgeDisc, {.policer = PolicerType::DUMB, .initialCodePt = 0, .downgrade1 = 0, .downgrade2 = 0, .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
 
 // PHB table
 helper.AddPhbEntry(edgeDisc, 46, 0, 0);   // EF in-profile  -> queue 0, prec 0
@@ -302,9 +299,9 @@ tc->SetRootQueueDiscOnDevice(device, edgeDisc);
 edgeDisc->Initialize();
 
 // Step 4: RED thresholds (after Initialize -- sub-queues now exist)
-helper.ConfigQueue(edgeDisc, 0, 0, 30.0, 30.0, 1.0);  // EF: tail-drop at 30
-helper.ConfigQueue(edgeDisc, 0, 1, 0.0, 0.0, 0.0);    // EF out: always drop
-helper.ConfigQueue(edgeDisc, 1, 0, 50.0, 50.0, 1.0);   // BE: tail-drop at 50
+helper.ConfigQueue(edgeDisc, {.queue = 0, .prec = 0, .thMin = 30.0, .thMax = 30.0, .maxP = 1.0});  // EF: tail-drop at 30
+helper.ConfigQueue(edgeDisc, {.queue = 0, .prec = 1, .thMin = 0.0, .thMax = 0.0, .maxP = 0.0});    // EF out: always drop
+helper.ConfigQueue(edgeDisc, {.queue = 1, .prec = 0, .thMin = 50.0, .thMax = 50.0, .maxP = 1.0});  // BE: tail-drop at 50
 ```
 
 ## 4. What is NOT ported (and why)
@@ -339,6 +336,14 @@ classes. There is no runtime string parsing.
 The ns-2 inline gnuplot generation scripts are not ported. The ns-3 example writes
 trace files in the same two-column format (`time value`), which can be plotted with
 any tool (gnuplot, matplotlib, etc.).
+
+### IPv6 support
+
+The 2001 ns-2 module was IPv4-only: mark rules matched against integer node IDs and the
+DS field was read from `hdr_ip`. The ns-3 substrate supports both IPv4 and IPv6. The
+DS field is read from the Traffic Class byte of the IPv6 header by the same classifier
+path used for IPv4, so the same mark-rule, meter, and scheduler configuration works
+over either address family without modification.
 
 ## 5. Further reading
 

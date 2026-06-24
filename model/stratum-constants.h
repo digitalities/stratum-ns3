@@ -111,24 +111,8 @@ static constexpr int kMaxMarkRules = 20;
 /** Maximum policy table entries. */
 static constexpr int kMaxPolicies = 20;
 
-/** Sentinel: match any source/destination address. */
-static constexpr int32_t kAnyHost = -1;
-
 /** Sentinel: match any IP protocol (0 = wildcard). */
 static constexpr uint8_t kAnyProtocol = 0;
-
-// ---- Application-type identifiers for AppTypeTag ----
-// These are opaque uint32_t values used with AppTypeTag
-// and MarkRule::appType for application-based classification.
-// Port-based classification (AddMarkRuleWithPorts) is preferred
-// in ns-3 scenarios; these constants exist for scenarios that
-// require application-layer tagging.
-
-/** Application type: Telnet (interactive TCP). */
-static constexpr uint32_t kAppTypeTelnet = 1;
-
-/** Application type: FTP (bulk TCP transfer). */
-static constexpr uint32_t kAppTypeFtp = 2;
 
 } // namespace ns3::stratum
 

@@ -9,6 +9,7 @@
 
 #include "stratum-l4s-queue-disc.h"
 
+#include "stratum-ds-field.h"
 #include "stratum-l4s-timestamp-tag.h"
 #include "stratum-red-sub-queue.h"
 #include "stratum-rr-scheduler.h"
@@ -300,10 +301,10 @@ QueueDisc::PrintStats() const
 }
 
 void
-QueueDisc::ConfigQueue(uint32_t q, uint32_t prec, double thMin, double thMax, double maxP)
+QueueDisc::ConfigQueue(const RedQueueConfig& cfg)
 {
     m_classicUserConfigured = true;
-    GetClassicAsRed()->ConfigQueue(q, prec, thMin, thMax, maxP);
+    GetClassicAsRed()->ConfigQueue(cfg);
 }
 
 void
@@ -513,12 +514,11 @@ QueueDisc::AssignStreams(int64_t stream)
 bool
 QueueDisc::IsL4sPacket(Ptr<const QueueDiscItem> item) const
 {
-    Ptr<const Ipv4QueueDiscItem> ipItem = DynamicCast<const Ipv4QueueDiscItem>(item);
-    if (!ipItem)
+    uint8_t ecn;
+    if (!stratum::GetEcn(item, ecn))
     {
         return false;
     }
-    Ipv4Header::EcnType ecn = ipItem->GetHeader().GetEcn();
     return ecn == Ipv4Header::ECN_ECT1 || ecn == Ipv4Header::ECN_CE;
 }
 
@@ -679,9 +679,14 @@ QueueDisc::ApplyL4sCoupledMark(Ptr<QueueDiscItem> item)
         return false;
     }
 
-    // RFC 9331 §5 CE idempotence guard.
-    Ptr<const Ipv4QueueDiscItem> ipItem = DynamicCast<const Ipv4QueueDiscItem>(item);
-    if (ipItem && ipItem->GetHeader().GetEcn() == Ipv4Header::ECN_CE)
+    // RFC 9331 §5 CE idempotence guard. Read ECN through the family-agnostic
+    // accessor so an already-CE packet is detected for both IPv4 and IPv6. An
+    // already-CE packet is left unchanged and does not fire m_l4sMarkTrace:
+    // that trace counts CE marks newly applied by this AQM, not every CE packet
+    // forwarded (one already marked upstream was signalled once; here it is a
+    // no-op).
+    uint8_t ecn;
+    if (stratum::GetEcn(item, ecn) && ecn == Ipv4Header::ECN_CE)
     {
         return true;
     }
@@ -697,8 +702,17 @@ QueueDisc::ApplyL4sCoupledMark(Ptr<QueueDiscItem> item)
 bool
 QueueDisc::MaybeCoupledDrop(Ptr<QueueDiscItem> item)
 {
-    // RFC 9332 App. A.1 MustDrop floor (GPRT m_thLen = 2 * m_mtu): take no
-    // coupled action while the total queue sits below two MTUs.
+    // The 2*MTU floor mirrors GPRT's m_thLen = 2 * m_mtu and follows the
+    // unknown-link-rate technique in RFC 9332 App. A.2 (shifting the bottom of
+    // the L4S marking ramp to two MTUs), generalized here to suppress the
+    // coupled signal while the total queue sits below two MTUs.
+    //
+    // Timing: RFC 9332 App. A.2 (Fig. 4) applies the classic p_C drop/mark at
+    // dequeue. This composer applies it here at enqueue, before delegating to
+    // the inner classic AQM, so that AQM's byte/packet accounting stays
+    // consistent — it never sees a packet the composer will drop. The
+    // resulting floor-reference difference is bounded to at most one packet
+    // near the two-MTU boundary.
     if (TotalQueueBytes() < 2 * m_mtu)
     {
         return false;

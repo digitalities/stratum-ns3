@@ -10,8 +10,8 @@ authors:
     email: sergio.andreozzi@gmail.com
     orcid: "https://orcid.org/0000-0001-5567-4000"
     affiliation: "Independent Researcher"
-version: "v1.3.0"
-date-released: "2026-06-17"
+version: "v2.0.0"
+date-released: "2026-06-24"
 license: GPL-2.0-only
 repository-code: "https://github.com/digitalities/stratum-ns3"
 url: "https://github.com/digitalities/stratum-ns3"

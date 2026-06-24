@@ -101,7 +101,7 @@ Eight TCP flows (four downloads + four uploads) plus four UDP probes plus
 one ICMP ping traverse a dumbbell bottleneck. Each TCP flow carries one of
 the four DiffServ4 DSCPs — BE, BK, CS5, EF — set via the `Tos` attribute
 on `BulkSendApplication`. The bottleneck is configured with
-`cake::Helper::SetAsCakeDiffserv4(edge, totalRate, ..., enableTinShaping=true)`,
+`cake::Helper::SetAsCakeDiffserv4(edge, totalRate, {.tinShaping = true})`,
 which routes each flow to the matching tin and hard-caps each tin's service
 rate at its share of the link:
 

@@ -10,6 +10,8 @@
 
 #include "ns3/buffer.h"
 #include "ns3/ipv4-header.h"
+#include "ns3/ipv6-header.h"
+#include "ns3/ipv6-queue-disc-item.h"
 #include "ns3/log.h"
 #include "ns3/mac48-address.h"
 #include "ns3/packet.h"
@@ -36,6 +38,12 @@ constexpr uint32_t k_minIpv4HeaderBytes = 20;
 
 /// Ethernet type code for IPv4 frames.
 constexpr uint16_t k_ethertypeIpv4 = 0x0800;
+
+/// Ethernet type code for IPv6 frames.
+constexpr uint16_t k_ethertypeIpv6 = 0x86DD;
+
+/// Fixed IPv6 header size in bytes (no extension headers).
+constexpr uint32_t k_ipv6HeaderBytes = 40;
 
 /// Snapshot length used when reading pcap records (matches default snaplen).
 constexpr uint32_t k_maxReadBytes = 65535;
@@ -102,7 +110,7 @@ TraceReplayApplication::LoadTrace() const
     struct AbsRecord
     {
         int64_t absNs;
-        Ptr<Ipv4QueueDiscItem> item;
+        Ptr<QueueDiscItem> item;
     };
 
     std::vector<AbsRecord> absoluteRecords;
@@ -142,54 +150,78 @@ TraceReplayApplication::LoadTrace() const
                 break;
             }
 
-            // Skip the Ethernet header and locate the IP version nibble.
-            if (readLen < k_ethernetHeaderBytes + k_minIpv4HeaderBytes)
+            // Skip frames that are too short to contain an Ethernet header.
+            if (readLen < k_ethernetHeaderBytes)
             {
                 NS_LOG_WARN("TraceReplayApplication: short frame in " << path << " (skipping)");
                 continue;
             }
 
-            // Verify the EtherType is IPv4 (offset 12-13 in the Ethernet header).
+            // Dispatch on EtherType (offset 12-13 in the Ethernet header).
             const uint16_t etherType = static_cast<uint16_t>((buffer[12] << 8) | buffer[13]);
-            if (etherType != k_ethertypeIpv4)
+
+            Ptr<QueueDiscItem> item;
+            if (etherType == k_ethertypeIpv4)
             {
-                NS_LOG_WARN("TraceReplayApplication: non-IPv4 EtherType 0x"
+                const uint8_t* ipStart = buffer.data() + k_ethernetHeaderBytes;
+                const uint8_t ihl = ipStart[0] & 0x0f;
+                const uint32_t ipHeaderBytes = static_cast<uint32_t>(ihl) * 4;
+                if (ipHeaderBytes < k_minIpv4HeaderBytes ||
+                    k_ethernetHeaderBytes + ipHeaderBytes > readLen)
+                {
+                    NS_LOG_WARN("TraceReplayApplication: malformed IPv4 header in "
+                                << path << " (skipping)");
+                    continue;
+                }
+
+                Buffer tmp;
+                tmp.AddAtStart(ipHeaderBytes);
+                Buffer::Iterator it = tmp.Begin();
+                it.Write(ipStart, ipHeaderBytes);
+                Ipv4Header hdr;
+                it = tmp.Begin();
+                hdr.Deserialize(it);
+
+                uint32_t payloadSize = 0;
+                if (origLen > k_ethernetHeaderBytes + ipHeaderBytes)
+                {
+                    payloadSize = origLen - k_ethernetHeaderBytes - ipHeaderBytes;
+                }
+                Ptr<Packet> packet = Create<Packet>(payloadSize);
+                item = Create<Ipv4QueueDiscItem>(packet, Mac48Address(), k_ethertypeIpv4, hdr);
+            }
+            else if (etherType == k_ethertypeIpv6)
+            {
+                if (k_ethernetHeaderBytes + k_ipv6HeaderBytes > readLen)
+                {
+                    NS_LOG_WARN("TraceReplayApplication: short IPv6 frame in " << path
+                                                                               << " (skipping)");
+                    continue;
+                }
+
+                Buffer tmp;
+                tmp.AddAtStart(k_ipv6HeaderBytes);
+                Buffer::Iterator it = tmp.Begin();
+                it.Write(buffer.data() + k_ethernetHeaderBytes, k_ipv6HeaderBytes);
+                Ipv6Header hdr;
+                it = tmp.Begin();
+                hdr.Deserialize(it);
+
+                uint32_t payloadSize = 0;
+                if (origLen > k_ethernetHeaderBytes + k_ipv6HeaderBytes)
+                {
+                    payloadSize = origLen - k_ethernetHeaderBytes - k_ipv6HeaderBytes;
+                }
+                Ptr<Packet> packet = Create<Packet>(payloadSize);
+                item = Create<Ipv6QueueDiscItem>(packet, Mac48Address(), k_ethertypeIpv6, hdr);
+            }
+            else
+            {
+                NS_LOG_WARN("TraceReplayApplication: non-IP EtherType 0x"
                             << std::hex << etherType << std::dec << " in " << path
                             << " (skipping)");
                 continue;
             }
-
-            const uint8_t* ipStart = buffer.data() + k_ethernetHeaderBytes;
-            const uint8_t ihl = ipStart[0] & 0x0f;
-            const uint32_t ipHeaderBytes = static_cast<uint32_t>(ihl) * 4;
-            if (ipHeaderBytes < k_minIpv4HeaderBytes ||
-                k_ethernetHeaderBytes + ipHeaderBytes > readLen)
-            {
-                NS_LOG_WARN("TraceReplayApplication: malformed IPv4 header in " << path
-                                                                                << " (skipping)");
-                continue;
-            }
-
-            // Deserialize the IPv4 header from the raw bytes.
-            Buffer tmp;
-            tmp.AddAtStart(ipHeaderBytes);
-            Buffer::Iterator it = tmp.Begin();
-            it.Write(ipStart, ipHeaderBytes);
-            Ipv4Header hdr;
-            it = tmp.Begin();
-            hdr.Deserialize(it);
-
-            // Synthesize the payload sized to the original on-wire frame
-            // minus the L2 and L3 header bytes.
-            uint32_t payloadSize = 0;
-            if (origLen > k_ethernetHeaderBytes + ipHeaderBytes)
-            {
-                payloadSize = origLen - k_ethernetHeaderBytes - ipHeaderBytes;
-            }
-            Ptr<Packet> packet = Create<Packet>(payloadSize);
-
-            Ptr<Ipv4QueueDiscItem> item =
-                Create<Ipv4QueueDiscItem>(packet, Mac48Address(), k_ethertypeIpv4, hdr);
 
             const int64_t subNs =
                 nanosec ? static_cast<int64_t>(tsSubSec) : static_cast<int64_t>(tsSubSec) * 1000;

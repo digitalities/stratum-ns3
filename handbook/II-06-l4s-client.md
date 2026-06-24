@@ -247,15 +247,16 @@ WRED thresholds, precedence-per-virtual-queue) have no analogue in
 FqCoDel, and a translation layer would be lossy.
 
 The comparison example at
-`examples/diffserv-l4s-fqcodel-comparison.cc` has four
+`examples/diffserv-l4s-fqcodel-comparison.cc` has five
 selectable modes:
 
-| `--disc=` | Inner classic AQM |
+| `--mode=` | Inner classic AQM |
 |---|---|
 | `l4s-wred`           | `stratum::RedQueueDisc` (WRED + coupled drop) |
 | `l4s-coupled-only`   | `stratum::RedQueueDisc` reduced to pass-through (coupled drop is sole AQM) |
-| `l4s-fqcodel-inner`  | `FqCoDelQueueDisc` (per-flow fair queueing + CoDel target) |
-| `fqcodel`            | pure mainline FqCoDel as the bottleneck disc (no DiffServ4NS) |
+| `l4s-fqcodel-classic` | `FqCoDelQueueDisc` (per-flow fair queueing + CoDel target) |
+| `fqcodel`            | pure mainline FqCoDel as the bottleneck disc (no L4S lane) |
+| `classic-only`       | plain `FifoQueueDisc` drop-tail baseline (no L4S lane) |
 
 Future inner-AQM strategies (PIE, CoDel-without-FQ, research discs)
 require only a test case and a comparison-example mode; no core

@@ -268,9 +268,43 @@ S-specs derived: S-17.63 (upward convergence), S-17.64 (upward re-adaptation),
 S-17.65 (peak-bandwidth estimator byte-exact to `cake_enqueue`), S-17.67
 (downward adaptation characterization).
 
+## I-17: DS-field read/mark and flow identification are address-family agnostic
+
+The Stratum substrate shall read the DS octet (DSCP + ECN), write (mark) the
+DS octet, and identify flows in a manner that is address-family agnostic across
+all three clients (DiffServ, L4S, CAKE):
+
+**I-17.1** The DS-field extraction used for classification and AQM decisions
+shall operate identically on IPv4 and IPv6 packets.  RFC 2474 §2 defines the
+DS field as an identical 8-bit octet in both the IPv4 TOS byte and the IPv6
+Traffic Class byte: the top six bits carry the DSCP and the bottom two carry
+the ECN codepoint.  No per-family branching shall appear in the classify or
+dispatch logic; the ns-3 base-class virtual `QueueItem::GetUint8Value(IP_DSFIELD)`
+provides this family-agnostic DS-field read and is the single extraction point.
+
+**I-17.2** The DSCP-rewrite (mark) path shall preserve the ECN bits for both
+IPv4 and IPv6 packets.  A single helper (`stratum::SetDscpPreservingEcn`)
+replaces per-family inline arithmetic and is the sole write point for DS-field
+marking in the substrate.
+
+**I-17.3** Flow identification for the purpose of CAKE per-host bulk-count
+tracking shall use the address-family-agnostic `QueueDiscItem::Hash()` virtual,
+which returns a 32-bit hash of the 5-tuple regardless of address family.
+Per-flow policy classification (RFC 2697/2698/2859 per-connection meter state)
+uses an extended `FlowKey` struct capable of holding either an `Ipv4Address` or
+an `Ipv6Address`; the v4 byte layout is unchanged so existing oracle fixtures
+remain byte-identical.
+
+**I-17.4** The MarkRule address-match type shall be extended from a bare
+`Ipv4Address` to a tagged `AddrMatch` variant holding either an `Ipv4Address`
+or an `Ipv6Address`, so that edge mark rules can be expressed for IPv6 sources
+and destinations without changing the v4 match semantics.
+
+S-specs derived: S-13.18 (v6 DS-field read at classify), S-17.28v6 (wash
+address-agnostic), S-17.33v6 (flow hash via `item->Hash()`).
+
 ## Out of scope for v1
 
-- IPv6 DSCP handling (the original was IPv4-only; deferred but architecturally compatible)
 - ECN interaction with RIO (deferred — ns-3 RED already handles ECN, integration is straightforward but not on the critical path)
 - Hierarchical token bucket meters
 - Colour-aware mode for srTCM/trTCM (the original is colour-blind; spec I-2.7 makes this explicit)

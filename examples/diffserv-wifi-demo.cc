@@ -45,6 +45,7 @@
 #include "ns3/stratum-constants.h"
 #include "ns3/stratum-edge-queue-disc.h"
 #include "ns3/stratum-helper.h"
+#include "ns3/stratum-install-helper.h"
 #include "ns3/stratum-pq-scheduler.h"
 #include "ns3/stratum-red-queue-disc.h"
 #include "ns3/traffic-control-module.h"
@@ -60,8 +61,6 @@
 using namespace ns3;
 namespace diffserv = ns3::stratum::diffserv;
 using ns3::stratum::EdgeQueueDisc;
-using ns3::stratum::kAnyHost;
-using ns3::stratum::kAnyProtocol;
 using ns3::stratum::Meter;
 using ns3::stratum::MeterType;
 using ns3::stratum::MredMode;
@@ -165,9 +164,6 @@ main(int argc, char* argv[])
     {
         Ptr<NetDevice> apWifi = apDev.Get(0);
 
-        TrafficControlHelper tchUninstall;
-        tchUninstall.Uninstall(apWifi);
-
         Ptr<EdgeQueueDisc> edge = CreateObject<EdgeQueueDisc>();
         diffserv::Helper helper;
         auto inner = helper.InstallRedInner(edge);
@@ -189,14 +185,25 @@ main(int argc, char* argv[])
         pq->SetL2OverheadBytes(l2OverheadBytes);
         inner->SetScheduler(pq);
 
-        helper.AddMarkRule(edge, 46, kAnyHost, static_cast<int32_t>(efDst.Get()), kAnyProtocol, 0);
-        helper.AddMarkRule(edge, 0, kAnyHost, static_cast<int32_t>(beDst.Get()), kAnyProtocol, 0);
+        edge->AddMarkRule({.dscp = 46, .dstAddr = efDst});
+        edge->AddMarkRule({.dscp = 0, .dstAddr = beDst});
 
-        helper.AddTokenBucketPolicy(edge, 46, cirEfBps, cbsEfBytes);
+        helper.AddTokenBucketPolicy(edge,
+                                    {.codePt = 46, .cirBps = cirEfBps, .cbsBytes = cbsEfBytes});
         helper.AddDumbPolicy(edge, 48);
         helper.AddDumbPolicy(edge, 0);
-        helper.AddPolicerEntry(edge, PolicerType::TOKEN_BUCKET, 46, 48, 48);
-        helper.AddPolicerEntry(edge, PolicerType::DUMB, 0, 0, 0);
+        helper.AddPolicerEntry(edge,
+                               {.policer = PolicerType::TOKEN_BUCKET,
+                                .initialCodePt = 46,
+                                .downgrade1 = 48,
+                                .downgrade2 = 48,
+                                .policyIndex = static_cast<uint32_t>(PolicerType::TOKEN_BUCKET)});
+        helper.AddPolicerEntry(edge,
+                               {.policer = PolicerType::DUMB,
+                                .initialCodePt = 0,
+                                .downgrade1 = 0,
+                                .downgrade2 = 0,
+                                .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
         if (Ptr<Meter> tbm = edge->GetMeter(MeterType::TOKEN_BUCKET))
         {
             tbm->SetL2OverheadBytes(l2OverheadBytes);
@@ -210,13 +217,15 @@ main(int argc, char* argv[])
         helper.AddPhbEntry(inner, 48, 0, 1);
         helper.AddPhbEntry(inner, 0, 1, 0);
 
-        Ptr<TrafficControlLayer> tc = ap.Get(0)->GetObject<TrafficControlLayer>();
-        tc->SetRootQueueDiscOnDevice(apWifi, edge);
+        stratum::InstallRoot(apWifi, edge);
         edge->Initialize();
-        inner->SetMredMode(MredMode::DROP_TAIL);
-        helper.ConfigQueue(inner, 0, 0, 30.0, 30.0, 1.0);
-        helper.ConfigQueue(inner, 0, 1, -1.0, -1.0, 0.0);
-        helper.ConfigQueue(inner, 1, 0, 100.0, 100.0, 1.0);
+        inner->SetMredModeAllQueues(MredMode::DROP_TAIL);
+        helper.ConfigQueue(inner,
+                           {.queue = 0, .prec = 0, .thMin = 30.0, .thMax = 30.0, .maxP = 1.0});
+        helper.ConfigQueue(inner,
+                           {.queue = 0, .prec = 1, .thMin = -1.0, .thMax = -1.0, .maxP = 0.0});
+        helper.ConfigQueue(inner,
+                           {.queue = 1, .prec = 0, .thMin = 100.0, .thMax = 100.0, .maxP = 1.0});
 
         // Once the DSCP is stamped by the edge mark rule, the standard
         // ns-3 path forwards the packet to WifiNetDevice; the WMM mapper

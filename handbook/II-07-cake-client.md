@@ -205,7 +205,8 @@ paper reports around a 15% downstream gain at 30/1 Mbit/s
 (Figure 6).
 
 The substrate exposes the feature via the
-`enableAckFilter` opt-in on every `cake::Helper` composer. The
+`.ackFilter` field of the `CakeOptions` argument on every
+`cake::Helper` composer. The
 helper toggles the `EnableAckFilter` boolean attribute on
 mainline `FqCobaltQueueDisc`, which mainline gained via a local
 ns-3 patch carried in the published artefact (awaiting upstream
@@ -237,10 +238,9 @@ Two filter modes are exposed, matching Linux `tc-cake`:
   even SACK-bearing ACKs are worth thinning when superseded.
 
 The aggressive toggle is reachable via the attribute path on the
-per-tin instance, or via the optional `enableAckFilterAggressive`
-parameter appended at the end of every `cake::Helper::SetAsCake*`
-signature (default `false`; preserves source compatibility for
-existing positional callers).
+per-tin instance, or via the `.ackFilterAggressive` field of the
+`CakeOptions` argument accepted by every `cake::Helper::SetAsCake*`
+composer (default `false`).
 
 **Fidelity boundary.** The filter is a faithful port of the Linux
 `cake_ack_filter()` algorithm: candidate classification, the
@@ -251,7 +251,12 @@ side-by-side source audit. Both IPv4 and IPv6 TCP flows are covered:
 separately and expose the TCP header at byte-0 of `GetPacket()`, so the
 same parse path applies to both; `GetIpProtocol()` supplies the IP-version
 discriminant used by the flow-key gate (matching `sch_cake.c`'s
-`iph_check->version == 6` branch at line 1279). The observable benefit, however, depends
+`iph_check->version == 6` branch at line 1279). This dual-family coverage extends to the full substrate.
+The ACK-filter scan and host-isolation hash operate directly on L3+L4 bytes
+and are address-family agnostic; DSCP-to-tin selection reads the DS field
+from the IPv6 Traffic Class byte by the same path as IPv4
+(see [Stratum architecture](II-02-stratum-architecture.md)).
+An IPv6 packet therefore reaches the correct tin without any configuration change. The observable benefit, however, depends
 on the operating regime. On Linux the paper-strict 30/1 Mbit/s,
 40 ms workload (4 TCP down + 4 TCP up) yields a 1.09×–1.14×
 downstream gain over three seeds and two traffic generators (Flent,
@@ -381,9 +386,7 @@ each tin runs against its own ceiling.
 
 ```cpp
 cake::Helper::SetAsCakeDiffserv4(edge, DataRate("10Mbps"),
-                                  /*enableAckFilter*/ false,
-                                  /*enableLlq*/ false,
-                                  /*enableTinShaping*/ true);
+                                 {.tinShaping = true});
 ```
 
 In `diffserv4` profile terms, Bulk caps at 6.25% (625 kbps on a
@@ -415,9 +418,7 @@ Juniper, Arista, and most enterprise router vendors.
 
 ```cpp
 cake::Helper::SetAsCakeDiffserv4(edge, DataRate("10Mbps"),
-                                  /*enableAckFilter*/ false,
-                                  /*enableLlq*/ true,
-                                  /*enableTinShaping*/ true);
+                                 {.llq = true, .tinShaping = true});
 ```
 
 The composition is correct because the `Charge` step in
@@ -446,7 +447,7 @@ Linux `tc-cake`.
   `cake::TinShaperDispatcher`- Rate-based virtual-clock shaper (path β) via
   `cake::RateBasedShaperDispatcher` with per-tin and global virtual
   clocks; per-packet `adj_len` from `cake_calc_overhead`- Mainline `TbfQueueDisc` as per-tin inner (path γ) via the
-  `useInnerTbfShaping` opt-in (alias for
+  `.innerTbfShaping` option field (alias for
   `ShaperMode::TbfInner`)- LLQ × tin-shaping (Cisco MQC pattern) via the same gate inside
   `HybridLlqDispatcher`- Host isolation (Linux `tc-cake` `triple-isolate` plus the
   named `srchost` / `dsthost` / `hosts` / `flowblind` / `flows`
@@ -542,7 +543,7 @@ string-typed time attributes in mainline ns-3).
 cake::Helper::SetRttPreset(edge, cake::Helper::RttPreset::Satellite);
 ```
 
-Under host-isolation (`enableHostIsolation=true`), the preset is
+Under host-isolation (`.hostIsolation = true`), the preset is
 applied to the patched-mainline `FqCobaltQueueDisc` for each tin
 slot at composition time via `SetAttribute`.
 

@@ -207,11 +207,7 @@ RunScenario(double jitterPct, uint32_t run)
     Ptr<EdgeQueueDisc> edge = CreateObject<EdgeQueueDisc>();
     cake::Helper::SetAsCakeDiffserv4(edge,
                                      DataRate(kBandwidthBps),
-                                     /*enableAckFilter=*/false,
-                                     /*enableLlq=*/false,
-                                     /*enableTinShaping=*/true,
-                                     /*enableHostIsolation=*/true,
-                                     /*useInnerTbfShaping=*/false);
+                                     {.tinShaping = true, .hostIsolation = true});
 
     Ptr<TrafficControlLayer> tc = dBN.Get(0)->GetNode()->GetObject<TrafficControlLayer>();
     NS_ASSERT_MSG(tc, "TrafficControlLayer must be installed on routerA");

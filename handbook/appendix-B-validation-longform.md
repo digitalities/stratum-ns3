@@ -104,23 +104,25 @@ The ns-2.35 run (5 000 s simulated) completes in tens of seconds of wall-clock o
 | Service | ns-2.35 | ns-3 | Diff (%) |
 |---|---:|---:|---:|
 | Premium (VoIP)      | 499.4 | 500.1 | +0.1 |
-| Gold (RealAudio)    | 323.3 | 355.2 | +9.9 |
-| Silver (Telnet+FTP) | 935.3 | 911.9 | −2.5 |
-| Bronze (HTTP)       | 934.6 | 907.9 | −2.9 |
-| Best Effort         | 312.0 | 304.1 | −2.6 |
-| **Total**           | **3 004.6** | **2 979.2** | **−0.8** |
+| Gold (RealAudio)    | 322.9 | 355.2 | +10.0 |
+| Silver (Telnet+FTP) | 935.7 | 911.7 | −2.6 |
+| Bronze (HTTP)       | 934.4 | 908.1 | −2.8 |
+| Best Effort         | 312.1 | 304.0 | −2.6 |
+| **Total**           | **3 004.6** | **2 979.1** | **−0.8** |
 
-Aggregate throughput matches within 0.8 %, confirming the bottleneck is utilised identically on both simulators. Premium matches within 0.1 %, as expected given the deterministic G.723.1 CBR source behaves identically on both sides. Gold — the class carrying RealAudio traffic directly — exhibits a +9.9 % residual; Silver, Bronze, and Best Effort each slip −2.5 to −2.9 % as a secondary effect. These residuals are measurement-infrastructure artefacts of the two simulators' differing RealAudio-generator averaging semantics (see below); both simulators drive the same four 2001 empirical CDFs (`userintercdf1`, `sflowcdf`, `flowdurcdf`, `fratecdf`) but through generators that average session-mean rate differently. The EDD suite pins the current per-class envelope as quality spec Q-10.6 (Premium ±1 %; Gold/Silver/Bronze/BE ±3 %) and asserts it at ±1 % deterministically via structural regression test S-13.10.
+Aggregate throughput matches within 0.8 %, confirming the bottleneck is utilised identically on both simulators. Premium matches within 0.1 %, as expected given the deterministic G.723.1 CBR source behaves identically on both sides. Silver, Bronze, and Best Effort match within −2.6 to −2.8 %, inside their ±3 % envelope. Gold is the exception (+10.0 %) and is *not* a meaningful throughput comparison: ns-3 ships no RealAudio generator and approximates it with an OnOff source, so the two simulators present a different offered Gold load. Gold is therefore validated by **policer equivalence** rather than throughput (see below) — the +10.0 % is a difference in the traffic the generators produce, not in how the policers treat it. Both simulators drive the same four 2001 empirical CDFs (`userintercdf1`, `sflowcdf`, `flowdurcdf`, `fratecdf`); the fifth — the discrete off-time distribution — is the one ns-3 approximates.
 
-![Scenario 3 ns-2.35 vs ns-3 aggregate service rate. The two simulators track each other within 0.8 % over the steady-state interval; per-class envelopes pinned by Q-10.6 are documented in the prose above.](figures/validation-l5-scenario3/scenario-3__ns235-vs-ns3__service-rate-all.png)
+![Scenario 3 ns-2.35 vs ns-3 aggregate service rate. The two simulators track each other within 0.8 % over the steady-state interval; per-class envelopes are documented in the prose above.](figures/validation-l5-scenario3/scenario-3__ns235-vs-ns3__service-rate-all.png)
 
 ![Scenario 3 ns-2.35 vs ns-3 one-way delay distribution. The +14 % PQ structural offset documented in Level 2 propagates to this thesis-scale (771-node) reconstruction; per-class qualitative ordering is preserved across both simulators.](figures/validation-l5-scenario3/scenario-3__ns235-vs-ns3__owd.png)
 
 The qualitative service differentiation is identical in both simulators: VoIP achieves 100 % delivery (zero loss), the TSW2CM meter actively polices Gold traffic, WRED produces higher drop rates for FTP (AF22) than Telnet (AF21) within Silver, and the BE TokenBucket policer drops all out-of-profile excess. This confirms that the full DiffServ pipeline — classification, metering, policing, PHB mapping, multi-precedence MRED, and LLQ+SFQ scheduling — is faithfully ported at a scale representative of the original thesis experiments.
 
-### RealAudio duty-cycle averaging
+### Gold validated by policer equivalence
 
-A detail of the ns-3 reconstruction warrants explicit commentary. ns-2's `Application/Traffic/RealAudio` averages packet emission at its `rate_` parameter over the session (internal bursty/idle cycles are an implementation detail), whereas ns-3's `OnOffApplication` averages at `DataRate × duty` where `duty = OnMean / (OnMean + OffMean) ≈ 0.217` for the `(0.5 s, Exp(1.8 s))` RealAudio profile used in Scenario 3. Setting `DataRate = rate_` would under-emit by the `1/duty` factor; we therefore scale `DataRate` by `1/duty` so the session mean matches the sampled rate while the bursty on/off structure is preserved. The ns-2 `scenario-3.tcl` empirical CDFs (`userintercdf1`, `sflowcdf`, `flowdurcdf`, `fratecdf`) drive this scaled-OnOff generator directly in the ns-3 port, faithful to lines 363–430 of the original Tcl. An irreducible envelope-shape residual on Gold/Silver/Bronze/BE remains between the two simulators' generators; it is a measurement-infrastructure artefact of the differing averaging semantics, not a DiffServ behaviour claim.
+ns-3 ships no RealAudio generator, so it approximates the source with an `OnOffApplication`. The two generators present different traffic, which is why Gold's throughput differs across the simulators (+10.0 %) — a difference in offered load, not in how the policers treat it. Gold is therefore validated by **policer equivalence** rather than throughput. The instrumented ns-2.35 binary captured the real Scenario 3 Gold ingress (1,059,052 packets over the 5000 s run; ns-2.35's own marking gave AF12 fraction 0.1736); replaying that exact byte stream packet-for-packet through the ns-3 TSW2CM/RIO-C policer reproduces the out-of-profile fraction within sampling noise (0.1731–0.1733 vs 0.1736, ≈ 1.3× the binomial σ). Given identical input the two policers mark identically, so the +10.0 % lives entirely in the traffic the generators present.
+
+The driver is the idle (OFF) distribution: ns-3 substitutes an exponential off-time (mean 1.8 s) for the model's discrete empirical off-time distribution (mean 2.50 s), which sets each source's duty cycle and hence the offered Gold rate. The four other 2001 empirical CDFs (`userintercdf1`, `sflowcdf`, `flowdurcdf`, `fratecdf`) drive the ns-3 OnOff generator directly; porting the discrete off-time distribution is a documented post-publication fidelity item. A controlled-load convergence check — replacing every Scenario-3 class with a bit-identical deterministic CBR load — confirms the underlying DiffServ logic is reproducible across simulator generations (the corrected ns-2 port and ns-3 deliver matching per-class throughput to within 1.5 %; see the three-way validation chapter).
 
 ## Level 6: AF PHB WRED Parameter Sweep at Thesis Scale
 

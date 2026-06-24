@@ -18,6 +18,8 @@
 #include "ns3/fq-cobalt-queue-disc.h"
 #include "ns3/internet-module.h"
 #include "ns3/ipv4-flow-classifier.h"
+#include "ns3/ipv6-header.h"
+#include "ns3/ipv6-queue-disc-item.h"
 #include "ns3/network-module.h"
 #include "ns3/packet.h"
 #include "ns3/point-to-point-module.h"
@@ -28,6 +30,7 @@
 #include "ns3/stratum-send-time-tag.h"
 #include "ns3/test.h"
 #include "ns3/traffic-control-module.h"
+#include "ns3/udp-header.h"
 
 #include <algorithm>
 #include <array>
@@ -1235,7 +1238,7 @@ class AckFilterAsymmetricTest : public TestCase
             Ptr<EdgeQueueDisc> edge = CreateObject<EdgeQueueDisc>();
             cake::Helper::SetAsCakeDiffserv4(edge,
                                              DataRate(rateBps),
-                                             /*enableAckFilter=*/enableAckFilter);
+                                             {.ackFilter = enableAckFilter});
             Ptr<TrafficControlLayer> tcl = egress->GetNode()->GetObject<TrafficControlLayer>();
             if (tcl->GetRootQueueDiscOnDevice(egress))
             {
@@ -1753,10 +1756,7 @@ class RrulLatencyLlqTest : public TestCase
         // Hybrid LLQ: Voice (slot 3) served strict-priority; EF probes
         // bypass the DRR round and see only their own MTU-serialisation
         // floor on a saturated link.
-        cake::Helper::SetAsCakeDiffserv4(edge,
-                                         DataRate(bottleneckBps),
-                                         /*enableAckFilter=*/false,
-                                         /*enableLlq=*/true);
+        cake::Helper::SetAsCakeDiffserv4(edge, DataRate(bottleneckBps), {.llq = true});
         Ptr<NetDevice> bnEgress = bnDev.Get(0);
         Ptr<TrafficControlLayer> tcl = bnEgress->GetNode()->GetObject<TrafficControlLayer>();
         if (tcl->GetRootQueueDiscOnDevice(bnEgress))
@@ -1985,9 +1985,7 @@ class LlqLatencyCalibrationTest : public TestCase
         // 1226887).
         cake::Helper::SetAsCakeDiffserv4(edge,
                                          DataRate(bottleneckBps),
-                                         /*enableAckFilter=*/false,
-                                         /*enableLlq=*/true,
-                                         /*enableTinShaping=*/true);
+                                         {.llq = true, .tinShaping = true});
         Ptr<NetDevice> bnEgress = bnDev.Get(0);
         Ptr<TrafficControlLayer> tcl = bnEgress->GetNode()->GetObject<TrafficControlLayer>();
         if (tcl->GetRootQueueDiscOnDevice(bnEgress))
@@ -2467,10 +2465,7 @@ CakeFig5SparseFlowLatencyTest::RunArm(Arm arm, const std::string& label, uint32_
         Ptr<EdgeQueueDisc> edge = CreateObject<EdgeQueueDisc>();
         if (arm == Arm::CakeDiffserv)
         {
-            cake::Helper::SetAsCakeDiffserv4(edge,
-                                             DataRate(kRate),
-                                             /*enableAckFilter=*/false,
-                                             /*enableLlq=*/false);
+            cake::Helper::SetAsCakeDiffserv4(edge, DataRate(kRate));
         }
         else // CakeBesteffort
         {
@@ -4818,11 +4813,7 @@ class TestCake_PtmFramingGammaScaling : public TestCase
             Ptr<EdgeQueueDisc> edge = CreateObject<EdgeQueueDisc>();
             cake::Helper::SetAsCakeDiffserv4(edge,
                                              kTotalRate,
-                                             /*ackFilter=*/false,
-                                             /*llq=*/false,
-                                             /*tinShaping=*/true,
-                                             /*hostIso=*/false,
-                                             /*innerTbf=*/true);
+                                             {.tinShaping = true, .innerTbfShaping = true});
             return edge;
         };
 
@@ -4881,11 +4872,15 @@ class TestCake_LinkPresetEthernet : public TestCase
         const DataRate kTotalRate("100Mbps");
 
         Ptr<EdgeQueueDisc> ePreset = CreateObject<EdgeQueueDisc>();
-        cake::Helper::SetAsCakeDiffserv4(ePreset, kTotalRate, false, false, true, false, true);
+        cake::Helper::SetAsCakeDiffserv4(ePreset,
+                                         kTotalRate,
+                                         {.tinShaping = true, .innerTbfShaping = true});
         cake::Helper::SetLinkLayer(ePreset, cake::Helper::LinkPreset::Ethernet);
 
         Ptr<EdgeQueueDisc> eDirect = CreateObject<EdgeQueueDisc>();
-        cake::Helper::SetAsCakeDiffserv4(eDirect, kTotalRate, false, false, true, false, true);
+        cake::Helper::SetAsCakeDiffserv4(eDirect,
+                                         kTotalRate,
+                                         {.tinShaping = true, .innerTbfShaping = true});
         cake::Helper::ConfigureLinkLayerOverhead(eDirect, 38, false, false, 84);
 
         for (uint32_t slot = 0; slot < ePreset->GetNumInnerSlots(); ++slot)
@@ -4920,11 +4915,15 @@ class TestCake_LinkPresetPppoePtm : public TestCase
         const DataRate kTotalRate("100Mbps");
 
         Ptr<EdgeQueueDisc> ePreset = CreateObject<EdgeQueueDisc>();
-        cake::Helper::SetAsCakeDiffserv4(ePreset, kTotalRate, false, false, true, false, true);
+        cake::Helper::SetAsCakeDiffserv4(ePreset,
+                                         kTotalRate,
+                                         {.tinShaping = true, .innerTbfShaping = true});
         cake::Helper::SetLinkLayer(ePreset, cake::Helper::LinkPreset::PppoePtm);
 
         Ptr<EdgeQueueDisc> eDirect = CreateObject<EdgeQueueDisc>();
-        cake::Helper::SetAsCakeDiffserv4(eDirect, kTotalRate, false, false, true, false, true);
+        cake::Helper::SetAsCakeDiffserv4(eDirect,
+                                         kTotalRate,
+                                         {.tinShaping = true, .innerTbfShaping = true});
         cake::Helper::ConfigureLinkLayerOverhead(eDirect, 30, false, true, 0);
 
         for (uint32_t slot = 0; slot < ePreset->GetNumInnerSlots(); ++slot)
@@ -4961,11 +4960,15 @@ class TestCake_LinkPresetEtherVlanStacks : public TestCase
         const DataRate kTotalRate("100Mbps");
 
         Ptr<EdgeQueueDisc> eVlan = CreateObject<EdgeQueueDisc>();
-        cake::Helper::SetAsCakeDiffserv4(eVlan, kTotalRate, false, false, true, false, true);
+        cake::Helper::SetAsCakeDiffserv4(eVlan,
+                                         kTotalRate,
+                                         {.tinShaping = true, .innerTbfShaping = true});
         cake::Helper::SetLinkLayer(eVlan, cake::Helper::LinkPreset::EtherVlan);
 
         Ptr<EdgeQueueDisc> eDirect = CreateObject<EdgeQueueDisc>();
-        cake::Helper::SetAsCakeDiffserv4(eDirect, kTotalRate, false, false, true, false, true);
+        cake::Helper::SetAsCakeDiffserv4(eDirect,
+                                         kTotalRate,
+                                         {.tinShaping = true, .innerTbfShaping = true});
         cake::Helper::ConfigureLinkLayerOverhead(eDirect, 42, false, false, 84);
 
         for (uint32_t slot = 0; slot < eVlan->GetNumInnerSlots(); ++slot)
@@ -5134,6 +5137,204 @@ class TestCake_LiveBulkCounterTracksConcurrentFlows : public TestCase
 
         const uint32_t liveAfter = cake::Helper::GetLiveBulkCount(edge, /*slot=*/1);
         NS_TEST_ASSERT_MSG_EQ(liveAfter, 0u, "Flows idle past the threshold must drop out");
+
+        Simulator::Destroy();
+    }
+};
+
+// ===========================================================================
+// S-17.33v6 — LiveBulkCounter hashes IPv6 5-tuples to distinct buckets
+// ===========================================================================
+
+/**
+ * @brief S-17.33v6 — LiveBulkCounter assigns distinct buckets to distinct IPv6 flows.
+ *
+ * Enqueues N=5 IPv6 UDP flows (same src/dst address, varying source port) into
+ * the inner disc at slot 1, then verifies the live count is 5. Before the
+ * production fix (FlowHashFromItem used DynamicCast to Ipv4QueueDiscItem),
+ * all v6 flows collapsed to bucket 0 and the count was 1.
+ */
+class TestS17v6FlowHashBulkCounter : public TestCase
+{
+  public:
+    TestS17v6FlowHashBulkCounter()
+        : TestCase("S-17.33v6 LiveBulkCounter hashes distinct IPv6 5-tuples to "
+                   "distinct buckets")
+    {
+    }
+
+    void DoRun() override
+    {
+        Ptr<EdgeQueueDisc> edge = CreateObject<EdgeQueueDisc>();
+        cake::Helper::SetAsCakeDiffserv4(edge, DataRate("100Mbps"));
+        edge->Initialize();
+        cake::Helper::AttachLiveBulkCounter(edge);
+
+        // N=5 distinct IPv6 flows (vary src port). Packet holds only the L4
+        // header (the IPv6 header lives in Ipv6QueueDiscItem::m_header), matching
+        // how ns-3 constructs items at the IP layer and how Hash() peeks ports.
+        constexpr uint32_t kN = 5;
+        for (uint32_t i = 0; i < kN; ++i)
+        {
+            Ptr<Packet> p = Create<Packet>(1000);
+            Ipv6Header ip;
+            ip.SetSource(Ipv6Address("2001:db8::1"));
+            ip.SetDestination(Ipv6Address("2001:db8::2"));
+            ip.SetNextHeader(17); // UDP
+            UdpHeader udp;
+            udp.SetSourcePort(10000 + i);
+            udp.SetDestinationPort(80);
+            p->AddHeader(udp);
+            Ptr<Ipv6QueueDiscItem> item = Create<Ipv6QueueDiscItem>(p, Address(), 0x86DD, ip);
+            NS_TEST_ASSERT_MSG_EQ(edge->GetInnerDiscAt(1)->Enqueue(item),
+                                  true,
+                                  "IPv6 item must enqueue into the diffserv4 inner disc");
+        }
+
+        const uint32_t live = cake::Helper::GetLiveBulkCount(edge, /*slot=*/1);
+        NS_TEST_ASSERT_MSG_EQ(live,
+                              kN,
+                              "Five concurrent IPv6 flows must produce a live count of 5");
+
+        Simulator::Destroy();
+    }
+};
+
+// Q-18.2 — CAKE DSCP-to-tin assignment + bulk-flow counting over IPv6.
+// Proves GetUint8Value(IP_DSFIELD)>>2 drives CAKE tin selection for v6 items
+// (the Increment-1a dispatcher seam) and that item->Hash() distinguishes v6
+// flows across two source hosts (S-17.33v6 at host scale).
+class TestQ18v2CakeTinHostIsoIPv6 : public TestCase
+{
+  public:
+    TestQ18v2CakeTinHostIsoIPv6()
+        : TestCase("Q-18.2 CAKE DSCP-to-tin + bulk-flow count over IPv6 "
+                   "(diffserv4 + host isolation)")
+    {
+    }
+
+  private:
+    // Build an Ipv6QueueDiscItem carrying a UDP header, a DSCP, and a 5-tuple.
+    static Ptr<Ipv6QueueDiscItem> MakeV6Item(Ipv6Address src,
+                                             Ipv6Address dst,
+                                             Ipv6Header::DscpType dscp,
+                                             uint16_t sport,
+                                             uint16_t dport)
+    {
+        Ptr<Packet> p = Create<Packet>(1000);
+        UdpHeader udp;
+        udp.SetSourcePort(sport);
+        udp.SetDestinationPort(dport);
+        p->AddHeader(udp);
+        Ipv6Header ip;
+        ip.SetSource(src);
+        ip.SetDestination(dst);
+        ip.SetNextHeader(17); // UDP
+        ip.SetDscp(dscp);
+        return Create<Ipv6QueueDiscItem>(p, Address(), 0x86DD, ip);
+    }
+
+    void DoRun() override
+    {
+        // ---- G1: DSCP-driven v6 tin selection via RateBasedShaperDispatcher ----
+        // Uses the standalone dispatcher (4 tins, no EdgeQueueDisc). The
+        // v6-specific concern is that the DSCP is READ from the IPv6 traffic
+        // class field; GetUint8Value(IP_DSFIELD) handles both v4 and v6.
+        // diffserv4 slot layout: Bulk(0) / BE(1) / Video(2) / Voice(3).
+        const uint64_t kG1Rate = 10'000'000; // 10 Mbps
+        auto disp = CreateObject<cake::RateBasedShaperDispatcher>();
+        for (uint32_t s = 0; s < 4; ++s)
+        {
+            disp->ConfigureTin(s, kG1Rate, 0, 0, cake::RateBasedTinClock::FramingMode::NoAtm);
+        }
+        disp->ConfigureGlobal(kG1Rate);
+        // Map code points: CS1(8)->Bulk(0), CS0(0)->BE(1), AF21(18)->Video(2),
+        // EF(46)->Voice(3) — one representative DSCP per diffserv4 tin.
+        disp->SetDscpToSlot(Ipv6Header::DSCP_CS1, 0);    // CS1  6-bit code point = 8
+        disp->SetDscpToSlot(Ipv6Header::DscpDefault, 1); // CS0  = 0
+        disp->SetDscpToSlot(Ipv6Header::DSCP_AF21, 2);   // AF21 = 18
+        disp->SetDscpToSlot(Ipv6Header::DSCP_EF, 3);     // EF   = 46
+        disp->Initialize();
+
+        auto v6cs1 = MakeV6Item(Ipv6Address("2001:db8::1"),
+                                Ipv6Address("2001:db8::2"),
+                                Ipv6Header::DSCP_CS1,
+                                5001,
+                                80);
+        auto v6cs0 = MakeV6Item(Ipv6Address("2001:db8::1"),
+                                Ipv6Address("2001:db8::2"),
+                                Ipv6Header::DscpDefault,
+                                5002,
+                                80);
+        auto v6ef = MakeV6Item(Ipv6Address("2001:db8::1"),
+                               Ipv6Address("2001:db8::2"),
+                               Ipv6Header::DSCP_EF,
+                               5003,
+                               80);
+        auto v6af21 = MakeV6Item(Ipv6Address("2001:db8::1"),
+                                 Ipv6Address("2001:db8::2"),
+                                 Ipv6Header::DSCP_AF21,
+                                 5004,
+                                 80);
+
+        // Enqueue CS1 first, alone, so the discriminator check is unambiguous.
+        NS_TEST_ASSERT_MSG_EQ(disp->Enqueue(v6cs1), true, "CS1 v6 must enqueue");
+
+        // CS1 must land in slot 0 (Bulk).
+        NS_TEST_ASSERT_MSG_EQ(disp->GetInternalQueue(0)->GetNPackets(),
+                              1u,
+                              "CS1 v6 -> Bulk slot 0");
+
+        // Now enqueue CS0 and EF and verify their slots.
+        NS_TEST_ASSERT_MSG_EQ(disp->Enqueue(v6cs0), true, "CS0 v6 must enqueue");
+        NS_TEST_ASSERT_MSG_EQ(disp->Enqueue(v6af21), true, "AF21 v6 must enqueue");
+        NS_TEST_ASSERT_MSG_EQ(disp->Enqueue(v6ef), true, "EF v6 must enqueue");
+        NS_TEST_ASSERT_MSG_EQ(disp->GetInternalQueue(1)->GetNPackets(), 1u, "CS0 v6 -> BE slot 1");
+        NS_TEST_ASSERT_MSG_EQ(disp->GetInternalQueue(2)->GetNPackets(),
+                              1u,
+                              "AF21 v6 -> Video slot 2");
+        NS_TEST_ASSERT_MSG_EQ(disp->GetInternalQueue(3)->GetNPackets(),
+                              1u,
+                              "EF v6 -> Voice slot 3");
+
+        Simulator::Destroy();
+
+        // ---- G2 + G3: bulk-flow counting + work conservation over v6 ----
+        Ptr<EdgeQueueDisc> edge = CreateObject<EdgeQueueDisc>();
+        cake::Helper::SetAsCakeDiffserv4(edge, DataRate("10Mbps"), {.hostIsolation = true});
+        edge->Initialize();
+        cake::Helper::AttachLiveBulkCounter(edge);
+
+        const uint32_t kBulkSlot = 0; // Bulk = slot 0 (CS1)
+        const Ipv6Address kDst("2001:db8::100");
+        // Host A: 4 distinct v6 flows (vary src port).
+        for (uint16_t i = 0; i < 4; ++i)
+        {
+            auto it =
+                MakeV6Item(Ipv6Address("2001:db8:a::1"), kDst, Ipv6Header::DSCP_CS1, 10000 + i, 80);
+            NS_TEST_ASSERT_MSG_EQ(edge->GetInnerDiscAt(kBulkSlot)->Enqueue(it),
+                                  true,
+                                  "host-A v6 flow must enqueue (no spurious drop)");
+        }
+        NS_TEST_ASSERT_MSG_EQ(cake::Helper::GetLiveBulkCount(edge, kBulkSlot),
+                              4u,
+                              "4 distinct host-A v6 flows -> live count 4");
+        // Host B: 4 more distinct v6 flows.
+        for (uint16_t i = 0; i < 4; ++i)
+        {
+            auto it =
+                MakeV6Item(Ipv6Address("2001:db8:b::1"), kDst, Ipv6Header::DSCP_CS1, 20000 + i, 80);
+            NS_TEST_ASSERT_MSG_EQ(edge->GetInnerDiscAt(kBulkSlot)->Enqueue(it),
+                                  true,
+                                  "host-B v6 flow must enqueue (no spurious drop)");
+        }
+        NS_TEST_ASSERT_MSG_EQ(cake::Helper::GetLiveBulkCount(edge, kBulkSlot),
+                              8u,
+                              "8 distinct v6 flows from 2 hosts -> live count 8 (S-17.33v6)");
+        // G3 work conservation: all 8 sit in the tin, nothing dropped.
+        NS_TEST_ASSERT_MSG_EQ(edge->GetInnerDiscAt(kBulkSlot)->GetNPackets(),
+                              8u,
+                              "no spurious v6-classification drops (8 enqueued, 8 resident)");
 
         Simulator::Destroy();
     }
@@ -5665,6 +5866,8 @@ class DiffServCakeQ15Suite : public TestSuite
         AddTestCase(new TestCake_RttPresetInternetIsRfc8289Default(), Duration::EXTENSIVE);
         AddTestCase(new TestCake_RttPresetSatelliteScalesTinAttributes(), Duration::EXTENSIVE);
         AddTestCase(new TestCake_LiveBulkCounterTracksConcurrentFlows(), Duration::EXTENSIVE);
+        AddTestCase(new TestS17v6FlowHashBulkCounter(), Duration::EXTENSIVE);
+        AddTestCase(new TestQ18v2CakeTinHostIsoIPv6(), Duration::QUICK);
         AddTestCase(new TestCake_AutorateTracksStepArrivalRate(), Duration::EXTENSIVE);
         AddTestCase(new Diffserv4TinRatesTest, Duration::EXTENSIVE);
         AddTestCase(new RrulLatencyTest, Duration::EXTENSIVE);

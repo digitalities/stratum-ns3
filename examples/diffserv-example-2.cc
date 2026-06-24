@@ -46,6 +46,7 @@
 #include "ns3/stratum-core-queue-disc.h"
 #include "ns3/stratum-edge-queue-disc.h"
 #include "ns3/stratum-helper.h"
+#include "ns3/stratum-install-helper.h"
 #include "ns3/stratum-llq-scheduler.h"
 #include "ns3/stratum-monitor-helper.h"
 #include "ns3/stratum-pq-scheduler.h"
@@ -65,12 +66,7 @@ using namespace ns3;
 namespace diffserv = ns3::stratum::diffserv;
 using ns3::stratum::CoreQueueDisc;
 using ns3::stratum::EdgeQueueDisc;
-using ns3::stratum::kAnyAppType;
-using ns3::stratum::kAnyHost;
-using ns3::stratum::kAnyPort;
-using ns3::stratum::kAnyProtocol;
 using ns3::stratum::LlqScheduler;
-using ns3::stratum::MarkRule;
 using ns3::stratum::MonitorHelper;
 using ns3::stratum::MredMode;
 using ns3::stratum::PolicerType;
@@ -553,11 +549,6 @@ RunQuickScenario(const std::string& scheduler,
     // Source address of s(0) for Premium mark rule
     Ipv4Address srcAddr0 = srcIfs[0].GetAddress(0); // s(0) source IP
 
-    // ---- Remove default queue discs on bottleneck link ----
-    TrafficControlHelper tchUninstall;
-    tchUninstall.Uninstall(devE1Core.Get(0)); // e1 -> core
-    tchUninstall.Uninstall(devE1Core.Get(1)); // core -> e1
-
     // ====================================================================
     // DiffServ Edge configuration (e1 -> core)
     //
@@ -631,64 +622,80 @@ RunQuickScenario(const std::string& scheduler,
     // --- Mark rules ---
     // Rule 1: packets FROM s(0) → DSCP 46 (Premium/EF)
     // ns-2: addMarkRule 46 [$s(0) id] -1 any any
-    helper.AddMarkRule(edgeDisc,
-                       46,
-                       static_cast<int32_t>(srcAddr0.Get()), // srcAddr = s(0)
-                       kAnyHost,                             // dstAddr = any
-                       kAnyProtocol,                         // protocol = any
-                       kAnyAppType);                         // appType = any
+    edgeDisc->AddMarkRule({.dscp = 46, .srcAddr = srcAddr0});
 
     // Rule 2: telnet traffic (dstPort 23) → DSCP 10 (AF11)
     // ns-2: addMarkRule 10 -1 -1 any telnet
-    helper.AddMarkRuleWithPorts(edgeDisc,
-                                10,
-                                kAnyHost,
-                                kAnyHost,
-                                kAnyProtocol,
-                                kAnyAppType,
-                                kAnyPort,
-                                23); // dstPort = telnet
+    edgeDisc->AddMarkRule({.dscp = 10, .dstPort = 23});
 
     // Rule 3: FTP traffic (dstPort 21) → DSCP 12 (AF12)
     // ns-2: addMarkRule 12 -1 -1 any ftp
-    helper.AddMarkRuleWithPorts(edgeDisc,
-                                12,
-                                kAnyHost,
-                                kAnyHost,
-                                kAnyProtocol,
-                                kAnyAppType,
-                                kAnyPort,
-                                21); // dstPort = FTP
+    edgeDisc->AddMarkRule({.dscp = 12, .dstPort = 21});
 
     // --- Policy entries ---
     // Premium (EF): TokenBucket CIR=500kbps, CBS=100K bytes
-    helper.AddTokenBucketPolicy(edgeDisc, 46, 500000.0, 100000.0);
+    helper.AddTokenBucketPolicy(edgeDisc, {.codePt = 46, .cirBps = 500000.0, .cbsBytes = 100000.0});
     helper.AddDumbPolicy(edgeDisc, 51); // out-of-profile EF
 
     // Gold (AF): Dumb for telnet (no metering), TSW2CM for FTP
     helper.AddDumbPolicy(edgeDisc, 10); // Telnet — no policing
     // TSW2CM for FTP: CIR = algBW/2/2 = 2000000/2/2 = 500000 bps
-    helper.AddTsw2cmPolicy(edgeDisc, 12, 500000.0);
+    helper.AddTsw2cmPolicy(edgeDisc, {.codePt = 12, .cirBps = 500000.0});
     helper.AddDumbPolicy(edgeDisc,
                          14); // FTP out-of-profile (downstream of TSW2CM)
 
     // Best Effort: TokenBucket CIR=700kbps, CBS=100K bytes
-    helper.AddTokenBucketPolicy(edgeDisc, 0, 700000.0, 100000.0);
+    helper.AddTokenBucketPolicy(edgeDisc, {.codePt = 0, .cirBps = 700000.0, .cbsBytes = 100000.0});
     helper.AddDumbPolicy(edgeDisc, 50); // out-of-profile BE
 
     // --- Policer entries ---
     // Premium: TokenBucket 46 → 51 (out-of-profile)
-    helper.AddPolicerEntry(edgeDisc, PolicerType::TOKEN_BUCKET, 46, 51, 51);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 51, 51, 51);
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::TOKEN_BUCKET,
+                            .initialCodePt = 46,
+                            .downgrade1 = 51,
+                            .downgrade2 = 51,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::TOKEN_BUCKET)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 51,
+                            .downgrade1 = 51,
+                            .downgrade2 = 51,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
 
     // Gold: Dumb for telnet, TSW2CM for FTP: 12 → 14 (downgrade)
-    helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 10, 10, 10);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::TSW2CM, 12, 14, 14);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 14, 14, 14);
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 10,
+                            .downgrade1 = 10,
+                            .downgrade2 = 10,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::TSW2CM,
+                            .initialCodePt = 12,
+                            .downgrade1 = 14,
+                            .downgrade2 = 14,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::TSW2CM)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 14,
+                            .downgrade1 = 14,
+                            .downgrade2 = 14,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
 
     // Best Effort: TokenBucket 0 → 50 (out-of-profile)
-    helper.AddPolicerEntry(edgeDisc, PolicerType::TOKEN_BUCKET, 0, 50, 50);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 50, 50, 50);
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::TOKEN_BUCKET,
+                            .initialCodePt = 0,
+                            .downgrade1 = 50,
+                            .downgrade2 = 50,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::TOKEN_BUCKET)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 50,
+                            .downgrade1 = 50,
+                            .downgrade2 = 50,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
 
     // --- PHB table ---
     // Premium
@@ -706,8 +713,7 @@ RunQuickScenario(const std::string& scheduler,
 
     // --- Install edge disc ---
     Ptr<NetDevice> e1Dev = devE1Core.Get(0);
-    Ptr<TrafficControlLayer> tc = e1Dev->GetNode()->GetObject<TrafficControlLayer>();
-    tc->SetRootQueueDiscOnDevice(e1Dev, edgeDisc);
+    stratum::InstallRoot(e1Dev, edgeDisc);
     edgeDisc->Initialize();
 
     // --- MRED modes (set per-queue AFTER Initialize, when sub-queues exist) ---
@@ -722,23 +728,49 @@ RunQuickScenario(const std::string& scheduler,
 
     // --- RED/DROP thresholds ---
     // Premium Q0: tail-drop, in-profile max=30, out-of-profile drop-all
-    helper.ConfigQueue(edgeInner, 0, 0, 30.0, 30.0, 1.0); // P0: accept up to 30
-    helper.ConfigQueue(edgeInner, 0, 1, -1.0, -1.0,
-                       0.0); // P1: drop all (thMin<0)
+    helper.ConfigQueue(
+        edgeInner,
+        {.queue = 0, .prec = 0, .thMin = 30.0, .thMax = 30.0, .maxP = 1.0}); // P0: accept up to 30
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 0,
+                        .prec = 1,
+                        .thMin = -1.0,
+                        .thMax = -1.0,
+                        .maxP = 0.0}); // P1: drop all (thMin<0)
 
     // Gold Q1: RIO-C (WRED) per-precedence thresholds
-    helper.ConfigQueue(edgeInner, 1, 0, 60.0, 110.0,
-                       0.02); // AF11 (Telnet): gentle
-    helper.ConfigQueue(edgeInner, 1, 1, 30.0, 60.0,
-                       0.6); // AF12 (FTP in): moderate
-    helper.ConfigQueue(edgeInner, 1, 2, 5.0, 10.0,
-                       0.8); // AF13 (FTP out): aggressive
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 1,
+                        .prec = 0,
+                        .thMin = 60.0,
+                        .thMax = 110.0,
+                        .maxP = 0.02}); // AF11 (Telnet): gentle
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 1,
+                        .prec = 1,
+                        .thMin = 30.0,
+                        .thMax = 60.0,
+                        .maxP = 0.6}); // AF12 (FTP in): moderate
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 1,
+                        .prec = 2,
+                        .thMin = 5.0,
+                        .thMax = 10.0,
+                        .maxP = 0.8}); // AF13 (FTP out): aggressive
 
     // BE Q2: tail-drop, in-profile max=100, out-of-profile drop-all
-    helper.ConfigQueue(edgeInner, 2, 0, 100.0, 100.0,
-                       1.0); // P0: accept up to 100
-    helper.ConfigQueue(edgeInner, 2, 1, -1.0, -1.0,
-                       0.0); // P1: drop all (thMin<0)
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 2,
+                        .prec = 0,
+                        .thMin = 100.0,
+                        .thMax = 100.0,
+                        .maxP = 1.0}); // P0: accept up to 100
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 2,
+                        .prec = 1,
+                        .thMin = -1.0,
+                        .thMax = -1.0,
+                        .maxP = 0.0}); // P1: drop all (thMin<0)
 
     // Store global reference for metric recording
     g_edgeDisc = edgeDisc;
@@ -762,12 +794,12 @@ RunQuickScenario(const std::string& scheduler,
     helper.AddPhbEntry(coreInner, 0, 0, 0);
 
     Ptr<NetDevice> coreDev = devE1Core.Get(1);
-    Ptr<TrafficControlLayer> tcCore = coreDev->GetNode()->GetObject<TrafficControlLayer>();
-    tcCore->SetRootQueueDiscOnDevice(coreDev, coreDisc);
+    stratum::InstallRoot(coreDev, coreDisc);
     coreDisc->Initialize();
 
-    coreInner->SetMredMode(MredMode::DROP_TAIL);
-    helper.ConfigQueue(coreInner, 0, 0, 50.0, 50.0, 1.0);
+    coreInner->SetMredModeAllQueues(MredMode::DROP_TAIL);
+    helper.ConfigQueue(coreInner,
+                       {.queue = 0, .prec = 0, .thMin = 50.0, .thMax = 50.0, .maxP = 1.0});
 
     // ====================================================================
     // Traffic 1: Premium / EF (1 CBR, 300 kbps, 1300-byte packets)
@@ -1104,11 +1136,6 @@ RunFullScenario(double simTime,
 
     Ipv4GlobalRoutingHelper::PopulateRoutingTables();
 
-    // ---- Remove default queue discs on the bottleneck ----
-    TrafficControlHelper tchUninstall;
-    tchUninstall.Uninstall(devBottleneck.Get(0));
-    tchUninstall.Uninstall(devBottleneck.Get(1));
-
     // ====================================================================
     // Diagnostic fast-path: replace our DiffServ queue disc with a stock
     // ns-3 RedQueueDisc on the bottleneck. No classification, no
@@ -1237,32 +1264,11 @@ RunFullScenario(double simTime,
     if (classifierMode == "port-based")
     {
         // Rule 1: Telnet (TCP dstPort 23)  -> DSCP 10 (AF11, DP0)
-        helper.AddMarkRuleWithPorts(edgeDisc,
-                                    10,
-                                    kAnyHost,
-                                    kAnyHost,
-                                    kAnyProtocol,
-                                    kAnyAppType,
-                                    kAnyPort,
-                                    23);
+        edgeDisc->AddMarkRule({.dscp = 10, .dstPort = 23});
         // Rule 2: FTP (TCP dstPort 21)     -> DSCP 12 (AF12, DP1)
-        helper.AddMarkRuleWithPorts(edgeDisc,
-                                    12,
-                                    kAnyHost,
-                                    kAnyHost,
-                                    kAnyProtocol,
-                                    kAnyAppType,
-                                    kAnyPort,
-                                    21);
+        edgeDisc->AddMarkRule({.dscp = 12, .dstPort = 21});
         // Rule 3: HTTP (TCP dstPort 80)    -> DSCP 14 (AF13, DP2)
-        helper.AddMarkRuleWithPorts(edgeDisc,
-                                    14,
-                                    kAnyHost,
-                                    kAnyHost,
-                                    kAnyProtocol,
-                                    kAnyAppType,
-                                    kAnyPort,
-                                    80);
+        edgeDisc->AddMarkRule({.dscp = 14, .dstPort = 80});
         // Default: unmatched -> DSCP 0 (Default/BE)
     }
     else // srtcm
@@ -1297,17 +1303,16 @@ RunFullScenario(double simTime,
             Ipv4Address srcAddr = n(src)->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
             Ipv4Address dstAddr = n(dst)->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
             helper.AddSrTcmMeterRule(edgeDisc,
-                                     srcAddr,
-                                     kWildcardSrcPort,
-                                     dstAddr,
-                                     23,
-                                     6,
-                                     10,
-                                     10,
-                                     12,
-                                     srtcmTelnetCirBps,
-                                     telnetCbs,
-                                     0.0);
+                                     {.srcIp = srcAddr,
+                                      .srcPort = kWildcardSrcPort,
+                                      .dstIp = dstAddr,
+                                      .dstPort = 23,
+                                      .proto = 6,
+                                      .greenDscp = 10,
+                                      .yellowDscp = 10,
+                                      .redDscp = 12,
+                                      .cirBps = srtcmTelnetCirBps,
+                                      .cbsBytes = telnetCbs});
         }
 
         // FTP: DP1 stays GREEN (12), OOP -> DP2 (14 / 14).
@@ -1319,17 +1324,16 @@ RunFullScenario(double simTime,
             Ipv4Address srcAddr = n(src)->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
             Ipv4Address dstAddr = n(dst)->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
             helper.AddSrTcmMeterRule(edgeDisc,
-                                     srcAddr,
-                                     kWildcardSrcPort,
-                                     dstAddr,
-                                     21,
-                                     6,
-                                     12,
-                                     12,
-                                     14,
-                                     srtcmFtpCirBps,
-                                     ftpCbs,
-                                     0.0);
+                                     {.srcIp = srcAddr,
+                                      .srcPort = kWildcardSrcPort,
+                                      .dstIp = dstAddr,
+                                      .dstPort = 21,
+                                      .proto = 6,
+                                      .greenDscp = 12,
+                                      .yellowDscp = 12,
+                                      .redDscp = 14,
+                                      .cirBps = srtcmFtpCirBps,
+                                      .cbsBytes = ftpCbs});
         }
 
         // HTTP: reclassification across all three drop precedences.
@@ -1341,17 +1345,16 @@ RunFullScenario(double simTime,
             Ipv4Address srcAddr = n(src)->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
             Ipv4Address dstAddr = n(dst)->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
             helper.AddSrTcmMeterRule(edgeDisc,
-                                     srcAddr,
-                                     kWildcardSrcPort,
-                                     dstAddr,
-                                     80,
-                                     6,
-                                     10,
-                                     12,
-                                     14,
-                                     srtcmHttpCirBps,
-                                     httpCbs,
-                                     0.0);
+                                     {.srcIp = srcAddr,
+                                      .srcPort = kWildcardSrcPort,
+                                      .dstIp = dstAddr,
+                                      .dstPort = 80,
+                                      .proto = 6,
+                                      .greenDscp = 10,
+                                      .yellowDscp = 12,
+                                      .redDscp = 14,
+                                      .cirBps = srtcmHttpCirBps,
+                                      .cbsBytes = httpCbs});
         }
     }
 
@@ -1359,15 +1362,40 @@ RunFullScenario(double simTime,
     helper.AddDumbPolicy(edgeDisc, 10);
     helper.AddDumbPolicy(edgeDisc, 12);
     helper.AddDumbPolicy(edgeDisc, 14);
-    helper.AddTokenBucketPolicy(edgeDisc, 0, 500000.0, 10000.0);
+    helper.AddTokenBucketPolicy(edgeDisc, {.codePt = 0, .cirBps = 500000.0, .cbsBytes = 10000.0});
     helper.AddDumbPolicy(edgeDisc, 50);
 
     // --- Policer entries ---
-    helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 10, 10, 10);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 12, 12, 12);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 14, 14, 14);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::TOKEN_BUCKET, 0, 50, 50);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 50, 50, 50);
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 10,
+                            .downgrade1 = 10,
+                            .downgrade2 = 10,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 12,
+                            .downgrade1 = 12,
+                            .downgrade2 = 12,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 14,
+                            .downgrade1 = 14,
+                            .downgrade2 = 14,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::TOKEN_BUCKET,
+                            .initialCodePt = 0,
+                            .downgrade1 = 50,
+                            .downgrade2 = 50,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::TOKEN_BUCKET)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 50,
+                            .downgrade1 = 50,
+                            .downgrade2 = 50,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
 
     // --- PHB table: DSCP -> (queue, drop_prec) ---
     helper.AddPhbEntry(edgeInner, 10, 0, 0); // Telnet -> Q0/DP0
@@ -1378,8 +1406,7 @@ RunFullScenario(double simTime,
 
     // --- Install edge disc on n0 -> n466 ---
     Ptr<NetDevice> e1Dev = devBottleneck.Get(0);
-    Ptr<TrafficControlLayer> tc = e1Dev->GetNode()->GetObject<TrafficControlLayer>();
-    tc->SetRootQueueDiscOnDevice(e1Dev, edgeDisc);
+    stratum::InstallRoot(e1Dev, edgeDisc);
     edgeDisc->Initialize();
 
     // MRED modes (after Initialize)
@@ -1391,13 +1418,30 @@ RunFullScenario(double simTime,
     edgeInner->SetQueueBandwidth(0, 2550000.0); // 85% of 3 Mbps
 
     // --- RED/WRED thresholds for selected parameter set ---
-    helper.ConfigQueue(edgeInner, 0, 0, wred.dp0_min, wred.dp0_max, wred.dp0_maxP);
-    helper.ConfigQueue(edgeInner, 0, 1, wred.dp1_min, wred.dp1_max, wred.dp1_maxP);
-    helper.ConfigQueue(edgeInner, 0, 2, wred.dp2_min, wred.dp2_max, wred.dp2_maxP);
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 0,
+                        .prec = 0,
+                        .thMin = wred.dp0_min,
+                        .thMax = wred.dp0_max,
+                        .maxP = wred.dp0_maxP});
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 0,
+                        .prec = 1,
+                        .thMin = wred.dp1_min,
+                        .thMax = wred.dp1_max,
+                        .maxP = wred.dp1_maxP});
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 0,
+                        .prec = 2,
+                        .thMin = wred.dp2_min,
+                        .thMax = wred.dp2_max,
+                        .maxP = wred.dp2_maxP});
 
     // Default queue: tail-drop at QueueLimit, 1 is reject (-1,-1)
-    helper.ConfigQueue(edgeInner, 1, 0, 50.0, 50.0, 1.0);
-    helper.ConfigQueue(edgeInner, 1, 1, -1.0, -1.0, 0.0);
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 1, .prec = 0, .thMin = 50.0, .thMax = 50.0, .maxP = 1.0});
+    helper.ConfigQueue(edgeInner,
+                       {.queue = 1, .prec = 1, .thMin = -1.0, .thMax = -1.0, .maxP = 0.0});
 
     g_edgeDisc = edgeDisc;
 
@@ -1417,11 +1461,11 @@ RunFullScenario(double simTime,
     helper.AddPhbEntry(coreInner, 0, 0, 0);
 
     Ptr<NetDevice> coreDev = devBottleneck.Get(1);
-    Ptr<TrafficControlLayer> tcCore = coreDev->GetNode()->GetObject<TrafficControlLayer>();
-    tcCore->SetRootQueueDiscOnDevice(coreDev, coreDisc);
+    stratum::InstallRoot(coreDev, coreDisc);
     coreDisc->Initialize();
-    coreInner->SetMredMode(MredMode::DROP_TAIL);
-    helper.ConfigQueue(coreInner, 0, 0, 60.0, 60.0, 1.0);
+    coreInner->SetMredModeAllQueues(MredMode::DROP_TAIL);
+    helper.ConfigQueue(coreInner,
+                       {.queue = 0, .prec = 0, .thMin = 60.0, .thMax = 60.0, .maxP = 1.0});
 
     // ====================================================================
     // Resolve sink addresses

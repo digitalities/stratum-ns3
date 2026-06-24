@@ -71,9 +71,6 @@
 using namespace ns3;
 namespace diffserv = ns3::stratum::diffserv;
 using ns3::stratum::EdgeQueueDisc;
-using ns3::stratum::kAnyHost;
-using ns3::stratum::kAnyProtocol;
-using ns3::stratum::MarkRule;
 using ns3::stratum::PolicerType;
 using ns3::stratum::ScfqScheduler;
 using ns3::stratum::Wf2qPlusScheduler;
@@ -220,19 +217,19 @@ RunQ17Scenario(const std::string& scheduler, const std::array<double, kNumSessio
     const std::array<uint8_t, kNumSessions> kDscp = {10, 20};
     for (uint32_t i = 0; i < kNumSessions; ++i)
     {
-        MarkRule rule;
-        rule.dscp = kDscp[i];
-        rule.srcAddr = static_cast<int32_t>(ifs[i].GetAddress(0).Get());
-        rule.dstAddr = kAnyHost;
-        rule.protocol = kAnyProtocol;
-        disc->AddMarkRule(rule);
+        disc->AddMarkRule({.dscp = kDscp[i], .srcAddr = ifs[i].GetAddress(0)});
     }
 
     diffserv::Helper helper;
     for (uint32_t i = 0; i < kNumSessions; ++i)
     {
         helper.AddDumbPolicy(disc, kDscp[i]);
-        helper.AddPolicerEntry(disc, PolicerType::DUMB, kDscp[i], kDscp[i], kDscp[i]);
+        helper.AddPolicerEntry(disc,
+                               {.policer = PolicerType::DUMB,
+                                .initialCodePt = kDscp[i],
+                                .downgrade1 = kDscp[i],
+                                .downgrade2 = kDscp[i],
+                                .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
         helper.AddPhbEntry(discInner, kDscp[i], i, 0);
     }
 
@@ -298,7 +295,8 @@ RunQ17Scenario(const std::string& scheduler, const std::array<double, kNumSessio
     {
         discInner->SetQueueLimit(i, kQueueLimit);
         // WRED OFF (thMin=thMax=very-high) so backlog is uncapped by AQM.
-        discInner->ConfigQueue(i, 0, 50000.0, 100000.0, 0.001);
+        discInner->ConfigQueue(
+            {.queue = i, .prec = 0, .thMin = 50000.0, .thMax = 100000.0, .maxP = 0.001});
     }
 
     // UDP CBR sources at 5 * link rate each — the access link absorbs

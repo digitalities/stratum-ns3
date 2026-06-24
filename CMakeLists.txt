@@ -38,8 +38,8 @@ build_lib(
     model/stratum-trace-replay-application.cc
     model/stratum-aqm-registry.cc
     model/stratum-scheduler-registry.cc
+    model/stratum-ds-field.cc
     model/stratum-dscp-tag.cc
-    model/stratum-app-type-tag.cc
     model/stratum-policy-classifier.cc
     model/stratum-per-flow-policy-classifier.cc
     model/stratum-edge-queue-disc.cc
@@ -49,9 +49,11 @@ build_lib(
     model/stratum-onoff-application.cc
     model/stratum-empirical-cdf-loader.cc
     helper/stratum-helper.cc
+    helper/stratum-install-helper.cc
     helper/stratum-monitor-helper.cc
     helper/stratum-onoff-helper.cc
     helper/stratum-cake-helper.cc
+    helper/stratum-l4s-helper.cc
     helper/stratum-cake-stats-formatter.cc
     helper/stratum-flent-csv-sink.cc
   HEADER_FILES
@@ -94,8 +96,8 @@ build_lib(
     model/stratum-cake-linux-autorate-hook.h
     model/stratum-l4s-timestamp-tag.h
     model/stratum-trace-replay-application.h
+    model/stratum-ds-field.h
     model/stratum-dscp-tag.h
-    model/stratum-app-type-tag.h
     model/stratum-policy-classifier.h
     model/stratum-edge-meter-provider.h
     model/stratum-per-flow-policy-classifier.h
@@ -109,9 +111,11 @@ build_lib(
     model/stratum-aqm-registry.h
     model/stratum-scheduler-registry.h
     helper/stratum-helper.h
+    helper/stratum-install-helper.h
     helper/stratum-monitor-helper.h
     helper/stratum-onoff-helper.h
     helper/stratum-cake-helper.h
+    helper/stratum-l4s-helper.h
     helper/stratum-cake-stats-formatter.h
     helper/stratum-flent-csv-sink.h
   LIBRARIES_TO_LINK
@@ -143,4 +147,5 @@ build_lib(
     test/diffserv-cake-host-iso-jitter-floor-test.cc
     test/diffserv-cake-host-bulk-state-test.cc
     test/tcp-count-ack-jitter-test-suite.cc
+    test/ds-field-test-suite.cc
 )

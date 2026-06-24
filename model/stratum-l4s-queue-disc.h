@@ -187,18 +187,14 @@ class QueueDisc : public ns3::QueueDisc, public QueueStatsProvider
 
     /**
      * @brief Forwards to m_classicAqm as RedQueueDisc. Red-only.
-     * @param q physical queue index
-     * @param prec drop-precedence index
-     * @param thMin RED minimum threshold (packets)
-     * @param thMax RED maximum threshold (packets)
-     * @param maxP maximum drop probability
+     * @param cfg RED threshold configuration
      */
-    void ConfigQueue(uint32_t q, uint32_t prec, double thMin, double thMax, double maxP);
+    void ConfigQueue(const RedQueueConfig& cfg);
 
     /**
      * @brief Forwards to m_classicAqm as RedQueueDisc. Red-only.
      * @param mode MRED mode to install
-     * @param q physical queue index (or kMaxQueues for all)
+     * @param q physical queue index
      */
     void SetMredMode(MredMode mode, uint32_t q);
 

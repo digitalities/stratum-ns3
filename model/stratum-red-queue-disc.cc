@@ -9,6 +9,7 @@
 
 #include "stratum-red-queue-disc.h"
 
+#include "stratum-ds-field.h"
 #include "stratum-dscp-tag.h"
 #include "stratum-rr-scheduler.h"
 
@@ -155,19 +156,19 @@ RedQueueDisc::GetNumQueues() const
 }
 
 void
-RedQueueDisc::ConfigQueue(uint32_t queue, uint32_t prec, double thMin, double thMax, double maxP)
+RedQueueDisc::ConfigQueue(const RedQueueConfig& cfg)
 {
-    NS_LOG_FUNCTION(this << queue << prec << thMin << thMax << maxP);
+    NS_LOG_FUNCTION(this << cfg.queue << cfg.prec << cfg.thMin << cfg.thMax << cfg.maxP);
 
-    if (GetNQueueDiscClasses() > queue)
+    if (GetNQueueDiscClasses() > cfg.queue)
     {
-        GetSubQueue(queue)->ConfigureVirtualQueue(prec, thMin, thMax, maxP);
+        GetSubQueue(cfg.queue)->ConfigureVirtualQueue(cfg.prec, cfg.thMin, cfg.thMax, cfg.maxP);
     }
     else
     {
         NS_LOG_WARN("ConfigQueue called before children created; "
                     "queue "
-                    << queue << " does not exist yet.");
+                    << cfg.queue << " does not exist yet.");
     }
 }
 
@@ -181,18 +182,22 @@ RedQueueDisc::SetMredMode(MredMode mode, uint32_t queue)
         NS_LOG_WARN("SetMredMode called before children created.");
         return;
     }
+    GetSubQueue(queue)->SetMredMode(mode);
+}
 
-    if (queue >= kMaxQueues)
+void
+RedQueueDisc::SetMredModeAllQueues(MredMode mode)
+{
+    NS_LOG_FUNCTION(this << static_cast<uint32_t>(mode));
+
+    if (GetNQueueDiscClasses() == 0)
     {
-        // Apply to all queues
-        for (uint32_t i = 0; i < GetNQueueDiscClasses(); ++i)
-        {
-            GetSubQueue(i)->SetMredMode(mode);
-        }
+        NS_LOG_WARN("SetMredModeAllQueues called before children created.");
+        return;
     }
-    else
+    for (uint32_t i = 0; i < GetNQueueDiscClasses(); ++i)
     {
-        GetSubQueue(queue)->SetMredMode(mode);
+        GetSubQueue(i)->SetMredMode(mode);
     }
 }
 
@@ -308,13 +313,13 @@ RedQueueDisc::PrintPhbTable() const
 uint8_t
 RedQueueDisc::GetCodePoint(Ptr<const QueueDiscItem> item) const
 {
-    Ptr<const Ipv4QueueDiscItem> ipItem = DynamicCast<const Ipv4QueueDiscItem>(item);
-    if (!ipItem)
+    uint8_t dscp;
+    if (!GetDscp(item, dscp))
     {
-        NS_LOG_WARN("Non-IPv4 packet; returning code point 0.");
+        NS_LOG_WARN("Non-IP packet; returning code point 0.");
         return 0;
     }
-    return static_cast<uint8_t>(ipItem->GetHeader().GetDscp());
+    return dscp;
 }
 
 Ptr<RedSubQueue>
@@ -427,8 +432,8 @@ bool
 RedQueueDisc::DoEnqueue(Ptr<QueueDiscItem> item)
 {
     NS_LOG_FUNCTION(this << item);
-    // Prefer a classifier-attached DscpTag over the IPv4
-    // header DSCP when present — symmetric with DoDequeue's
+    // Prefer a classifier-attached DscpTag over the packet's
+    // DS-field DSCP when present — symmetric with DoDequeue's
     // tag-first lookup. The edge/core composer stamps the final
     // policed DSCP as a tag and delegates to this inner via the
     // public Enqueue path.
@@ -464,7 +469,8 @@ RedQueueDisc::DoDequeue()
         return nullptr;
     }
 
-    // Read DSCP from tag if present, else from IPv4 header
+    // Read DSCP from tag if present, else from the packet's DS field
+    // (GetCodePoint reads it family-agnostically for IPv4 and IPv6)
     uint8_t codePt;
     DscpTag dscpTag;
     if (item->GetPacket()->PeekPacketTag(dscpTag))

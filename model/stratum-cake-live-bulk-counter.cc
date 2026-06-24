@@ -6,13 +6,9 @@
 
 #include "stratum-cake-live-bulk-counter.h"
 
-#include "ns3/ipv4-header.h"
-#include "ns3/ipv4-queue-disc-item.h"
 #include "ns3/log.h"
 #include "ns3/simulator.h"
 #include "ns3/string.h"
-#include "ns3/tcp-header.h"
-#include "ns3/udp-header.h"
 
 namespace ns3::stratum::cake
 {
@@ -94,36 +90,19 @@ LiveBulkCounter::GetLiveCount(Time now)
 uint64_t
 LiveBulkCounter::FlowHashFromItem(Ptr<const QueueDiscItem> item)
 {
-    Ptr<const Ipv4QueueDiscItem> ipv4Item = DynamicCast<const Ipv4QueueDiscItem>(item);
-    if (!ipv4Item)
+    // Non-IP packets (e.g. ARP) have no 5-tuple to hash; collapse them to a
+    // single bucket so they do not inflate the per-host live-flow count with
+    // one unique hash each. GetUint8Value(IP_DSFIELD) is true for both IPv4 and
+    // IPv6 items and false for non-IP items — the family-agnostic IP guard.
+    uint8_t dsField;
+    if (!item->GetUint8Value(QueueItem::IP_DSFIELD, dsField))
     {
-        // Non-IPv4: treat all such packets as a single bulk flow so they
-        // do not inflate the per-packet count by one unique hash each.
         return 0;
     }
-
-    const Ipv4Header& ip = ipv4Item->GetHeader();
-    uint64_t h = (static_cast<uint64_t>(ip.GetSource().Get()) << 32) |
-                 static_cast<uint64_t>(ip.GetDestination().Get());
-
-    // Copy the packet so header removal does not mutate the original.
-    Ptr<Packet> pkt = ipv4Item->GetPacket()->Copy();
-    if (ip.GetProtocol() == 17)
-    {
-        UdpHeader udp;
-        pkt->RemoveHeader(udp);
-        h ^= (static_cast<uint64_t>(udp.GetSourcePort()) << 16) |
-             static_cast<uint64_t>(udp.GetDestinationPort());
-    }
-    else if (ip.GetProtocol() == 6)
-    {
-        TcpHeader tcp;
-        pkt->RemoveHeader(tcp);
-        h ^= (static_cast<uint64_t>(tcp.GetSourcePort()) << 16) |
-             static_cast<uint64_t>(tcp.GetDestinationPort());
-    }
-    h ^= static_cast<uint64_t>(ip.GetProtocol());
-    return h;
+    // Ipv4QueueDiscItem / Ipv6QueueDiscItem both override Hash() with a Murmur3
+    // hash over their respective 5-tuple (source, destination, protocol, source
+    // port, destination port). One call, both families.
+    return item->Hash();
 }
 
 } // namespace ns3::stratum::cake

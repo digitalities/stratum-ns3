@@ -60,6 +60,7 @@
 #include "ns3/point-to-point-module.h"
 #include "ns3/stratum-constants.h"
 #include "ns3/stratum-helper.h"
+#include "ns3/stratum-install-helper.h"
 #include "ns3/stratum-l4s-coupled-scheduler.h"
 #include "ns3/stratum-l4s-queue-disc.h"
 #include "ns3/stratum-pq-scheduler.h"
@@ -300,20 +301,14 @@ InstallDisc(NetDeviceContainer bottleneck, Mode mode)
                                                               UintegerValue(8));
         disc->SetScheduler(sched);
 
-        // AggregateObject + TrafficControlLayer pattern matches Phase C.
         bottleneck.Get(0)->AggregateObject(disc);
-        Ptr<TrafficControlLayer> tcl =
-            bottleneck.Get(0)->GetNode()->GetObject<TrafficControlLayer>();
-        if (tcl)
-        {
-            tcl->SetRootQueueDiscOnDevice(bottleneck.Get(0), disc);
-        }
+        stratum::InstallRoot(bottleneck.Get(0), disc);
         disc->Initialize();
 
         // L4S queue (idx 0): wide RED thresholds so only the L4S mark-step
         // drives the sub-queue. Classic queue (idx 1): standard WRED.
-        disc->ConfigQueue(0, 0, 100.0, 200.0, 0.1);
-        disc->ConfigQueue(1, 0, 30.0, 80.0, 0.1);
+        disc->ConfigQueue({.queue = 0, .prec = 0, .thMin = 100.0, .thMax = 200.0, .maxP = 0.1});
+        disc->ConfigQueue({.queue = 1, .prec = 0, .thMin = 30.0, .thMax = 80.0, .maxP = 0.1});
 
         g_l4sDisc = disc;
         g_plainDisc = disc;
@@ -334,15 +329,11 @@ InstallDisc(NetDeviceContainer bottleneck, Mode mode)
     disc->SetScheduler(sched);
 
     bottleneck.Get(0)->AggregateObject(disc);
-    Ptr<TrafficControlLayer> tcl = bottleneck.Get(0)->GetNode()->GetObject<TrafficControlLayer>();
-    if (tcl)
-    {
-        tcl->SetRootQueueDiscOnDevice(bottleneck.Get(0), disc);
-    }
+    stratum::InstallRoot(bottleneck.Get(0), disc);
     disc->Initialize();
 
-    disc->ConfigQueue(0, 0, 30.0, 80.0, 0.1);
-    disc->ConfigQueue(1, 0, 30.0, 80.0, 0.1);
+    disc->ConfigQueue({.queue = 0, .prec = 0, .thMin = 30.0, .thMax = 80.0, .maxP = 0.1});
+    disc->ConfigQueue({.queue = 1, .prec = 0, .thMin = 30.0, .thMax = 80.0, .maxP = 0.1});
 
     g_l4sDisc = nullptr;
     g_plainDisc = disc;

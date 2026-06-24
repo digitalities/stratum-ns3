@@ -42,9 +42,11 @@ Three audiences:
 - **Part III — Evidence and validation.** The three-way cross-simulator
   comparison, L4S and CAKE fidelity results, the wireless demonstration,
   and the AQM characterisation suite.
-- **Appendices.** RFC 2697/2698/2859 conformance vectors (Appendix A) and
-  the long-form validation record with full methodological depth
-  (Appendix B).
+- **Appendices.** RFC 2697/2698/2859 conformance vectors (Appendix A), the
+  long-form validation record with full methodological depth (Appendix B), the
+  AQM-eval Flent interop workflow (Appendix C), and the IPv6 dual-stack
+  mechanism with worked examples (Appendix D), and the command-line reference
+  generated from each example's --PrintHelp (Appendix E).
 
 ## What this handbook does not cover
 

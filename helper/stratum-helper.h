@@ -10,7 +10,6 @@
 
 #include "ns3/net-device.h"
 #include "ns3/ptr.h"
-#include "ns3/stratum-app-type-tag.h"
 #include "ns3/stratum-constants.h"
 #include "ns3/stratum-core-queue-disc.h"
 #include "ns3/stratum-edge-queue-disc.h"
@@ -35,6 +34,86 @@
 
 namespace ns3::stratum::diffserv
 {
+
+/// Canonical DiffServ PHB layout selected by SetAsDiffserv.
+enum class Profile
+{
+    ExpeditedForwarding, //!< EF (DSCP 46) on a priority lane + best-effort (DSCP 0).
+    BestEffort,          //!< A single best-effort queue.
+};
+
+/// Declarative specification for SetAsDiffserv.
+struct DiffservSpec
+{
+    Profile profile = Profile::ExpeditedForwarding; //!< PHB layout to compose.
+    Ptr<Scheduler> scheduler = nullptr; //!< Across-queue scheduler; nullptr -> PriorityScheduler.
+};
+
+/**
+ * @brief Designated-initialiser spec for a per-flow srTCM metering rule.
+ *
+ * Pass to Helper::AddSrTcmMeterRule(). Fields listed in declaration order
+ * so C++20 designated-initialiser syntax compiles. Rates in bits/s;
+ * bucket sizes in bytes. srcPort and dstPort default to kAnyPort (wildcard).
+ */
+struct SrTcmMeterRuleSpec
+{
+    Ipv4Address srcIp;          //!< Source IPv4 address (concrete — no wildcard)
+    uint16_t srcPort{kAnyPort}; //!< Source port (kAnyPort = wildcard)
+    Ipv4Address dstIp;          //!< Destination IPv4 address
+    uint16_t dstPort{kAnyPort}; //!< Destination port
+    uint8_t proto{6};           //!< IP protocol (6 = TCP, 17 = UDP)
+    uint8_t greenDscp{0};       //!< DSCP stamped on GREEN-coloured packets
+    uint8_t yellowDscp{0};      //!< DSCP stamped on YELLOW
+    uint8_t redDscp{0};         //!< DSCP stamped on RED
+    double cirBps{0.0};         //!< Committed information rate (bits/s)
+    double cbsBytes{0.0};       //!< Committed burst size (bytes)
+    double ebsBytes{0.0};       //!< Excess burst size (bytes)
+};
+
+/** @brief Designated-init spec for a token-bucket meter policy (codepoint-keyed). */
+struct TokenBucketPolicySpec
+{
+    uint8_t codePt;  //!< DSCP code point this policy applies to
+    double cirBps;   //!< committed information rate in bits/s
+    double cbsBytes; //!< committed burst size in bytes
+};
+
+/** @brief Designated-init spec for an srTCM (RFC 2697) meter policy (codepoint-keyed). */
+struct SrTcmPolicySpec
+{
+    uint8_t codePt;  //!< DSCP code point this policy applies to
+    double cirBps;   //!< committed information rate in bits/s
+    double cbsBytes; //!< committed burst size in bytes
+    double ebsBytes; //!< excess burst size in bytes
+};
+
+/** @brief Designated-init spec for a trTCM (RFC 2698) meter policy (codepoint-keyed). */
+struct TrTcmPolicySpec
+{
+    uint8_t codePt;  //!< DSCP code point this policy applies to
+    double cirBps;   //!< committed information rate in bits/s
+    double cbsBytes; //!< committed burst size in bytes
+    double pirBps;   //!< peak information rate in bits/s
+    double pbsBytes; //!< peak burst size in bytes
+};
+
+/** @brief Designated-init spec for a TSW2CM meter policy (codepoint-keyed). */
+struct Tsw2cmPolicySpec
+{
+    uint8_t codePt;            //!< DSCP code point this policy applies to
+    double cirBps;             //!< committed information rate in bits/s
+    double winLenSeconds{1.0}; //!< TSW averaging-window length in seconds
+};
+
+/** @brief Designated-init spec for a TSW3CM meter policy (codepoint-keyed). */
+struct Tsw3cmPolicySpec
+{
+    uint8_t codePt;            //!< DSCP code point this policy applies to
+    double cirBps;             //!< committed information rate in bits/s
+    double pirBps;             //!< peak information rate in bits/s
+    double winLenSeconds{1.0}; //!< TSW averaging-window length in seconds
+};
 
 /**
  * @brief Create @p path (mode 0755) if it does not already exist.
@@ -120,49 +199,6 @@ class Helper
     Ptr<RedQueueDisc> InstallRedInner(Ptr<CoreQueueDisc> core);
 
     // -------------------------------------------------------------------------
-    // Mark rules (edge only)
-    // -------------------------------------------------------------------------
-
-    /**
-     * @brief Add a multi-field classification rule to an edge queue disc.
-     *
-     * @param edge the edge queue disc to configure
-     * @param dscp the DSCP to assign on match
-     * @param srcAddr source address (-1 = kAnyHost = any)
-     * @param dstAddr destination address (-1 = kAnyHost = any)
-     * @param protocol IP protocol (0 = kAnyProtocol = any)
-     * @param appType application type (0 = kAnyAppType = any)
-     */
-    void AddMarkRule(Ptr<EdgeQueueDisc> edge,
-                     uint8_t dscp,
-                     int32_t srcAddr,
-                     int32_t dstAddr,
-                     uint8_t protocol,
-                     uint32_t appType);
-
-    /**
-     * @brief Add a mark rule with transport-layer port matching (RFC 2475
-     * §2.3.1).
-     *
-     * @param edge the edge queue disc to configure
-     * @param dscp initial DSCP to mark matching packets with
-     * @param srcAddr source IPv4 address (kAnyHost = -1 for wildcard)
-     * @param dstAddr destination IPv4 address (kAnyHost = -1 for wildcard)
-     * @param protocol IP protocol (kAnyProtocol = 0 for wildcard, 6=TCP, 17=UDP)
-     * @param appType application type (0 = kAnyAppType = any)
-     * @param srcPort source port (kAnyPort = 0 for wildcard)
-     * @param dstPort destination port (kAnyPort = 0 for wildcard)
-     */
-    void AddMarkRuleWithPorts(Ptr<EdgeQueueDisc> edge,
-                              uint8_t dscp,
-                              int32_t srcAddr,
-                              int32_t dstAddr,
-                              uint8_t protocol,
-                              uint32_t appType,
-                              uint16_t srcPort,
-                              uint16_t dstPort);
-
-    // -------------------------------------------------------------------------
     // Policy entries — rates in bits/s, converted to bytes/s internally
     // -------------------------------------------------------------------------
 
@@ -175,110 +211,56 @@ class Helper
     void AddDumbPolicy(Ptr<EdgeQueueDisc> edge, uint8_t codePt);
 
     /**
-     * @brief Add a Token-Bucket policy entry.
+     * @brief Add a token-bucket policy entry (codepoint-keyed).
      *
      * @param edge the edge queue disc to configure
-     * @param codePt DSCP code point this policy applies to
-     * @param cirBps committed information rate in bits/s
-     * @param cbsBytes committed burst size in bytes
+     * @param p designated-initialiser spec (see TokenBucketPolicySpec)
      */
-    void AddTokenBucketPolicy(Ptr<EdgeQueueDisc> edge,
-                              uint8_t codePt,
-                              double cirBps,
-                              double cbsBytes);
+    void AddTokenBucketPolicy(Ptr<EdgeQueueDisc> edge, const TokenBucketPolicySpec& p);
 
     /**
-     * @brief Add an srTCM (RFC 2697) policy entry.
+     * @brief Add an srTCM (RFC 2697) policy entry (codepoint-keyed).
      *
      * @param edge the edge queue disc to configure
-     * @param codePt DSCP code point this policy applies to
-     * @param cirBps committed information rate in bits/s
-     * @param cbsBytes committed burst size in bytes
-     * @param ebsBytes excess burst size in bytes
+     * @param p designated-initialiser spec (see SrTcmPolicySpec)
      */
-    void AddSrTcmPolicy(Ptr<EdgeQueueDisc> edge,
-                        uint8_t codePt,
-                        double cirBps,
-                        double cbsBytes,
-                        double ebsBytes);
+    void AddSrTcmPolicy(Ptr<EdgeQueueDisc> edge, const SrTcmPolicySpec& p);
 
     /**
      * @brief Register a per-flow srTCM metering rule on an edge queue disc.
      *
-     * Installs the edge disc's PerFlowPolicyClassifier (creating it
-     * on the first call) and adds a 5-tuple rule. Rates are in
-     * bits/s; bucket sizes in bytes.
+     * Installs the edge disc's PerFlowPolicyClassifier (creating it on the
+     * first call) and adds a 5-tuple rule. The CIR in @p rule is in bits/s
+     * and is converted to bytes/s internally; bucket sizes are in bytes.
      *
      * @param edge the edge queue disc
-     * @param srcIp source IPv4 address (concrete — no wildcards)
-     * @param srcPort source port
-     * @param dstIp destination IPv4 address
-     * @param dstPort destination port
-     * @param proto IP protocol (6 = TCP, 17 = UDP)
-     * @param greenDscp DSCP stamped on GREEN-coloured packets
-     * @param yellowDscp DSCP stamped on YELLOW
-     * @param redDscp DSCP stamped on RED
-     * @param cirBps committed information rate in bits/s
-     * @param cbsBytes committed burst size in bytes
-     * @param ebsBytes excess burst size in bytes
+     * @param rule designated-initialiser spec (see SrTcmMeterRuleSpec)
      */
-    void AddSrTcmMeterRule(Ptr<EdgeQueueDisc> edge,
-                           Ipv4Address srcIp,
-                           uint16_t srcPort,
-                           Ipv4Address dstIp,
-                           uint16_t dstPort,
-                           uint8_t proto,
-                           uint8_t greenDscp,
-                           uint8_t yellowDscp,
-                           uint8_t redDscp,
-                           double cirBps,
-                           double cbsBytes,
-                           double ebsBytes);
+    void AddSrTcmMeterRule(Ptr<EdgeQueueDisc> edge, const SrTcmMeterRuleSpec& rule);
 
     /**
-     * @brief Add a trTCM (RFC 2698) policy entry.
+     * @brief Add a trTCM (RFC 2698) policy entry (codepoint-keyed).
      *
      * @param edge the edge queue disc to configure
-     * @param codePt DSCP code point this policy applies to
-     * @param cirBps committed information rate in bits/s
-     * @param cbsBytes committed burst size in bytes
-     * @param pirBps peak information rate in bits/s
-     * @param pbsBytes peak burst size in bytes
+     * @param p designated-initialiser spec (see TrTcmPolicySpec)
      */
-    void AddTrTcmPolicy(Ptr<EdgeQueueDisc> edge,
-                        uint8_t codePt,
-                        double cirBps,
-                        double cbsBytes,
-                        double pirBps,
-                        double pbsBytes);
+    void AddTrTcmPolicy(Ptr<EdgeQueueDisc> edge, const TrTcmPolicySpec& p);
 
     /**
-     * @brief Add a TSW2CM policy entry.
+     * @brief Add a TSW2CM policy entry (codepoint-keyed).
      *
      * @param edge the edge queue disc to configure
-     * @param codePt DSCP code point this policy applies to
-     * @param cirBps committed information rate in bits/s
-     * @param winLenSeconds TSW averaging-window length in seconds (default 1.0)
+     * @param p designated-initialiser spec (see Tsw2cmPolicySpec)
      */
-    void AddTsw2cmPolicy(Ptr<EdgeQueueDisc> edge,
-                         uint8_t codePt,
-                         double cirBps,
-                         double winLenSeconds = 1.0);
+    void AddTsw2cmPolicy(Ptr<EdgeQueueDisc> edge, const Tsw2cmPolicySpec& p);
 
     /**
-     * @brief Add a TSW3CM policy entry.
+     * @brief Add a TSW3CM policy entry (codepoint-keyed).
      *
      * @param edge the edge queue disc to configure
-     * @param codePt DSCP code point this policy applies to
-     * @param cirBps committed information rate in bits/s
-     * @param pirBps peak information rate in bits/s
-     * @param winLenSeconds TSW averaging-window length in seconds (default 1.0)
+     * @param p designated-initialiser spec (see Tsw3cmPolicySpec)
      */
-    void AddTsw3cmPolicy(Ptr<EdgeQueueDisc> edge,
-                         uint8_t codePt,
-                         double cirBps,
-                         double pirBps,
-                         double winLenSeconds = 1.0);
+    void AddTsw3cmPolicy(Ptr<EdgeQueueDisc> edge, const Tsw3cmPolicySpec& p);
 
     // -------------------------------------------------------------------------
     // Policer entries
@@ -288,16 +270,10 @@ class Helper
      * @brief Add a policer table entry to an edge queue disc.
      *
      * @param edge the edge queue disc to configure
-     * @param policer the policer type
-     * @param initialCodePt GREEN outcome DSCP
-     * @param downgrade1 YELLOW (or out-of-profile) outcome DSCP
-     * @param downgrade2 RED outcome DSCP (0 if not applicable)
+     * @param entry the policer entry (designated-init: .policer, .initialCodePt,
+     *              .downgrade1, .downgrade2, .policyIndex)
      */
-    void AddPolicerEntry(Ptr<EdgeQueueDisc> edge,
-                         PolicerType policer,
-                         int initialCodePt,
-                         int downgrade1,
-                         int downgrade2);
+    void AddPolicerEntry(Ptr<EdgeQueueDisc> edge, const PolicerEntry& entry);
 
     // -------------------------------------------------------------------------
     // Shared configuration (any DS-RED-family queue disc)
@@ -323,15 +299,26 @@ class Helper
     void SetScheduler(Ptr<RedQueueDisc> disc, Ptr<Scheduler> scheduler);
 
     /** @brief Configure RED thresholds for a (queue, prec) virtual queue. */
-    void ConfigQueue(Ptr<RedQueueDisc> disc,
-                     uint32_t queue,
-                     uint32_t prec,
-                     double thMin,
-                     double thMax,
-                     double maxP);
+    void ConfigQueue(Ptr<RedQueueDisc> disc, const RedQueueConfig& cfg);
 
-    /** @brief Set the MRED mode for one or all queues. */
-    void SetMredMode(Ptr<RedQueueDisc> disc, MredMode mode, uint32_t queue = kMaxQueues);
+    /** @brief Set the MRED mode for one physical queue. */
+    void SetMredMode(Ptr<RedQueueDisc> disc, MredMode mode, uint32_t queue);
+
+    /** @brief Set the MRED mode for every physical queue. */
+    void SetMredModeAllQueues(Ptr<RedQueueDisc> disc, MredMode mode);
+
+    /**
+     * @brief Compose @p edge as a canonical DiffServ edge in one call.
+     *
+     * Installs the inner RED disc, sizes the queue/precedence topology for
+     * @p spec.profile, writes the PHB table, and attaches the scheduler
+     * (@p spec.scheduler, or a PriorityScheduler when null). Mutates @p edge
+     * in place; the caller initialises and installs it.
+     *
+     * @param edge edge queue disc to compose.
+     * @param spec PHB profile and optional scheduler.
+     */
+    static void SetAsDiffserv(Ptr<EdgeQueueDisc> edge, const DiffservSpec& spec = {});
 };
 
 } // namespace ns3::stratum::diffserv

@@ -6,6 +6,12 @@
  */
 
 #include "ns3/core-module.h"
+#include "ns3/internet-stack-helper.h"
+#include "ns3/ipv6-address-helper.h"
+#include "ns3/ipv6-interface-container.h"
+#include "ns3/node-container.h"
+#include "ns3/point-to-point-helper.h"
+#include "ns3/stratum-flent-csv-sink.h"
 #include "ns3/system-path.h"
 #include "ns3/test.h"
 
@@ -15,6 +21,7 @@
 #include <string>
 
 using namespace ns3;
+using namespace ns3::stratum;
 
 namespace
 {
@@ -216,6 +223,71 @@ class TestSFlentSinkBackwardsCompatNoHostid : public TestCase
 
 /**
  * @ingroup stratum-tests
+ * @brief A FlentUdpProbe client/server pair exchanges echoes over IPv6 and the
+ *        client records at least one RTT sample.
+ */
+class TestSFlentSinkIpv6LatencySample : public TestCase
+{
+  public:
+    TestSFlentSinkIpv6LatencySample()
+        : TestCase("SFlentSinkIpv6LatencySample")
+    {
+    }
+
+  private:
+    uint32_t m_samples{0};
+
+    void OnRtt(uint16_t, Time)
+    {
+        ++m_samples;
+    }
+
+    void DoRun() override
+    {
+        NodeContainer nodes;
+        nodes.Create(2);
+
+        PointToPointHelper p2p;
+        p2p.SetDeviceAttribute("DataRate", StringValue("10Mbps"));
+        p2p.SetChannelAttribute("Delay", StringValue("5ms"));
+        NetDeviceContainer devs = p2p.Install(nodes);
+
+        InternetStackHelper internet;
+        internet.Install(nodes);
+
+        Ipv6AddressHelper ipv6;
+        ipv6.SetBase(Ipv6Address("2001:db8::"), Ipv6Prefix(64));
+        Ipv6InterfaceContainer ifs = ipv6.Assign(devs);
+
+        const uint16_t port = 9999;
+
+        Ptr<FlentUdpProbeServer> server = CreateObject<FlentUdpProbeServer>();
+        server->SetAttribute("Port", UintegerValue(port));
+        server->SetAttribute("Local", AddressValue(Ipv6Address::GetAny()));
+        nodes.Get(1)->AddApplication(server);
+        server->SetStartTime(Seconds(0.0));
+
+        Ptr<FlentUdpProbeClient> client = CreateObject<FlentUdpProbeClient>();
+        // ifs index 1 = node1's interface; address index 1 = the global address (0 = link-local).
+        client->SetAttribute("RemoteAddress", AddressValue(ifs.GetAddress(1, 1)));
+        client->SetAttribute("RemotePort", UintegerValue(port));
+        client->SetAttribute("Interval", TimeValue(MilliSeconds(50)));
+        client->TraceConnectWithoutContext(
+            "Rtt",
+            MakeCallback(&TestSFlentSinkIpv6LatencySample::OnRtt, this));
+        nodes.Get(0)->AddApplication(client);
+        client->SetStartTime(Seconds(0.1));
+
+        Simulator::Stop(Seconds(1.0));
+        Simulator::Run();
+        Simulator::Destroy();
+
+        NS_TEST_ASSERT_MSG_GT(m_samples, 0, "at least one RTT sample must be recorded over IPv6");
+    }
+};
+
+/**
+ * @ingroup stratum-tests
  *
  * Test suite for FlentCsvSink host-attribution column.
  */
@@ -228,6 +300,7 @@ class DiffservFlentSinkTestSuite : public TestSuite
         AddTestCase(new TestSFlentSinkHostColumnEmitted(), TestCase::Duration::EXTENSIVE);
         AddTestCase(new TestSFlentSinkHostAttributionCorrect(), TestCase::Duration::EXTENSIVE);
         AddTestCase(new TestSFlentSinkBackwardsCompatNoHostid(), TestCase::Duration::EXTENSIVE);
+        AddTestCase(new TestSFlentSinkIpv6LatencySample(), TestCase::Duration::QUICK);
     }
 };
 

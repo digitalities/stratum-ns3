@@ -147,7 +147,7 @@ The bottleneck is a `EdgeQueueDisc` that classifies flows by source IP and dispa
 // Two-flow scenario: flow 0 -> DSCP 10 (queue 0), flow 1 -> DSCP 20 (queue 1).
 MarkRule rule0;
 rule0.dscp = 10;
-rule0.srcAddr = static_cast<int32_t>(Ipv4Address("10.0.1.1").Get());
+rule0.srcAddr = Ipv4Address("10.0.1.1");
 disc->AddMarkRule(rule0);
 ```
 

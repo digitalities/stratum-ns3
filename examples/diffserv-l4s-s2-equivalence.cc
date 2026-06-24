@@ -52,6 +52,7 @@
 #include "ns3/point-to-point-module.h"
 #include "ns3/stratum-constants.h"
 #include "ns3/stratum-helper.h"
+#include "ns3/stratum-install-helper.h"
 #include "ns3/stratum-l4s-coupled-scheduler.h"
 #include "ns3/stratum-l4s-queue-disc.h"
 #include "ns3/stratum-send-time-tag.h"
@@ -255,17 +256,12 @@ main(int argc, char* argv[])
     disc->SetScheduler(sched);
 
     bottleneckDev.Get(0)->AggregateObject(disc);
-    Ptr<TrafficControlLayer> tcl =
-        bottleneckDev.Get(0)->GetNode()->GetObject<TrafficControlLayer>();
-    if (tcl)
-    {
-        tcl->SetRootQueueDiscOnDevice(bottleneckDev.Get(0), disc);
-    }
+    stratum::InstallRoot(bottleneckDev.Get(0), disc);
     disc->Initialize();
 
     // L4S queue: wide so only the marker drives it. Classic: WRED.
-    disc->ConfigQueue(1, 0, 100.0, 200.0, 0.1);
-    disc->ConfigQueue(0, 0, 30.0, 80.0, 0.1);
+    disc->ConfigQueue({.queue = 1, .prec = 0, .thMin = 100.0, .thMax = 200.0, .maxP = 0.1});
+    disc->ConfigQueue({.queue = 0, .prec = 0, .thMin = 30.0, .thMax = 80.0, .maxP = 0.1});
 
     g_disc = disc;
 

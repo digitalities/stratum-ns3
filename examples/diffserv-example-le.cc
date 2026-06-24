@@ -47,6 +47,7 @@
 #include "ns3/stratum-constants.h"
 #include "ns3/stratum-edge-queue-disc.h"
 #include "ns3/stratum-helper.h"
+#include "ns3/stratum-install-helper.h"
 #include "ns3/stratum-pq-scheduler.h"
 #include "ns3/traffic-control-module.h"
 #include "ns3/uinteger.h"
@@ -148,7 +149,6 @@ main(int argc, char* argv[])
 
     // --- DiffServ edge on e1 -> e2 bottleneck ------------------------------
     TrafficControlHelper tchUninstall;
-    tchUninstall.Uninstall(devE1E2.Get(0));
     tchUninstall.Uninstall(devE1E2.Get(1));
 
     Ptr<EdgeQueueDisc> edge = CreateObject<EdgeQueueDisc>();
@@ -161,7 +161,7 @@ main(int argc, char* argv[])
     inner->SetNumPrec(1, 1); // LE queue (single precedence)
     inner->SetQueueLimit(0, 50);
     inner->SetQueueLimit(1, 50);
-    inner->SetMredMode(MredMode::DROP_TAIL);
+    inner->SetMredModeAllQueues(MredMode::DROP_TAIL);
 
     // Strict-priority scheduler: index 0 highest. BE above LE — the whole
     // point of LE (RFC 8622): starve when BE has packets ready.
@@ -178,8 +178,7 @@ main(int argc, char* argv[])
     // Marking is done at the sender via socket Tos attribute (see below);
     // the edge just enforces the PHB. No mark rules installed here.
 
-    Ptr<TrafficControlLayer> tc = e1->GetObject<TrafficControlLayer>();
-    tc->SetRootQueueDiscOnDevice(devE1E2.Get(0), edge);
+    stratum::InstallRoot(devE1E2.Get(0), edge);
     edge->Initialize();
 
     g_edgeDisc = edge;

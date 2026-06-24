@@ -109,10 +109,20 @@ main(int argc, char* argv[])
     // every packet enters the Gold (AF11) policy as captured.
 
     // Meter + policer: TSW2CM on DSCP 10, downgrading out-of-profile to 12.
-    helper.AddTsw2cmPolicy(edgeDisc, 10, cir);
+    helper.AddTsw2cmPolicy(edgeDisc, {.codePt = 10, .cirBps = cir});
     helper.AddDumbPolicy(edgeDisc, 12);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::TSW2CM, 10, 12, 12);
-    helper.AddPolicerEntry(edgeDisc, PolicerType::DUMB, 12, 12, 12);
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::TSW2CM,
+                            .initialCodePt = 10,
+                            .downgrade1 = 12,
+                            .downgrade2 = 12,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::TSW2CM)});
+    helper.AddPolicerEntry(edgeDisc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 12,
+                            .downgrade1 = 12,
+                            .downgrade2 = 12,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
 
     // PHB table: AF11 -> queue 0 / prec 0; AF12 -> queue 0 / prec 1.
     helper.AddPhbEntry(edgeInner, 10, 0, 0);
@@ -128,8 +138,12 @@ main(int argc, char* argv[])
     // (in packets). Set it far above the stream length for both AF11 and
     // AF12 so every metered packet enqueues and the AF12 count reflects the
     // policer verdict alone, with no queue-occupancy drop.
-    helper.ConfigQueue(edgeInner, 0, 0, 6000000.0, 6000000.0, 1.0);
-    helper.ConfigQueue(edgeInner, 0, 1, 6000000.0, 6000000.0, 1.0);
+    helper.ConfigQueue(
+        edgeInner,
+        {.queue = 0, .prec = 0, .thMin = 6000000.0, .thMax = 6000000.0, .maxP = 1.0});
+    helper.ConfigQueue(
+        edgeInner,
+        {.queue = 0, .prec = 1, .thMin = 6000000.0, .thMax = 6000000.0, .maxP = 1.0});
 
     // ---- Replay application ----
     Ptr<Node> node = CreateObject<Node>();

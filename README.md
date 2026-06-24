@@ -78,6 +78,7 @@ Beyond the inherited 2001 DiffServ4NS algorithms:
 - **Monitoring:** per-DSCP frequency-distributed OWD and IPDV; per-tin
   byte / packet / drop / mark counters matching `tc -s qdisc show`;
   per-flow goodput.
+- **IPv6:** DiffServ, L4S, and CAKE all work over both IPv4 and IPv6; the DS-field and ECN handling is address-family agnostic.
 - **Reproducibility:** the accompanying paper's figures reproduce from this
   tree via `scripts/reproduce-paper.sh`.
 

@@ -225,9 +225,9 @@
   <rect x="30" y="410" width="880" height="95" rx="6" class="foundation"/>
   <text x="42" y="425" class="title" fill="#333">THREE CONCRETE COMPOSITIONS OF THIS SUBSTRATE</text>
 
-  <!-- Composition 1: classical DiffServ (canonical; the 2001 thesis use case) -->
+  <!-- Composition 1: DiffServ -->
   <rect x="42" y="431" width="852" height="17" rx="4" class="client-ds"/>
-  <text x="54" y="444" class="client-head client-ds-t">Classical DiffServ</text>
+  <text x="54" y="444" class="client-head client-ds-t">DiffServ</text>
   <text x="160" y="444" class="client-body">EF / AF / BE classes · multi-precedence WRED queueing · strict-priority or WFQ policy</text>
   <text x="720" y="444" class="client-reuse">all introduced here</text>
 

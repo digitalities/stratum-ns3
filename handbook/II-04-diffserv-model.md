@@ -291,9 +291,7 @@ To be explicit about scope:
 
 - **No colour-aware mode.** srTCM and trTCM are colour-blind only;
   adding colour-aware is a bounded extension but deferred.
-- **No IPv6.** The DS field is read/written on IPv4 only; the ns-3 IPv6
-  stack has compatible machinery and the port is architecturally ready
-  but untested on it.
+- **IPv6 supported.** The DS field is read/written in an address-family-agnostic way; DiffServ operates over both IPv4 and IPv6.
 - **No inter-domain trust model.** The simulator assumes a single
   administrative domain; no bleaching or re-marking at simulated peering.
 - **No ECN interaction.** RFC 3168 ECN is left to the mainline ns-3 RED

@@ -9,7 +9,7 @@
 
 #include "stratum-edge-queue-disc.h"
 
-#include "stratum-app-type-tag.h"
+#include "stratum-ds-field.h"
 #include "stratum-dscp-tag.h"
 #include "stratum-dumb-meter.h"
 #include "stratum-fw-meter.h"
@@ -51,7 +51,8 @@ EdgeQueueDisc::GetTypeId()
                             .AddAttribute("Wash",
                                           "Egress DSCP wash (Linux tc-cake `wash` mode). "
                                           "When true, DoDequeue zeros the DSCP bits of the "
-                                          "IPv4 TOS byte on every dequeued item while "
+                                          "DS field (IPv4 ToS or IPv6 Traffic Class) on every "
+                                          "dequeued item while "
                                           "preserving the low two ECN bits. Classification "
                                           "still drives inner-slot routing; only the egress "
                                           "packet's DSCP byte is cleared.",
@@ -501,24 +502,17 @@ EdgeQueueDisc::Classify(Ptr<const QueueDiscItem> item) const
 {
     NS_LOG_FUNCTION(this << item);
 
-    Ptr<const Ipv4QueueDiscItem> ipItem = DynamicCast<const Ipv4QueueDiscItem>(item);
-    if (!ipItem)
+    // Family-agnostic address extraction — returns false for non-IP items.
+    Address src;
+    Address dst;
+    if (!stratum::GetL3Source(item, src))
     {
-        NS_LOG_WARN("Non-IPv4 packet; returning code point 0");
+        NS_LOG_WARN("Non-IP packet; returning code point 0");
         return 0;
     }
+    stratum::GetL3Destination(item, dst);
 
-    const Ipv4Header& hdr = ipItem->GetHeader();
-    int32_t srcAddr = static_cast<int32_t>(hdr.GetSource().Get());
-    int32_t dstAddr = static_cast<int32_t>(hdr.GetDestination().Get());
-    uint8_t protocol = hdr.GetProtocol();
-
-    AppTypeTag appTag;
-    uint32_t appType = kAnyAppType;
-    if (item->GetPacket()->PeekPacketTag(appTag))
-    {
-        appType = appTag.GetAppType();
-    }
+    uint8_t protocol = item->GetIpProtocol();
 
     // Extract transport-layer ports if protocol is TCP or UDP.
     // Both TCP and UDP headers start with srcPort (2 bytes, network order)
@@ -539,15 +533,13 @@ EdgeQueueDisc::Classify(Ptr<const QueueDiscItem> item) const
     {
         const MarkRule& rule = m_markRules[i];
 
-        bool srcMatch = (rule.srcAddr == kAnyHost) || (rule.srcAddr == srcAddr);
-        bool dstMatch = (rule.dstAddr == kAnyHost) || (rule.dstAddr == dstAddr);
+        bool srcMatch = rule.srcAddr.Matches(src);
+        bool dstMatch = rule.dstAddr.Matches(dst);
         bool protoMatch = (rule.protocol == kAnyProtocol) || (rule.protocol == protocol);
-        bool appMatch =
-            (rule.appType == kAnyAppType) || (appType == kAnyAppType) || (rule.appType == appType);
         bool srcPortMatch = (rule.srcPort == kAnyPort) || (rule.srcPort == srcPort);
         bool dstPortMatch = (rule.dstPort == kAnyPort) || (rule.dstPort == dstPort);
 
-        if (srcMatch && dstMatch && protoMatch && appMatch && srcPortMatch && dstPortMatch)
+        if (srcMatch && dstMatch && protoMatch && srcPortMatch && dstPortMatch)
         {
             NS_LOG_DEBUG("Mark rule " << i
                                       << " matched; DSCP=" << static_cast<uint32_t>(rule.dscp));
@@ -555,10 +547,11 @@ EdgeQueueDisc::Classify(Ptr<const QueueDiscItem> item) const
         }
     }
 
-    // No match: preserve original DSCP ( passthrough). Read from
-    // the IPv4 header directly — the inner has not been touched so no
-    // DscpTag is in play yet.
-    return static_cast<uint8_t>(hdr.GetDscp());
+    // No match: preserve original DSCP (passthrough). GetL3Source succeeded
+    // above so GetDscp will succeed too — byte-identical to hdr.GetDscp() for IPv4.
+    uint8_t dscp = 0;
+    stratum::GetDscp(item, dscp);
+    return dscp;
 }
 
 // --- QueueDisc overrides ---
@@ -581,6 +574,11 @@ EdgeQueueDisc::DoEnqueue(Ptr<QueueDiscItem> item)
     uint32_t meterPktSize = item->GetSize();
     uint8_t finalDscp;
 
+    // Per-flow (5-tuple) metering is IPv4-only: the per-flow rule API carries
+    // IPv4 addresses, and the FlowKey port extraction below assumes an IPv4
+    // payload offset. IPv6 items fall through to the aggregate DSCP-keyed
+    // policer. Wiring the v6 path here requires the v6 FlowKey fields and a
+    // v6 rule API to be wired together.
     Ptr<const Ipv4QueueDiscItem> ipItem = DynamicCast<const Ipv4QueueDiscItem>(item);
     if (m_perFlowClassifier && ipItem)
     {
@@ -665,23 +663,18 @@ EdgeQueueDisc::DoDequeue()
     }
     m_slotDispatcher->OnDequeue(static_cast<uint32_t>(slot), item, this);
 
-    // Read the DSCP tag and rewrite the IPv4 header TOS field.
+    // Read the DSCP tag and rewrite the IP header DS field.
     // The inner only peeks the tag; removal is the composer's job.
-    // When Wash is enabled, the high six TOS bits are zeroed at egress
+    // When Wash is enabled, the high six DS bits are zeroed at egress
     // (Linux tc-cake `wash` semantics) while ECN bits are preserved.
     DscpTag tag;
     if (item->GetPacket()->PeekPacketTag(tag))
     {
-        Ptr<Ipv4QueueDiscItem> ipItem = DynamicCast<Ipv4QueueDiscItem>(item);
-        if (ipItem)
-        {
-            uint8_t dscp = tag.GetDscp();
-            auto& hdr = const_cast<Ipv4Header&>(ipItem->GetHeader());
-            const uint8_t washedDscp = m_wash ? 0u : dscp;
-            hdr.SetTos((washedDscp << 2) | (hdr.GetTos() & 0x3));
-            NS_LOG_DEBUG("Dequeue: rewrote TOS to DSCP=" << static_cast<uint32_t>(washedDscp)
-                                                         << (m_wash ? " (washed)" : ""));
-        }
+        uint8_t dscp = tag.GetDscp();
+        const uint8_t washedDscp = m_wash ? 0u : dscp;
+        stratum::SetDscpPreservingEcn(item, washedDscp);
+        NS_LOG_DEBUG("Dequeue: rewrote DS field to DSCP=" << static_cast<uint32_t>(washedDscp)
+                                                          << (m_wash ? " (washed)" : ""));
         ConstCast<Packet>(item->GetPacket())->RemovePacketTag(tag);
     }
     else if (m_wash)
@@ -690,12 +683,7 @@ EdgeQueueDisc::DoDequeue()
         // packet with a pre-existing DSCP that bypassed our classifier
         // must still leave with DSCP=0 if Wash is on, so downstream
         // forwarders see CS0/Default.
-        Ptr<Ipv4QueueDiscItem> ipItem = DynamicCast<Ipv4QueueDiscItem>(item);
-        if (ipItem)
-        {
-            auto& hdr = const_cast<Ipv4Header&>(ipItem->GetHeader());
-            hdr.SetTos(hdr.GetTos() & 0x3);
-        }
+        stratum::SetDscpPreservingEcn(item, 0);
     }
 
     return item;

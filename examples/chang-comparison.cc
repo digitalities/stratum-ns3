@@ -94,6 +94,7 @@
 #include "ns3/point-to-point-module.h"
 #include "ns3/stratum-edge-queue-disc.h"
 #include "ns3/stratum-helper.h"
+#include "ns3/stratum-install-helper.h"
 #include "ns3/stratum-scfq-scheduler.h"
 #include "ns3/stratum-scheduler-registry.h"
 #include "ns3/stratum-sfq-scheduler.h"
@@ -112,9 +113,6 @@
 using namespace ns3;
 namespace diffserv = ns3::stratum::diffserv;
 using ns3::stratum::EdgeQueueDisc;
-using ns3::stratum::kAnyHost;
-using ns3::stratum::kAnyProtocol;
-using ns3::stratum::MarkRule;
 using ns3::stratum::PolicerType;
 using ns3::stratum::SchedulerArgs;
 using ns3::stratum::SchedulerRegistry;
@@ -258,26 +256,25 @@ main(int argc, char* argv[])
     // Mark rules: classify by source IP
     //   Flow 0 from 10.0.1.1 -> DSCP 10
     //   Flow 1 from 10.0.2.1 -> DSCP 20
-    MarkRule rule0;
-    rule0.dscp = 10;
-    rule0.srcAddr = static_cast<int32_t>(Ipv4Address("10.0.1.1").Get());
-    rule0.dstAddr = kAnyHost;
-    rule0.protocol = kAnyProtocol;
-    disc->AddMarkRule(rule0);
-
-    MarkRule rule1;
-    rule1.dscp = 20;
-    rule1.srcAddr = static_cast<int32_t>(Ipv4Address("10.0.2.1").Get());
-    rule1.dstAddr = kAnyHost;
-    rule1.protocol = kAnyProtocol;
-    disc->AddMarkRule(rule1);
+    disc->AddMarkRule({.dscp = 10, .srcAddr = Ipv4Address("10.0.1.1")});
+    disc->AddMarkRule({.dscp = 20, .srcAddr = Ipv4Address("10.0.2.1")});
 
     // Dumb metering (no rate limiting, passthrough)
     diffserv::Helper helper;
     helper.AddDumbPolicy(disc, 10);
     helper.AddDumbPolicy(disc, 20);
-    helper.AddPolicerEntry(disc, PolicerType::DUMB, 10, 10, 10);
-    helper.AddPolicerEntry(disc, PolicerType::DUMB, 20, 20, 20);
+    helper.AddPolicerEntry(disc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 10,
+                            .downgrade1 = 10,
+                            .downgrade2 = 10,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
+    helper.AddPolicerEntry(disc,
+                           {.policer = PolicerType::DUMB,
+                            .initialCodePt = 20,
+                            .downgrade1 = 20,
+                            .downgrade2 = 20,
+                            .policyIndex = static_cast<uint32_t>(PolicerType::DUMB)});
 
     // PHB: DSCP 10 -> queue 0, DSCP 20 -> queue 1
     helper.AddPhbEntry(discInner, 10, 0, 0);
@@ -312,19 +309,18 @@ main(int argc, char* argv[])
     discInner->SetScheduler(sched);
 
     // Install on the router's outgoing device toward receiver
-    TrafficControlHelper tch;
-    tch.Uninstall(rRecv.Get(0)); // remove default
     Ptr<NetDevice> routerDev = rRecv.Get(0);
-    Ptr<TrafficControlLayer> tc = router.Get(0)->GetObject<TrafficControlLayer>();
-    tc->SetRootQueueDiscOnDevice(routerDev, disc);
+    stratum::InstallRoot(routerDev, disc);
     disc->Initialize();
 
     // Large queue limits (paper: "practically unbounded")
     discInner->SetQueueLimit(0, 10000);
     discInner->SetQueueLimit(1, 10000);
     // Disable RED: set thresholds very high
-    discInner->ConfigQueue(0, 0, 50000.0, 100000.0, 0.1);
-    discInner->ConfigQueue(1, 0, 50000.0, 100000.0, 0.1);
+    discInner->ConfigQueue(
+        {.queue = 0, .prec = 0, .thMin = 50000.0, .thMax = 100000.0, .maxP = 0.1});
+    discInner->ConfigQueue(
+        {.queue = 1, .prec = 0, .thMin = 50000.0, .thMax = 100000.0, .maxP = 0.1});
 
     // ---- Applications ----
     uint16_t port0 = 5000;

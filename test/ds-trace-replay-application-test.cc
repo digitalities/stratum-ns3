@@ -11,6 +11,9 @@
 #include "ns3/fq-cobalt-queue-disc.h"
 #include "ns3/ipv4-header.h"
 #include "ns3/ipv4-queue-disc-item.h"
+#include "ns3/ipv6-address.h"
+#include "ns3/ipv6-header.h"
+#include "ns3/ipv6-queue-disc-item.h"
 #include "ns3/log.h"
 #include "ns3/node.h"
 #include "ns3/nstime.h"
@@ -34,6 +37,7 @@ namespace
 
 constexpr uint32_t k_dltEn10mb = 1;
 constexpr uint16_t k_ethertypeIpv4 = 0x0800;
+constexpr uint16_t k_ethertypeIpv6 = 0x86DD;
 
 /// Builder for one pcap record used by the tests.
 struct RecordSpec
@@ -91,6 +95,44 @@ WritePcap(const std::string& path, const std::vector<RecordSpec>& records, uint3
     out.Close();
 }
 
+/// Write one pcap file of IPv6 frames: 14-byte Ethernet (EtherType 0x86DD)
+/// + fixed 40-byte Ipv6Header + zero-filled payload. RecordSpec.srcIp/dstIp
+/// carry IPv6 literals; RecordSpec.proto becomes the Next Header byte.
+void
+WritePcapV6(const std::string& path,
+            const std::vector<RecordSpec>& records,
+            uint32_t snaplen = 2000)
+{
+    PcapFile out;
+    out.Open(path, std::ios::out);
+    out.Init(k_dltEn10mb, snaplen);
+
+    for (const RecordSpec& r : records)
+    {
+        std::vector<uint8_t> frame(r.totalFrameLen, 0);
+        frame[12] = static_cast<uint8_t>(k_ethertypeIpv6 >> 8);
+        frame[13] = static_cast<uint8_t>(k_ethertypeIpv6 & 0xff);
+
+        Ipv6Header hdr;
+        hdr.SetSource(Ipv6Address(r.srcIp.c_str()));
+        hdr.SetDestination(Ipv6Address(r.dstIp.c_str()));
+        hdr.SetNextHeader(r.proto);
+        const uint32_t payloadSize = r.totalFrameLen - 14 - hdr.GetSerializedSize();
+        hdr.SetPayloadLength(static_cast<uint16_t>(payloadSize));
+
+        Buffer buf;
+        buf.AddAtStart(hdr.GetSerializedSize());
+        hdr.Serialize(buf.Begin());
+        Buffer::Iterator it = buf.Begin();
+        std::vector<uint8_t> ipBytes(hdr.GetSerializedSize());
+        it.Read(ipBytes.data(), static_cast<uint32_t>(ipBytes.size()));
+        std::memcpy(frame.data() + 14, ipBytes.data(), ipBytes.size());
+
+        out.Write(r.tsSec, r.tsSubSec, frame.data(), r.totalFrameLen);
+    }
+    out.Close();
+}
+
 /// Construct an initialized FqCobaltQueueDisc target with host-isolation enabled.
 Ptr<FqCobaltQueueDisc>
 MakeTargetQdisc()
@@ -108,6 +150,14 @@ void
 RemoveFile(const std::string& path)
 {
     std::remove(path.c_str());
+}
+
+/// The IPv4 header of a replayed record. All pre-IPv6 fixtures are IPv4, so the
+/// item is always an Ipv4QueueDiscItem here; downcast to read its header.
+const Ipv4Header&
+V4Header(const TraceReplayApplication::Record& r)
+{
+    return DynamicCast<Ipv4QueueDiscItem>(r.item)->GetHeader();
 }
 
 } // unnamed namespace
@@ -235,13 +285,13 @@ class TestTraceReplay_OrderingPreserved : public TestCase
 
         // Source IPs at the head of each record reflect timestamp order:
         // 10.0.0.1 (t=0), 10.0.0.3 (t=5ms), 10.0.0.2 (t=10ms).
-        NS_TEST_ASSERT_MSG_EQ(rs[0].item->GetHeader().GetSource(),
+        NS_TEST_ASSERT_MSG_EQ(V4Header(rs[0]).GetSource(),
                               Ipv4Address("10.0.0.1"),
                               "earliest record by timestamp");
-        NS_TEST_ASSERT_MSG_EQ(rs[1].item->GetHeader().GetSource(),
+        NS_TEST_ASSERT_MSG_EQ(V4Header(rs[1]).GetSource(),
                               Ipv4Address("10.0.0.3"),
                               "5ms record sorts to middle");
-        NS_TEST_ASSERT_MSG_EQ(rs[2].item->GetHeader().GetSource(),
+        NS_TEST_ASSERT_MSG_EQ(V4Header(rs[2]).GetSource(),
                               Ipv4Address("10.0.0.2"),
                               "10ms record sorts to tail");
 
@@ -339,7 +389,7 @@ class TestTraceReplay_FiveTupleSynthesis : public TestCase
 
         std::vector<TraceReplayApplication::Record> rs = app->LoadTrace();
         NS_TEST_ASSERT_MSG_EQ(rs.size(), 1u, "one record");
-        const Ipv4Header& hdr = rs[0].item->GetHeader();
+        const Ipv4Header& hdr = V4Header(rs[0]);
         NS_TEST_ASSERT_MSG_EQ(hdr.GetSource(), Ipv4Address("192.168.1.5"), "source IP preserved");
         NS_TEST_ASSERT_MSG_EQ(hdr.GetDestination(),
                               Ipv4Address("10.0.0.42"),
@@ -352,6 +402,43 @@ class TestTraceReplay_FiveTupleSynthesis : public TestCase
                               "payload size = frame - L2 - L3");
 
         Simulator::Destroy();
+        RemoveFile(path);
+    }
+};
+
+/**
+ * @ingroup stratum-tests
+ * @brief A single IPv6 frame is replayed as one Ipv6QueueDiscItem whose header
+ *        preserves the captured source and destination addresses.
+ */
+class TestTraceReplay_Ipv6SinglePacket : public TestCase
+{
+  public:
+    TestTraceReplay_Ipv6SinglePacket()
+        : TestCase("TraceReplay_Ipv6SinglePacket")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const std::string path = "/tmp/stratum-trace-replay-v6-single.pcap";
+        const uint32_t frameLen = 14 + 40 + 100; // L2 + fixed IPv6 header + payload
+        WritePcapV6(path, {{0, 0, "2001:db8::1", "2001:db8::2", /*Next Header UDP*/ 17, frameLen}});
+
+        Ptr<TraceReplayApplication> app = CreateObject<TraceReplayApplication>();
+        app->AddInputPcap(path);
+        std::vector<TraceReplayApplication::Record> rs = app->LoadTrace();
+
+        NS_TEST_ASSERT_MSG_EQ(rs.size(), 1, "exactly one IPv6 record must be replayed");
+        Ptr<Ipv6QueueDiscItem> v6 = DynamicCast<Ipv6QueueDiscItem>(rs[0].item);
+        NS_TEST_ASSERT_MSG_NE(v6, nullptr, "replayed item must be an Ipv6QueueDiscItem");
+        NS_TEST_ASSERT_MSG_EQ(v6->GetHeader().GetSource(),
+                              Ipv6Address("2001:db8::1"),
+                              "IPv6 source address preserved");
+        NS_TEST_ASSERT_MSG_EQ(v6->GetHeader().GetDestination(),
+                              Ipv6Address("2001:db8::2"),
+                              "IPv6 destination address preserved");
         RemoveFile(path);
     }
 };
@@ -394,16 +481,16 @@ class TestTraceReplay_TwoPcapsMerged : public TestCase
         NS_TEST_ASSERT_MSG_EQ(rs[2].relativeOffset, MicroSeconds(15000), "third from A");
         NS_TEST_ASSERT_MSG_EQ(rs[3].relativeOffset, MicroSeconds(20000), "last from B");
 
-        NS_TEST_ASSERT_MSG_EQ(rs[0].item->GetHeader().GetSource(),
+        NS_TEST_ASSERT_MSG_EQ(V4Header(rs[0]).GetSource(),
                               Ipv4Address("10.0.0.1"),
                               "merge order place 0");
-        NS_TEST_ASSERT_MSG_EQ(rs[1].item->GetHeader().GetSource(),
+        NS_TEST_ASSERT_MSG_EQ(V4Header(rs[1]).GetSource(),
                               Ipv4Address("10.0.0.3"),
                               "merge order place 1");
-        NS_TEST_ASSERT_MSG_EQ(rs[2].item->GetHeader().GetSource(),
+        NS_TEST_ASSERT_MSG_EQ(V4Header(rs[2]).GetSource(),
                               Ipv4Address("10.0.0.2"),
                               "merge order place 2");
-        NS_TEST_ASSERT_MSG_EQ(rs[3].item->GetHeader().GetSource(),
+        NS_TEST_ASSERT_MSG_EQ(V4Header(rs[3]).GetSource(),
                               Ipv4Address("10.0.0.4"),
                               "merge order place 3");
 
@@ -423,6 +510,7 @@ class DsTraceReplayApplicationTestSuite : public TestSuite
         AddTestCase(new TestTraceReplay_OrderingPreserved, Duration::QUICK);
         AddTestCase(new TestTraceReplay_TimeAlignmentRelative, Duration::QUICK);
         AddTestCase(new TestTraceReplay_FiveTupleSynthesis, Duration::QUICK);
+        AddTestCase(new TestTraceReplay_Ipv6SinglePacket, Duration::QUICK);
         AddTestCase(new TestTraceReplay_TwoPcapsMerged, Duration::QUICK);
     }
 };

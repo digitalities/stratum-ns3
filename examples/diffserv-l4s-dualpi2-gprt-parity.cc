@@ -43,6 +43,7 @@
 #include "ns3/point-to-point-module.h"
 #include "ns3/stratum-cake-helper.h"
 #include "ns3/stratum-helper.h"
+#include "ns3/stratum-install-helper.h"
 #include "ns3/stratum-l4s-coupled-scheduler.h"
 #include "ns3/stratum-l4s-queue-disc.h"
 #include "ns3/tcp-cubic.h"
@@ -126,13 +127,7 @@ ConfigureL4sDualPi2OnDevice(Ptr<NetDevice> bottleneckDev,
     disc->SetScheduler(sched);
 
     bottleneckDev->AggregateObject(disc);
-    Ptr<TrafficControlLayer> tcl = bottleneckDev->GetNode()->GetObject<TrafficControlLayer>();
-    NS_ABORT_MSG_UNLESS(tcl, "TrafficControlLayer must be aggregated on the bottleneck node");
-    if (tcl->GetRootQueueDiscOnDevice(bottleneckDev))
-    {
-        tcl->DeleteRootQueueDiscOnDevice(bottleneckDev);
-    }
-    tcl->SetRootQueueDiscOnDevice(bottleneckDev, disc);
+    stratum::InstallRoot(bottleneckDev, disc);
     disc->Initialize();
     return disc;
 }
@@ -190,22 +185,9 @@ FindL4sInTree(Ptr<QueueDisc> q)
 Ptr<QueueDisc>
 ConfigureCakeDualPi2OnDevice(Ptr<NetDevice> bottleneckDev, DataRate rate, bool tinShaping)
 {
-    Ptr<TrafficControlLayer> tcl = bottleneckDev->GetNode()->GetObject<TrafficControlLayer>();
-    if (tcl && tcl->GetRootQueueDiscOnDevice(bottleneckDev))
-    {
-        tcl->DeleteRootQueueDiscOnDevice(bottleneckDev);
-    }
     Ptr<EdgeQueueDisc> edge = CreateObject<EdgeQueueDisc>();
-    cake::Helper::SetAsCakeDiffserv4(edge,
-                                     rate,
-                                     /*enableAckFilter=*/false,
-                                     /*enableLlq=*/false,
-                                     tinShaping,
-                                     /*enableHostIsolation=*/false,
-                                     /*useInnerTbfShaping=*/false,
-                                     /*enableAckFilterAggressive=*/false,
-                                     /*useDualPi2Inner=*/true);
-    tcl->SetRootQueueDiscOnDevice(bottleneckDev, edge);
+    cake::Helper::SetAsCakeDiffserv4(edge, rate, {.tinShaping = tinShaping, .dualPi2Inner = true});
+    stratum::InstallRoot(bottleneckDev, edge);
     edge->Initialize();
     return edge;
 }

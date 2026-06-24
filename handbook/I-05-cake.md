@@ -40,9 +40,7 @@ cake::Helper::SetAsCakeDiffserv4(edge, DataRate(totalRateBps));
 ```cpp
 // 2. Tag each sender's source IP with the tin's DSCP at the edge classifier,
 //    then route it via a "dumb" (no-meter) policy into the right tin.
-helper.AddMarkRule(edge, kTins[i].dscp,
-                   static_cast<int32_t>(senderIfs[i].GetAddress(0).Get()),
-                   kAnyHost, kAnyProtocol, 0);
+edge->AddMarkRule({.dscp = kTins[i].dscp, .srcAddr = senderIfs[i].GetAddress(0)});
 helper.AddDumbPolicy(edge, kTins[i].dscp);
 ```
 
@@ -138,11 +136,7 @@ const uint8_t kTosByFlow[4] = {kTosBE, kTosBK, kTosCS5, kTosEF};
 // 2. Install the CAKE DiffServ4 edge with per-tin rate-based shaping.
 cake::Helper::SetAsCakeDiffserv4(edgeDs,
                                  DataRate(bandwidth.GetBitRate()),
-                                 false,  // enableAckFilter
-                                 false,  // enableLlq
-                                 true,   // enableTinShaping
-                                 false,  // enableHostIsolation
-                                 false); // useInnerTbfShaping
+                                 {.tinShaping = true});
 ```
 
 ```cpp
@@ -210,21 +204,17 @@ See also: [appendix III-03A — CAKE Flent figure pack](III-04A-cake-flent-figur
 
 **What host isolation does**: CAKE triple-isolate mode keeps per-host bulk-flow counts and divides each flow's DRR quantum by `max(srcCount, dstCount)` — the larger of that flow's source-host and destination-host active-flow counts. It is flat per-flow DRR with a per-host divisor, not a separate outer queue per host. A host running many flows has each of its flows served with a proportionally smaller quantum, so opening more flows does not win it more aggregate bandwidth against a host running few.
 
-**Configuration pattern**: enable host-pair isolation by passing `enableHostIsolation=true` to any `cake::Helper::SetAsCake*` call:
+**Configuration pattern**: enable host-pair isolation by setting `.hostIsolation = true` in the `CakeOptions` argument of any `cake::Helper::SetAsCake*` call:
 
 ```cpp
 // BestEffort is the single-tin profile — isolates host-pair fairness
 // from tin-level effects.
 cake::Helper::SetAsCakeBestEffort(edgeDs,
                                   DataRate(bandwidth.GetBitRate()),
-                                  false,               // enableAckFilter
-                                  false,               // enableLlq
-                                  true,                // enableTinShaping
-                                  true,                // enableHostIsolation
-                                  false);              // useInnerTbfShaping
+                                  {.tinShaping = true, .hostIsolation = true});
 ```
 
-This sets `EnableHostIsolation=true` and `HostIsolationMode=Triple` on the patched-mainline `FqCobaltQueueDisc` (the `EnableHostIsolation` / `HostIsolationMode` attributes and the mode enum come from `patches/ns3/0006`; `patches/ns3/0016` adds the per-host hashing the modes consume). The same `enableHostIsolation` parameter is available on `SetAsCakeDiffserv4`, `SetAsCakeDiffserv3`, `SetAsCakeDiffserv8`, `SetAsCakePrecedence`, and `SetAsCakeAlphaTinShaped`.
+This sets `EnableHostIsolation=true` and `HostIsolationMode=Triple` on the patched-mainline `FqCobaltQueueDisc` (the `EnableHostIsolation` / `HostIsolationMode` attributes and the mode enum come from `patches/ns3/0006`; `patches/ns3/0016` adds the per-host hashing the modes consume). The same `.hostIsolation` option field of `CakeOptions` is available on `SetAsCakeDiffserv4`, `SetAsCakeDiffserv3`, `SetAsCakeDiffserv8`, `SetAsCakePrecedence`, and `SetAsCakeAlphaTinShaped`.
 
 > [!NOTE]
 > Triple-isolate equalises by source host **or** destination host — whichever side has more active flows (`max(srcCount, dstCount)`). For the asymmetry to show, host A and host B must use **different destination hosts**: then host A's source-host count drives the divisor and its flows are scaled down against host B's single flow. If instead **all flows share one destination sink**, the destination-host count saturates uniformly across every flow, the divisor cancels, and the result reduces to plain per-flow fairness: the many-flow host keeps its per-flow share. (This is the reverse of the retired per-`{src,dst}`-pair wrapper, where a shared sink was what collapsed a host's flows into one bucket.)
@@ -348,3 +338,19 @@ See also: [Implementation overview](III-04-cake.md) in the CAKE implementation c
 ### Found a problem?
 
 [File a recipe issue](https://github.com/digitalities/diffserv4ns/issues/new?template=recipe-request.yml)
+
+## Over IPv6
+
+The CAKE client is address-family agnostic. The DSCP-to-tin classifier reads the
+DS field from the IPv6 Traffic Class byte at the same position RFC 2474 defines
+for IPv4 — no patch and no configuration change are needed for IPv6. A minimal
+worked example, `cake-ipv6-recipe`, drives four CBR flows into the four diffserv4
+tins over a pure-IPv6 dumbbell:
+
+```bash
+./ns3 run "cake-ipv6-recipe"
+```
+
+Each tin's served throughput tracks its diffserv4 share exactly as it does over
+IPv4. Full capture and the shared dual-stack mechanism:
+[Appendix D — IPv6 dual-stack](appendix-D-ipv6-dual-stack.md).

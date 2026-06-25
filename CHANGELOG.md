@@ -7,6 +7,26 @@ This project follows [Semantic Versioning](https://semver.org).
 
 _Nothing yet._
 
+## v2.0.1 — 2026-06-25
+
+A patch release. No change to module behaviour, queueing, or the public API.
+
+### Fixed
+
+- The test suite no longer emits a confusing `Invalid test name` warning. Three
+  test-case names contained a character ns-3's runner rejects (`/`) and have been
+  renamed; the cases always ran, so this was cosmetic, but the warning showed up on
+  the install-verification step.
+- Running the test suite no longer prints stray empty `Packets Statistics` tables to
+  the console. `RedQueueDisc::PrintStats()` now writes through `std::cout` (with
+  identical ns-2-format output) so the robustness test that exercises it captures the
+  output instead of leaking it.
+
+### Added
+
+- `scripts/lint-test-names.sh`: a guard, run by the audit gates, that fails if any
+  test-case name uses a character ns-3 rejects.
+
 ## v2.0.0 — 2026-06-24
 
 A feature and API release. The headline is IPv6 support across all three clients;

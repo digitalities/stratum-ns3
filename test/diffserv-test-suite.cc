@@ -3665,12 +3665,17 @@ class PerSlotQueueStatsProbesTest : public TestCase
                               1,
                               "Slot 1 queue 0 should hold 1 packet");
 
-        // PrintStats should not crash for any slot (output discarded).
+        // PrintStats must not crash for any slot. Its output (the ns-2-style
+        // statistics table) is not asserted here, so redirect std::cout into a
+        // throwaway buffer to keep it out of the test runner's console output.
+        std::ostringstream sink;
+        std::streambuf* savedCout = std::cout.rdbuf(sink.rdbuf());
         edge->PrintStats();                              // zero-arg: slot 0
         edge->PrintStats(0);                             // explicit slot 0
         edge->PrintStats(1);                             // populated slot 1
         edge->PrintStats(2);                             // empty slot — no-op
         edge->PrintStats(EdgeQueueDisc::kMaxInnerSlots); // out of range
+        std::cout.rdbuf(savedCout);
 
         Simulator::Destroy();
     }

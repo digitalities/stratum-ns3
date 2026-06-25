@@ -21,6 +21,7 @@
 #include "ns3/uinteger.h"
 
 #include <cstdio>
+#include <iostream>
 
 namespace ns3
 {
@@ -265,11 +266,15 @@ RedQueueDisc::GetVirtualQueueLen(uint32_t queue, uint32_t prec) const
 void
 RedQueueDisc::PrintStats() const
 {
-    std::printf("\nPackets Statistics\n");
-    std::printf("=======================================\n");
-    std::printf(" CP  TotPkts   TxPkts   ldrops   edrops\n");
-    std::printf(" --  -------   ------   ------   ------\n");
+    // Write the ns-2-style table through std::cout rather than C stdio, so a
+    // caller can capture or silence it by redirecting the stream buffer. The
+    // snprintf format strings are unchanged, so the rendered output is identical.
+    std::cout << "\nPackets Statistics\n";
+    std::cout << "=======================================\n";
+    std::cout << " CP  TotPkts   TxPkts   ldrops   edrops\n";
+    std::cout << " --  -------   ------   ------   ------\n";
 
+    char line[80];
     for (int i = 0; i < kMaxCodePoints; ++i)
     {
         if (m_stats.pkts_cp[i] != 0)
@@ -278,27 +283,33 @@ RedQueueDisc::PrintStats() const
             double txPct = (pktsCp - m_stats.drops_cp[i] - m_stats.edrops_cp[i]) * 100.0 / pktsCp;
             double dropPct = m_stats.drops_cp[i] * 100.0 / pktsCp;
             double edropPct = m_stats.edrops_cp[i] * 100.0 / pktsCp;
-            std::printf("%3d %8d  %6.2f%%  %6.2f%%   %6.2f%%\n",
-                        i,
-                        m_stats.pkts_cp[i],
-                        txPct,
-                        dropPct,
-                        edropPct);
+            std::snprintf(line,
+                          sizeof(line),
+                          "%3d %8d  %6.2f%%  %6.2f%%   %6.2f%%\n",
+                          i,
+                          m_stats.pkts_cp[i],
+                          txPct,
+                          dropPct,
+                          edropPct);
+            std::cout << line;
         }
     }
 
-    std::printf("----------------------------------------\n");
+    std::cout << "----------------------------------------\n";
     if (m_stats.pkts != 0)
     {
         double pkts = m_stats.pkts;
         double txPct = (pkts - m_stats.drops - m_stats.edrops) * 100.0 / pkts;
         double dropPct = m_stats.drops * 100.0 / pkts;
         double edropPct = m_stats.edrops * 100.0 / pkts;
-        std::printf("All %8d  %6.2f%%  %6.2f%%   %6.2f%%\n",
-                    m_stats.pkts,
-                    txPct,
-                    dropPct,
-                    edropPct);
+        std::snprintf(line,
+                      sizeof(line),
+                      "All %8d  %6.2f%%  %6.2f%%   %6.2f%%\n",
+                      m_stats.pkts,
+                      txPct,
+                      dropPct,
+                      edropPct);
+        std::cout << line;
     }
 }
 

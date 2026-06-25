@@ -292,7 +292,7 @@ class CakeHostIsoJitterFloorTestCase : public TestCase
 {
   public:
     CakeHostIsoJitterFloorTestCase()
-        : TestCase("S-17.68/69 rate-jitter drives (4, 1) host-isolation share to a host-fair floor")
+        : TestCase("S-17.68-69 rate-jitter drives (4, 1) host-isolation share to a host-fair floor")
     {
     }
 

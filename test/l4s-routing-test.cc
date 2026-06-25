@@ -1555,7 +1555,7 @@ class TestL4sPi2FirstTickBetaWithBacklog : public TestCase
   public:
     TestL4sPi2FirstTickBetaWithBacklog()
         : TestCase("L4S PI2 first tick applies the full beta kick with a backlogged classic queue "
-                   "(GPRT / RFC 9332 App. A.1 prevq=0)")
+                   "(GPRT, RFC 9332 App. A.1 prevq=0)")
     {
     }
 

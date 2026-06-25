@@ -614,7 +614,7 @@ class AddrMatchTest : public TestCase
 {
   public:
     AddrMatchTest()
-        : TestCase("AddrMatch: exact V4 hit/miss + Any wildcard via Address")
+        : TestCase("AddrMatch: exact V4 hit or miss + Any wildcard via Address")
     {
     }
 

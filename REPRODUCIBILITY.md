@@ -9,7 +9,7 @@ steps live in the companion repository
 
 ## Prerequisites
 
-- CMake ≥ 3.13, a C++17 compiler, Python 3.8+
+- CMake ≥ 3.25, a C++23 compiler, Python 3.8+
 - For Linux cross-validation (optional): a Lima VM or bare-metal Linux
   host with `sch_cake`, `iperf3`, `jq`, `bc`, `tshark`, `tcpreplay`
 
@@ -53,10 +53,10 @@ lives only in `scripts/fetch-ns3.sh` — query it with `--print-pin`;
 ## 2. Verify the build
 
 ```bash
-# From the ns-3 directory — DiffServ core suite:
-python3 test.py -s stratum -v
+# From the ns-3 directory — every Stratum suite (test.py -s takes a glob):
+python3 test.py -s 'stratum*' -v
 
-# ...or run every stratum-module suite (see README.md "Test suites"):
+# ...or include tcp-gso-egress too by looping the discovered suites:
 for s in $(./ns3 run "test-runner --print-test-name-list" 2>/dev/null \
            | grep -E '^(stratum|tcp-gso-egress)'); do
   python3 test.py -s "$s"

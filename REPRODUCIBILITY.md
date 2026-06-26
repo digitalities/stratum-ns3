@@ -17,7 +17,7 @@ steps live in the companion repository
 
 ## 1. Installation
 
-Choose one of two install paths described in `README.md`.
+Choose one of the install paths described in `README.md`.
 
 ### Option A — Into an existing ns-3 tree (recommended)
 
@@ -63,8 +63,9 @@ for s in $(./ns3 run "test-runner --print-test-name-list" 2>/dev/null \
 done
 ```
 
-All suites should report PASS (257 tests across 17 suites, 0 failures on
-a clean build).
+All suites should report PASS. The `'stratum*'` glob runs 19 suites; the loop
+adds `tcp-gso-egress` for 20 in all, with 0 failures and 0 crashes on a clean
+build.
 
 ---
 

@@ -4,7 +4,7 @@
 
 [![License: GPL v2](https://img.shields.io/badge/License-GPL_v2-blue.svg)](LICENSE)
 [![ns-3](https://img.shields.io/badge/ns--3-3.48_pinned-2c8ebb.svg)](https://www.nsnam.org/)
-[![Tests](https://img.shields.io/badge/tests-257_passing_%2F_17_suites-success.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-19_suites_passing-success.svg)](test/)
 [![Platforms](https://img.shields.io/badge/platforms-Linux_%7C_macOS-lightgrey.svg)](REPRODUCIBILITY.md)
 
 *Stratum is a QoS **substrate** for ns-3: one composer with four pluggable
@@ -30,8 +30,8 @@ same strategies (RFC 2475 §2.4):
 
 1. **Classify-and-Meter** — a meter strategy plus a classifier: *which*
    traffic, and *how much* of it.
-2. **Mark-and-Route** — a DSCP tag plus a PHB table: how packets are labelled
-   and steered.
+2. **Mark-and-Route** — a DSCP tag plus a PHB (per-hop behaviour) table: how
+   packets are labelled and steered.
 3. **Per-class slot array** — up to eight inner queue discs: *where* packets
    wait.
 4. **Across-slot service policy** — the scheduler / dispatcher: *who* is
@@ -45,9 +45,9 @@ DiffServ, L4S, and CAKE are the same substrate populated three ways:
 
 | Client | Classify-and-Meter | Mark-and-Route | Slot array | Service policy |
 |---|---|---|---|---|
-| **DiffServ** (RFC 2475) | sr-TCM / tr-TCM / TSW2CM·3CM + byte-accounting | DSCP + PHB table | RED / RIO / drop-tail | PQ · WFQ · WF2Q+ · LLQ · hybrid-LLQ · WRR · SCFQ · SFQ |
+| **DiffServ** (RFC 2475) | sr-TCM / tr-TCM / TSW2CM / TSW3CM + byte-accounting | DSCP + PHB table | RED / RIO / drop-tail | PQ · WFQ · WF2Q+ · LLQ · hybrid-LLQ · WRR · SCFQ · SFQ |
 | **L4S** (RFC 9331/9332) | DualPI2 ECT(1) classifier | DSCP + L4S identifier | classic + L4 inners | coupled marking probability |
-| **CAKE** (`sch_cake` parity) | DSCP-to-tin (besteffort … diffserv8) | tin assignment | per-tin FqCobalt | across-tin DRR++ + optional LLQ |
+| **CAKE** (`sch_cake` parity) | DSCP-to-tin (besteffort … diffserv8) | tin assignment | per-tin FqCobalt | across-tin DRR + optional LLQ |
 
 Each client is a complete implementation in its own right; bringing all three
 together on one substrate lets a single ns-3 edge combine DiffServ
@@ -75,7 +75,8 @@ Beyond the inherited 2001 DiffServ4NS algorithms:
   aggressive), optional per-tin TBF shaping, `MemLimit` byte-cap eviction,
   named link-layer-overhead and RTT presets, and `tc-cake(8)` operational
   vocabulary.
-- **Monitoring:** per-DSCP frequency-distributed OWD and IPDV; per-tin
+- **Monitoring:** per-DSCP frequency-distributed one-way delay (OWD) and IP
+  delay variation (IPDV); per-tin
   byte / packet / drop / mark counters matching `tc -s qdisc show`;
   per-flow goodput.
 - **IPv6:** DiffServ, L4S, and CAKE all work over both IPv4 and IPv6; the DS-field and ECN handling is address-family agnostic.
@@ -97,7 +98,7 @@ git checkout "$(contrib/stratum/scripts/fetch-ns3.sh --print-pin)"
 for p in contrib/stratum/patches/ns3/*.patch; do git apply "$p"; done
 ./ns3 configure --enable-tests --enable-examples
 ./ns3 build stratum
-python3 test.py -s stratum -v
+python3 test.py -s 'stratum*' -v
 ```
 
 Already have an ns-3 tree? `cd` into it instead — it must be at the
@@ -126,7 +127,7 @@ above. (Bake itself must run under Python 3.11–3.13 with the `distro` and
 then:
 
 ```bash
-./bake.py configure -e ns-3.48 -e stratum-1.0
+./bake.py configure -e ns-3.48 -e stratum
 ./bake.py download
 ```
 
@@ -150,15 +151,18 @@ Applying mainline patches as the first build step follows the ns-3
 ## Test suites
 
 The module registers a suite per component area. ns-3's `test.py -s`
-takes a single exact suite name, so run them individually or loop over
-the module's full set:
+matches a glob, so `-s 'stratum*'` runs every Stratum suite at once, or
+name one to run a single area:
 
 ```bash
+python3 test.py -s 'stratum*' -v        # every Stratum suite (19 in all)
 python3 test.py -s stratum -v           # DiffServ core (+ RFC 2697/2698 vectors)
 python3 test.py -s stratum-l4s -v       # L4S DualPI2 (RFC 9331/9332)
 python3 test.py -s stratum-cake-q15 -v  # CAKE composition
 
-# Run every stratum-module suite in turn:
+# Quote the glob so the shell does not expand it. tcp-gso-egress does not
+# start with `stratum`; to run the complete module set including it, loop
+# over the discovered suites:
 for s in $(./ns3 run "test-runner --print-test-name-list" 2>/dev/null \
            | grep -E '^(stratum|tcp-gso-egress)'); do
   python3 test.py -s "$s"
@@ -167,13 +171,16 @@ done
 
 | Component | Suites |
 |---|---|
-| **DiffServ core** | `stratum`, `stratum-meter-trace`, `stratum-per-flow-classifier`, `stratum-wf2qp-regression`, `stratum-q16-chang-convergence`, `stratum-q17-parekh-theorem1` |
+| **DiffServ core** | `stratum`, `stratum-meter-trace`, `stratum-per-flow-classifier`, `stratum-ds-field-fallback`, `stratum-wf2qp-regression`, `stratum-q16-chang-convergence`, `stratum-q17-parekh-theorem1` |
 | **L4S** | `stratum-l4s`, `stratum-count-ack-jitter`, `tcp-gso-egress` |
-| **CAKE** | `stratum-cake-q15`, `stratum-cake-host-iso-phase-1`, `stratum-cake-host-fairness-smoke`, `stratum-cake-host-fairness-udp-smoke`, `stratum-flent-sink` |
+| **CAKE** | `stratum-cake-q15`, `stratum-cake-host-iso-phase-1`, `stratum-cake-host-iso-jitter-floor`, `stratum-cake-host-bulk-state`, `stratum-cake-host-fairness-smoke`, `stratum-cake-host-fairness-udp-smoke`, `stratum-flent-sink` |
 | **Instrumentation** | `stratum-example-1-instrumentation`, `stratum-empirical-cdf-loader`, `stratum-trace-replay-application` |
 
+Of the 20 suites listed, the 19 `stratum*` suites are matched by the `'stratum*'`
+glob; `tcp-gso-egress` does not start with `stratum`, so run it via the loop above.
+
 RFC conformance vectors run inside these registered suites: RFC 2697 /
-2698 metering in `stratum` and `stratum-meter-trace`, and RFC 9331 /
+2698 / 2859 metering in `stratum` and `stratum-meter-trace`, and RFC 9331 /
 9332 L4S identification and coupling in `stratum-l4s`.
 
 ## Citation
@@ -216,7 +223,7 @@ For the full 25-year chain see
 
 The substrate builds on the work of others:
 
-- **Nortel Networks** (2000): the ns-2 DiffServ module that DiffServ4NS extended, inherited here as the classical-DiffServ client (Farhan Shallwani, Jeremy Ethridge, Peter Pieda, Mandeep Baines).
+- **Nortel Networks** (2000): the ns-2 DiffServ module that DiffServ4NS extended, inherited here as the DiffServ client (Farhan Shallwani, Jeremy Ethridge, Peter Pieda, Mandeep Baines).
 - **Xuan Chen, ISI** (2001): ns-2 integration of the Nortel module.
 - **Pasquale Imputato and Stefano Avallone** (2016): the ns-3 traffic-control layer this substrate builds on.
 - **The GPRT group** (2026): the ns-3 DualPI2 implementation (arXiv:2603.20166) the substrate's L4S marking and coupling are validated against (Maria Eduarda Veras, Eduardo Freitas, Assis T. de Oliveira Filho, Djamel Sadok, Judith Kelner).

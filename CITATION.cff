@@ -15,6 +15,10 @@ date-released: "2026-06-25"
 license: GPL-2.0-only
 repository-code: "https://github.com/digitalities/stratum-ns3"
 url: "https://github.com/digitalities/stratum-ns3"
+identifiers:
+  - type: doi
+    value: "10.5281/zenodo.20723772"
+    description: "Zenodo concept DOI (resolves to the latest release)"
 abstract: >-
   Stratum is a composable QoS substrate for ns-3 hosting Differentiated
   Services, Low Latency Low Loss Scalable-throughput (L4S), and Common
@@ -22,8 +26,8 @@ abstract: >-
   pluggable primitives — Classify-and-Meter, Mark-and-Route, a per-class
   Slot array, and an across-slot Service Policy — let any client compose
   a queueing discipline by picking one strategy per stage.  The substrate
-  inherits the 2001 DiffServ4NS ns-2 module as its classical-DiffServ
-  client; the 2001 ns-2 sources and a 2026 port layer are available at
+  inherits the 2001 DiffServ4NS ns-2 module as its DiffServ client; the
+  2001 ns-2 sources and a 2026 port layer are available at
   https://github.com/digitalities/diffserv4ns.
 keywords:
   - ns-3

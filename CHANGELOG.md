@@ -38,7 +38,7 @@ queueing and AQM behaviour of existing IPv4 scenarios is unchanged.
 
 - IPv6: DiffServ, L4S, and CAKE classify, mark, meter, and shape over IPv6 as well as IPv4, through address-family-agnostic DS-field and ECN accessors.
 - `diffserv::Helper::SetAsDiffserv` and `l4s::Helper::SetAsL4s`: preset edge composers that build a configured client edge in one call (alongside `cake::Helper::SetAsCake*`).
-- `stratum::InstallRoot`: one cross-client primitive to install a built edge as a device's root queue disc.
+- `stratum::InstallRoot`: one cross-client primitive to install a composed edge or core disc as a device's root queue disc.
 - `CakeOptions`: a designated-initializer struct for the `SetAsCake*` composers.
 - Example recipes for DiffServ, L4S, and CAKE over IPv6, plus a CAKE+L4S IPv6 composition.
 - A generated command-line reference (handbook Appendix E) built from each example's `--PrintHelp`, with a `--check` drift guard in the audit gate.
